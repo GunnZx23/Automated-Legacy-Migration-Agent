@@ -1,0 +1,95 @@
+{
+  "$defs": {
+    "ApprovalAction": {
+      "enum": [
+        "freeze_scope",
+        "approve_manifest",
+        "expand_scope",
+        "accept_high_impact_change",
+        "commit",
+        "push",
+        "open_pull_request",
+        "sandbox_validation",
+        "production_validation",
+        "deploy",
+        "quick_deploy",
+        "destructive_change",
+        "publish"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "affected_paths": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Affected Paths",
+      "type": "array"
+    },
+    "decision_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "evidence": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "options": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Options",
+      "type": "array"
+    },
+    "reason": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "recommendation": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Recommendation",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "$ref": "#/$defs/ApprovalAction"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "request_id",
+    "reason",
+    "requested_action",
+    "options",
+    "recommendation"
+  ],
+  "title": "DecisionRequest",
+  "type": "object"
+}

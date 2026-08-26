@@ -1,0 +1,331 @@
+{
+  "$defs": {
+    "DependencyEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EdgeKind"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/SourceProvenance"
+          },
+          "minItems": 1,
+          "title": "Provenance",
+          "type": "array"
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "boolean"
+        },
+        "source_id": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "target_id": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "target_id",
+        "kind",
+        "resolved",
+        "provenance"
+      ],
+      "title": "DependencyEdge",
+      "type": "object"
+    },
+    "DependencyNode": {
+      "additionalProperties": false,
+      "properties": {
+        "external": {
+          "default": false,
+          "title": "External",
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeKind"
+        },
+        "metadata_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Metadata Paths",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "node_id": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Node Id",
+          "type": "string"
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "kind",
+        "name",
+        "resolved"
+      ],
+      "title": "DependencyNode",
+      "type": "object"
+    },
+    "EdgeKind": {
+      "description": "Relationships currently emitted by the deterministic graph analyzers.",
+      "enum": [
+        "visualforce_controller",
+        "visualforce_extension",
+        "visualforce_standard_controller",
+        "apex_class_reference",
+        "apex_page_reference",
+        "soql_object",
+        "soql_field",
+        "lwc_apex_import",
+        "lwc_schema_import",
+        "permission_class_access",
+        "permission_page_access",
+        "permission_object_access",
+        "permission_field_access",
+        "flow_reference",
+        "http_listener_config_reference",
+        "connector_config_reference",
+        "configuration_properties_reference",
+        "property_reference",
+        "dataweave_variable_reference",
+        "dataweave_module_reference",
+        "munit_flow_reference",
+        "munit_suite_test",
+        "maven_plugin",
+        "maven_dependency",
+        "dynamic_reference"
+      ],
+      "title": "EdgeKind",
+      "type": "string"
+    },
+    "NodeKind": {
+      "description": "Kinds currently emitted by the deterministic graph analyzers.",
+      "enum": [
+        "visualforce_page",
+        "apex_class",
+        "apex_test",
+        "lwc_component",
+        "permission_set",
+        "schema_object",
+        "schema_field",
+        "metadata_file",
+        "mule_flow",
+        "mule_subflow",
+        "mule_configuration",
+        "mule_property",
+        "mule_variable",
+        "dataweave_module",
+        "munit_suite",
+        "munit_test",
+        "maven_project",
+        "maven_plugin",
+        "maven_dependency",
+        "unresolved"
+      ],
+      "title": "NodeKind",
+      "type": "string"
+    },
+    "ParserWarning": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/WarningCode"
+        },
+        "message": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/SourceProvenance"
+        },
+        "unresolved": {
+          "default": true,
+          "title": "Unresolved",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "provenance"
+      ],
+      "title": "ParserWarning",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "SourceDigest": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "SourceDigest",
+      "type": "object"
+    },
+    "SourceProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "excerpt": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "parser": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Parser",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "excerpt",
+        "parser"
+      ],
+      "title": "SourceProvenance",
+      "type": "object"
+    },
+    "WarningCode": {
+      "enum": [
+        "malformed_source",
+        "dynamic_soql",
+        "dynamic_type",
+        "dynamic_reference",
+        "unresolved_reference"
+      ],
+      "title": "WarningCode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A revision-bound dependency subgraph with reproducible source hashes.",
+  "properties": {
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/DependencyEdge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "entry_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Entry Paths",
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/DependencyNode"
+      },
+      "minItems": 1,
+      "title": "Nodes",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform",
+      "default": "salesforce"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_digests": {
+      "items": {
+        "$ref": "#/$defs/SourceDigest"
+      },
+      "title": "Source Digests",
+      "type": "array"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ParserWarning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "base_revision",
+    "entry_paths",
+    "source_digests",
+    "nodes",
+    "edges"
+  ],
+  "title": "DependencyGraph",
+  "type": "object"
+}

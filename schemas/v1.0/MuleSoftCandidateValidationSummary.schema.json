@@ -1,0 +1,110 @@
+{
+  "additionalProperties": false,
+  "description": "Bounded static result; runtime and deployment claims are impossible.",
+  "properties": {
+    "candidate_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Candidate Revision",
+      "type": "string"
+    },
+    "check": {
+      "const": "mulesoft-candidate-static-contract",
+      "default": "mulesoft-candidate-static-contract",
+      "title": "Check",
+      "type": "string"
+    },
+    "dataweave": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Dataweave",
+      "type": "string"
+    },
+    "deployment_claim": {
+      "const": false,
+      "default": false,
+      "title": "Deployment Claim",
+      "type": "boolean"
+    },
+    "inventory_files": {
+      "maximum": 32,
+      "minimum": 1,
+      "title": "Inventory Files",
+      "type": "integer"
+    },
+    "java": {
+      "const": "17",
+      "default": "17",
+      "title": "Java",
+      "type": "string"
+    },
+    "maven_executed": {
+      "const": false,
+      "default": false,
+      "title": "Maven Executed",
+      "type": "boolean"
+    },
+    "mule3_runtime": {
+      "const": "3.9.5",
+      "default": "3.9.5",
+      "title": "Mule3 Runtime",
+      "type": "string"
+    },
+    "mule4_runtime": {
+      "const": "4.9.20",
+      "default": "4.9.20",
+      "title": "Mule4 Runtime",
+      "type": "string"
+    },
+    "munit": {
+      "const": "3.7.3",
+      "default": "3.7.3",
+      "title": "Munit",
+      "type": "string"
+    },
+    "munit_executed": {
+      "const": false,
+      "default": false,
+      "title": "Munit Executed",
+      "type": "boolean"
+    },
+    "passed": {
+      "const": true,
+      "default": true,
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "preserved_source_files": {
+      "maximum": 16,
+      "minimum": 1,
+      "title": "Preserved Source Files",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "static_checks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Static Checks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source_revision",
+    "candidate_revision",
+    "inventory_files",
+    "preserved_source_files",
+    "static_checks"
+  ],
+  "title": "MuleSoftCandidateValidationSummary",
+  "type": "object"
+}

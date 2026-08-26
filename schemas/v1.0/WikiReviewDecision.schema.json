@@ -1,0 +1,144 @@
+{
+  "additionalProperties": false,
+  "description": "Explicit approve or reject decision bound to one exact review request.",
+  "properties": {
+    "catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Catalog Digest",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "approve",
+        "reject"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "decision_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "designated_reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Designated Reviewer",
+      "type": "string"
+    },
+    "governance_policy_version": {
+      "const": "wiki-review/1.0",
+      "default": "wiki-review/1.0",
+      "title": "Governance Policy Version",
+      "type": "string"
+    },
+    "page_content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Page Content Digest",
+      "type": "string"
+    },
+    "page_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Page Id",
+      "type": "string"
+    },
+    "page_path": {
+      "title": "Page Path",
+      "type": "string"
+    },
+    "repository_revision": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "title": "Repository Revision",
+      "type": "string"
+    },
+    "request_as_of": {
+      "format": "date",
+      "title": "Request As Of",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "const": "promote_to_reviewed",
+      "default": "promote_to_reviewed",
+      "title": "Requested Action",
+      "type": "string"
+    },
+    "requester": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Requester",
+      "type": "string"
+    },
+    "reviewed_on": {
+      "format": "date",
+      "title": "Reviewed On",
+      "type": "string"
+    },
+    "reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "reviewer_identity_assurance": {
+      "const": "declarative_unverified",
+      "default": "declarative_unverified",
+      "title": "Reviewer Identity Assurance",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "review_decided",
+      "default": "review_decided",
+      "title": "Status",
+      "type": "string"
+    },
+    "wiki_inventory_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Wiki Inventory Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "decision",
+    "request_id",
+    "request_digest",
+    "page_id",
+    "page_path",
+    "page_content_digest",
+    "catalog_digest",
+    "wiki_inventory_digest",
+    "repository_revision",
+    "request_as_of",
+    "reviewed_on",
+    "requester",
+    "designated_reviewer",
+    "reviewer"
+  ],
+  "title": "WikiReviewDecision",
+  "type": "object"
+}

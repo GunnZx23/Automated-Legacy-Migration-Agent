@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "WikiPageRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "last_verified": {
+          "format": "date",
+          "title": "Last Verified",
+          "type": "string"
+        },
+        "links": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "owner": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Owner",
+          "type": "string"
+        },
+        "page_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Page Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "platforms": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Platform"
+          },
+          "title": "Platforms",
+          "type": "array"
+        },
+        "source_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/WikiSource"
+          },
+          "minItems": 1,
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "pilot",
+            "reviewed",
+            "deprecated"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Tags",
+          "type": "array"
+        },
+        "target_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target Version",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "page_id",
+        "title",
+        "path",
+        "summary",
+        "source_version",
+        "target_version",
+        "status",
+        "owner",
+        "last_verified",
+        "tags",
+        "sources"
+      ],
+      "title": "WikiPageRecord",
+      "type": "object"
+    },
+    "WikiSource": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "enum": [
+            "official",
+            "standard",
+            "project",
+            "research"
+          ],
+          "title": "Authority",
+          "type": "string"
+        },
+        "publisher": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Publisher",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "publisher",
+        "authority"
+      ],
+      "title": "WikiSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/WikiPageRecord"
+      },
+      "minItems": 1,
+      "title": "Pages",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pages"
+  ],
+  "title": "WikiCatalog",
+  "type": "object"
+}

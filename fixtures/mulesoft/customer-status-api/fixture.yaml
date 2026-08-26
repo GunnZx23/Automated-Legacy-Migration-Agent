@@ -1,0 +1,113 @@
+schema_version: "1.0"
+fixture_id: mulesoft-customer-status-api
+title: Customer Status API
+platform: mulesoft
+public_synthetic: true
+migration_kind: mule3_to_mule4_side_by_side
+
+source:
+  root: input
+  project_root: legacy-mule3/customer-status-api
+  runtime: "3.9.5"
+  runtime_status: declared_synthetic_assumption_unverified
+  java: "8"
+  java_status: declared_synthetic_assumption_unverified
+  project_runtime_descriptor_present: false
+  version_provenance_note: >-
+    The bounded synthetic input has no Mule project/runtime descriptor; the
+    Mule and Java versions are scenario declarations, not source-verified facts.
+  dataweave: "1.0"
+  munit_syntax: "1.x"
+  entrypoint: legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
+  unit_test: legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
+
+target:
+  root: expected
+  project_root: mule4/customer-status-api
+  runtime: "4.9.20"
+  release_channel: LTS
+  java: "17"
+  dataweave: "2.0"
+  munit: "3.7.3"
+  mule_maven_plugin: "4.10.1"
+  http_connector: "1.12.0"
+  entrypoint: mule4/customer-status-api/src/main/mule/customer-status-api.xml
+  unit_test: mule4/customer-status-api/src/test/munit/customer-status-api-test.xml
+
+expected:
+  preserved_files:
+    - legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
+    - legacy-mule3/customer-status-api/src/main/app/mule-app.properties
+    - legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
+  added_files:
+    - mule4/customer-status-api/pom.xml
+    - mule4/customer-status-api/src/main/mule/customer-status-api.xml
+    - mule4/customer-status-api/src/main/resources/application.yaml
+    - mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl
+    - mule4/customer-status-api/mule-artifact.json
+    - mule4/customer-status-api/src/test/munit/customer-status-api-test.xml
+  modified_files: []
+  deleted_files: []
+  retirement_candidates:
+    - legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
+    - legacy-mule3/customer-status-api/src/main/app/mule-app.properties
+    - legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
+
+behavior:
+  method: GET
+  base_path: /api
+  resource_path: /customers/{customerId}/status
+  example_customer_id: CUST-100
+  response:
+    customerId: CUST-100
+    status: ACTIVE
+    source: synthetic-fixture
+  deterministic: true
+  read_only: true
+
+security:
+  listen_host: 127.0.0.1
+  synthetic_data_only: true
+  secrets: false
+  outbound_calls: false
+  persistence: false
+  deployment: false
+  destructive_change: false
+
+validation:
+  local_static:
+    - exact-inventory
+    - legacy-byte-preservation
+    - safe-structured-parsing
+    - mule3-domain-contract
+    - mule4-domain-contract
+    - dataweave-version-mapping
+    - munit-version-mapping
+    - pom-artifact-version-consistency
+    - no-secrets
+    - no-outbound-connectors
+  local_static_evidence_boundary: >-
+    These checks assert fixture-specific structure, attributes, text tokens,
+    pinned coordinates, inventory, preservation, and bounded safety patterns.
+    They do not compile DataWeave or execute Mule, HTTP, Maven, or MUnit.
+  runtime_authority: disabled
+  runtime_authority_reason: No reviewed source-pinned immutable offline image is attested.
+  maven_dependency_resolution: not_run
+  maven_package: not_run
+  munit_runtime: unavailable
+  deployment: not_run
+  final_state: static_fixture_contract_checked_runtime_unverified
+
+decision_required:
+  action: destructive_change
+  condition: Retire or remove any preserved Mule 3 artifact.
+
+official_references:
+  - https://docs.mulesoft.com/http-connector/latest/http-about-http-connector-migration
+  - https://docs.mulesoft.com/http-connector/latest/http-listener-ref
+  - https://docs.mulesoft.com/munit/latest/set-event-processor
+  - https://docs.mulesoft.com/munit/latest/assertion-event-processor
+  - https://docs.mulesoft.com/mule-runtime/latest/package-a-mule-application
+  - https://docs.mulesoft.com/release-notes/munit/munit-3.7.3-release-notes
+  - https://docs.mulesoft.com/release-notes/mule-maven-plugin/mule-maven-plugin-4.10.1-release-notes
+  - https://docs.mulesoft.com/release-notes/connector/connector-http

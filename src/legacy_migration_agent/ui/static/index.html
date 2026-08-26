@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="The bounded conversational interface for the Automated Legacy Migration Agent."
+    >
+    <link rel="icon" href="data:,">
+    <title>Legacy Migration Agent</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#conversation-title">Skip to migration conversation</a>
+
+    <header class="site-header">
+      <div class="brand" aria-label="Automated Legacy Migration Agent">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+        <span class="brand-copy">
+          <strong>Migration Agent</strong>
+          <small>Legacy modernization workspace</small>
+        </span>
+      </div>
+      <div class="header-runtime" role="status" aria-live="polite" aria-label="Local model runtime readiness">
+        <span id="runtime-pulse" class="runtime-pulse" aria-hidden="true"></span>
+        <span id="mode-badge">Loading local Ollama…</span>
+        <span class="runtime-divider" aria-hidden="true"></span>
+        <strong id="model-badge">Model not configured</strong>
+        <span id="model-revision-badge" hidden>Revision unavailable</span>
+      </div>
+    </header>
+
+    <main id="workspace">
+      <section class="workspace-intro" aria-labelledby="hero-title">
+        <div>
+          <p class="eyebrow">Conversation-led migration</p>
+          <h1 id="hero-title">Turn a legacy slice into reviewable code.</h1>
+          <p class="hero-copy">
+            Ask the agent to migrate a bounded legacy system. Work with the Architect, approve an
+            exact plan, then inspect the Engineer's isolated candidate and the Validator's evidence.
+          </p>
+        </div>
+        <div class="boundary-card" role="note">
+          <span class="boundary-icon" aria-hidden="true">⌁</span>
+          <div>
+            <strong id="boundary-title">Execution boundary</strong>
+            <p id="boundary-notice">
+              Loading the server-owned Ollama configuration. The agent cannot deploy, mutate source,
+              or connect to a Salesforce org or Mule runtime.
+            </p>
+          </div>
+          <span class="boundary-tag">No org/runtime/deployment</span>
+        </div>
+      </section>
+
+      <div id="alert" class="alert" role="alert" tabindex="-1" hidden></div>
+
+      <section class="workspace-grid" aria-label="Conversational migration workspace">
+        <section class="panel conversation-panel" aria-labelledby="conversation-title">
+          <div class="panel-heading conversation-heading">
+            <div>
+              <p class="step-label">Agent interaction</p>
+              <h2 id="conversation-title">Migration conversation</h2>
+            </div>
+            <div class="run-indicators">
+              <button
+                id="new-chat-button"
+                class="new-chat-button"
+                type="button"
+                title="Start a fresh conversation. Any previous run remains saved and unchanged."
+              >New chat</button>
+              <span id="run-timer" class="run-timer" hidden>0:00</span>
+              <span id="run-status" class="status-chip">Ready</span>
+            </div>
+          </div>
+
+          <p id="transcript-note" class="transcript-note">
+            Model prose is advisory. This transcript shows public structured outputs and harness
+            events. Private reasoning is not requested or shown. Chat with the Architect first,
+            then explicitly start a human-gated migration when the request is ready.
+          </p>
+
+          <div
+            id="conversation"
+            class="conversation"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions text"
+          >
+            <article class="chat-message assistant-message">
+              <div class="avatar architect-avatar" aria-hidden="true">A</div>
+              <div class="message-stack">
+                <span class="message-role">Architect <em>Migration design</em></span>
+                <div class="message-bubble">
+                  <p id="architect-intro">
+                    Tell me what you want to modernize. The Salesforce and MuleSoft buttons are
+                    optional examples, not the only messages you can send.
+                  </p>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div id="typing-indicator" class="chat-message assistant-message typing-message" role="status" hidden>
+            <div class="avatar working-avatar" aria-hidden="true">AI</div>
+            <div class="message-stack">
+              <span id="typing-role" class="message-role">Architect</span>
+              <div class="message-bubble typing-bubble">
+                <span id="typing-copy">Reviewing the migration request</span>
+                <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              </div>
+              <span id="activity-disclosure" class="activity-disclosure">Waiting for typed model output · private reasoning is not displayed</span>
+            </div>
+          </div>
+
+          <section id="launch-preview" class="launch-preview" aria-labelledby="launch-preview-title" hidden>
+            <div class="launch-preview-heading">
+              <div>
+                <p class="step-label">Ready for explicit launch</p>
+                <h3 id="launch-preview-title">Refined request to launch</h3>
+              </div>
+              <span id="launch-preview-platform" class="boundary-tag"></span>
+            </div>
+            <p id="launch-preview-request" class="launch-preview-request"></p>
+            <p class="launch-preview-help">
+              Review this exact text before starting the migration. Keep chatting if it needs correction.
+            </p>
+          </section>
+
+          <form id="request-form" class="composer">
+            <fieldset>
+              <legend>Optional target and example</legend>
+              <div id="scenario-list" class="suggestion-list" aria-busy="true">
+                <span class="suggestion-skeleton" aria-hidden="true"></span>
+                <span class="suggestion-skeleton" aria-hidden="true"></span>
+              </div>
+            </fieldset>
+            <label class="sr-only" for="request-input">Message the Architect</label>
+            <div class="composer-shell">
+              <textarea
+                id="request-input"
+                name="request"
+                rows="3"
+                minlength="1"
+                maxlength="2000"
+                placeholder="Message the Architect about your migration…"
+                aria-describedby="request-help"
+                required
+              ></textarea>
+              <div class="composer-footer">
+                <p id="request-help" class="composer-help">
+                  Ask a question or describe the legacy system. Enter sends; Shift+Enter adds a line.
+                </p>
+                <div class="composer-actions">
+                  <button
+                    id="launch-button"
+                    class="button launch-button"
+                    type="button"
+                    title="Generate a digest-bound migration plan from the refined request"
+                    hidden
+                  >Start migration</button>
+                  <button id="send-button" class="button button-primary send-button" type="submit" disabled>
+                    <span class="button-label">Send</span>
+                    <span class="send-icon" aria-hidden="true">↑</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </form>
+        </section>
+
+        <aside class="evidence-column" aria-labelledby="harness-title">
+          <section class="panel harness-panel">
+            <div class="panel-heading harness-heading">
+              <div>
+                <p class="step-label">Observable harness</p>
+                <h2 id="harness-title">What the system is doing</h2>
+              </div>
+              <span class="evidence-state">Controller-owned</span>
+            </div>
+
+            <ol id="harness-stages" class="harness-stages" aria-label="Migration workflow stages">
+              <li class="harness-stage is-ready" data-stage="architect">
+                <span class="stage-marker" aria-hidden="true">01</span>
+                <div><strong>Architect</strong><span>Graph scan + LLM Wiki retrieval</span></div>
+                <em>Ready</em>
+              </li>
+              <li class="harness-stage is-ready" data-stage="approval">
+                <span class="stage-marker" aria-hidden="true">02</span>
+                <div><strong>Approval gate</strong><span>Digest-bound human decision</span></div>
+                <em>Waiting</em>
+              </li>
+              <li class="harness-stage is-ready" data-stage="engineer">
+                <span class="stage-marker" aria-hidden="true">03</span>
+                <div><strong>Engineer</strong><span>Isolated candidate workspace</span></div>
+                <em>Waiting</em>
+              </li>
+              <li class="harness-stage is-ready" data-stage="validator">
+                <span class="stage-marker" aria-hidden="true">04</span>
+                <div><strong>Validator</strong><span>Deterministic checks + evidence</span></div>
+                <em>Waiting</em>
+              </li>
+            </ol>
+
+            <div id="failure-diagnostic" class="failure-diagnostic" hidden>
+              <span class="diagnostic-label">Run stopped safely</span>
+              <strong id="failure-title">The workflow could not continue.</strong>
+              <p id="failure-guidance"></p>
+              <dl id="failure-facts"></dl>
+              <button id="focus-request-button" class="diagnostic-action" type="button">
+                Refine and start a new run
+              </button>
+            </div>
+
+            <div class="evidence-tabs" role="tablist" aria-label="Run inspection views">
+              <button
+                id="evidence-tab"
+                class="evidence-tab is-active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="evidence-view"
+              >Evidence</button>
+              <button
+                id="changes-tab"
+                class="evidence-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="changes-view"
+                tabindex="-1"
+                disabled
+              >Generated code <span id="file-count-badge">0</span></button>
+            </div>
+
+            <div id="evidence-view" class="inspection-view" role="tabpanel" aria-labelledby="evidence-tab">
+              <dl id="metrics" class="metric-grid">
+                <div><dt>Graph nodes</dt><dd>—</dd></div>
+                <div><dt>Graph edges</dt><dd>—</dd></div>
+                <div><dt>Wiki hits</dt><dd>—</dd></div>
+                <div><dt>Changed files</dt><dd>—</dd></div>
+              </dl>
+
+              <section id="model-activity-section" class="model-activity-section" hidden>
+                <div class="model-activity-heading">
+                  <div>
+                    <span class="diagnostic-label">Public reasoning trace</span>
+                    <h3>Typed model activity</h3>
+                  </div>
+                  <span id="model-call-count"></span>
+                </div>
+                <p>
+                  Role, latency, token, and receipt metadata from the harness. Public structured
+                  decisions appear in the conversation; private reasoning is not requested or shown.
+                </p>
+                <ul id="model-call-list" class="model-call-list"></ul>
+              </section>
+
+              <details class="evidence-disclosure" open>
+                <summary>
+                  <span>Dependency &amp; retrieval evidence</span>
+                  <small>Inspectable inputs</small>
+                </summary>
+                <div class="evidence-content">
+                  <p id="graph-summary" class="muted">Evidence will appear here.</p>
+                  <h3>LLM Wiki retrieval</h3>
+                  <ul id="wiki-hits" class="wiki-list empty-list">
+                    <li>No retrieval evidence yet</li>
+                  </ul>
+                </div>
+              </details>
+
+              <details class="evidence-disclosure">
+                <summary>
+                  <span id="manifest-paths-title">Proposed manifest paths</span>
+                  <small>Scope boundary</small>
+                </summary>
+                <div class="evidence-content">
+                  <ul id="manifest-paths" class="path-list empty-list">
+                    <li>Available after Architect analysis</li>
+                  </ul>
+                </div>
+              </details>
+
+              <div id="validation-section" class="validation-section" hidden>
+                <div class="validation-heading">
+                  <div>
+                    <span class="diagnostic-label">Deterministic validation evidence</span>
+                    <h3>Candidate checks</h3>
+                  </div>
+                  <span id="validation-summary-count" class="validation-summary-count"></span>
+                </div>
+                <p class="evidence-explainer">
+                  Check outcomes come from the bounded validation workflow, not from an LLM
+                  claiming its own work succeeded.
+                </p>
+                <p id="validator-summary" class="muted"></p>
+                <p id="validator-assessment" class="advisory-label"></p>
+                <div id="validator-concerns-group" hidden>
+                  <h4>Validator advisory concerns</h4>
+                  <ul id="validator-concerns" class="concern-list"></ul>
+                </div>
+                <ul id="validation-results" class="validation-list"></ul>
+              </div>
+            </div>
+
+            <div id="changes-view" class="inspection-view code-inspector" role="tabpanel" aria-labelledby="changes-tab" hidden>
+              <div id="candidate-section" hidden>
+                <div class="code-inspector-heading">
+                  <div>
+                    <span id="candidate-provenance" class="diagnostic-label">Isolated candidate</span>
+                    <h3>Review generated migration</h3>
+                  </div>
+                  <span id="file-count">0 files</span>
+                </div>
+
+                <div class="code-view-toggle" role="group" aria-label="Candidate code view">
+                  <button id="diff-view-button" class="is-active" type="button" aria-pressed="true">Unified diff</button>
+                  <button id="file-view-button" type="button" aria-pressed="false">Generated file</button>
+                </div>
+
+                <div class="code-workbench">
+                  <nav class="file-browser" aria-label="Generated candidate files">
+                    <span>Changed files</span>
+                    <ul id="changed-files" class="path-list"></ul>
+                  </nav>
+                  <section class="code-viewer" aria-labelledby="code-viewer-path">
+                    <div class="code-viewer-bar">
+                      <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                      <code id="code-viewer-path">Select a generated file</code>
+                    </div>
+                    <pre id="candidate-diff" tabindex="0" aria-label="Generated candidate code"></pre>
+                  </section>
+                </div>
+
+                <div class="candidate-actions">
+                  <button id="download-button" class="button button-download" type="button" hidden>
+                    <span aria-hidden="true">↓</span> Download candidate ZIP
+                  </button>
+                  <button id="export-button" class="button button-export" type="button" hidden>
+                    <span aria-hidden="true">↳</span> Save candidate to output/
+                  </button>
+                </div>
+                <p id="export-status" class="export-status" role="status" hidden></p>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      <span>Local capstone agent</span>
+      <span>Human-gated · evidence-bound · no deployment authority</span>
+    </footer>
+  </body>
+</html>

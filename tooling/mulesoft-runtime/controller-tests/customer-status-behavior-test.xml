@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="controller-customer-status-behavior-test-suite"/>
+
+    <munit:test name="controller-build-customer-status-response-contract"
+                description="Controller-owned behavioral contract for the migrated sub-flow">
+        <munit:behavior>
+            <munit:set-event cloneOriginalEvent="false">
+                <munit:variables>
+                    <munit:variable key="customerId"
+                                    value="#[&quot;CTRL-CUST-9001&quot;]"
+                                    mediaType="text/plain"
+                                    encoding="UTF-8"/>
+                </munit:variables>
+            </munit:set-event>
+        </munit:behavior>
+        <munit:execution>
+            <flow-ref name="build-customer-status-response"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.customerId]"
+                                     is="#[MunitTools::equalTo(&quot;CTRL-CUST-9001&quot;)]"
+                                     message="The controller customer ID must be preserved"/>
+            <munit-tools:assert-that expression="#[payload.status]"
+                                     is="#[MunitTools::equalTo(&quot;ACTIVE&quot;)]"
+                                     message="The controller status must remain ACTIVE"/>
+            <munit-tools:assert-that expression="#[payload.source]"
+                                     is="#[MunitTools::equalTo(&quot;synthetic-fixture&quot;)]"
+                                     message="The controller fixture provenance must be explicit"/>
+        </munit:validation>
+    </munit:test>
+</mule>

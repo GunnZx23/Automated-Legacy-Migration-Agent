@@ -1,0 +1,199 @@
+{
+  "$defs": {
+    "ImplementationInterventionEvidence": {
+      "additionalProperties": false,
+      "description": "One digest-bound public fact supporting an Engineer implementation stop.",
+      "properties": {
+        "affected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Affected Paths",
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "source_digest",
+        "summary",
+        "affected_paths"
+      ],
+      "title": "ImplementationInterventionEvidence",
+      "type": "object"
+    },
+    "PlanningInterventionOption": {
+      "description": "Non-authorizing terminal choices for an incomplete planning outcome.",
+      "enum": [
+        "resolve_evidence_and_replan",
+        "expand_scope_and_replan",
+        "stop_request"
+      ],
+      "title": "PlanningInterventionOption",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Non-authorizing Engineer stop bound to its exact approved implementation input.",
+  "properties": {
+    "affected_paths": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Affected Paths",
+      "type": "array"
+    },
+    "agent_definition_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Agent Definition Digest",
+      "type": "string"
+    },
+    "agent_version": {
+      "maxLength": 80,
+      "pattern": "^engineer/v[1-9][0-9]*$",
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/ImplementationInterventionEvidence"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "input_evidence_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Input Evidence Digest",
+      "type": "string"
+    },
+    "intervention_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Intervention Id",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "options": {
+      "items": {
+        "$ref": "#/$defs/PlanningInterventionOption"
+      },
+      "maxItems": 3,
+      "minItems": 2,
+      "title": "Options",
+      "type": "array"
+    },
+    "public_concerns": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Public Concerns",
+      "type": "array"
+    },
+    "reason": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "recommendation": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Recommendation",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "enum": [
+        "expand_scope",
+        "accept_high_impact_change"
+      ],
+      "title": "Requested Action",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "decision_required",
+      "default": "decision_required",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intervention_id",
+    "request_id",
+    "request_digest",
+    "manifest_id",
+    "manifest_digest",
+    "base_revision",
+    "agent_version",
+    "agent_definition_digest",
+    "input_evidence_digest",
+    "reason",
+    "requested_action",
+    "affected_paths",
+    "public_concerns",
+    "evidence",
+    "options",
+    "recommendation"
+  ],
+  "title": "ImplementationIntervention",
+  "type": "object"
+}

@@ -1,0 +1,356 @@
+{
+  "$defs": {
+    "WikiPromotionReport": {
+      "additionalProperties": false,
+      "description": "Immutable evidence for a rejected decision or an in-memory promotion plan.",
+      "properties": {
+        "authoritative_source_urls": {
+          "items": {
+            "format": "uri",
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Authoritative Source Urls",
+          "type": "array"
+        },
+        "catalog_content_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Catalog Content Digest",
+          "type": "string"
+        },
+        "catalog_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Catalog Digest",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve",
+            "reject"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "decision_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Decision Digest",
+          "type": "string"
+        },
+        "decision_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "governance_policy_version": {
+          "const": "wiki-review/1.0",
+          "default": "wiki-review/1.0",
+          "title": "Governance Policy Version",
+          "type": "string"
+        },
+        "index_content_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Index Content Digest",
+          "type": "string"
+        },
+        "original_page_status": {
+          "const": "pilot",
+          "default": "pilot",
+          "title": "Original Page Status",
+          "type": "string"
+        },
+        "owner": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Owner",
+          "type": "string"
+        },
+        "page_content_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Page Content Digest",
+          "type": "string"
+        },
+        "page_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Page Id",
+          "type": "string"
+        },
+        "page_last_verified": {
+          "format": "date",
+          "title": "Page Last Verified",
+          "type": "string"
+        },
+        "page_path": {
+          "title": "Page Path",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "salesforce",
+            "mulesoft",
+            "workflow"
+          ],
+          "title": "Platform",
+          "type": "string"
+        },
+        "promotion_applied": {
+          "const": false,
+          "default": false,
+          "title": "Promotion Applied",
+          "type": "boolean"
+        },
+        "proposed_catalog_content_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposed Catalog Content Digest"
+        },
+        "proposed_catalog_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposed Catalog Digest"
+        },
+        "proposed_index_content_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposed Index Content Digest"
+        },
+        "proposed_page_status": {
+          "anyOf": [
+            {
+              "const": "reviewed",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposed Page Status"
+        },
+        "proposed_wiki_inventory_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposed Wiki Inventory Digest"
+        },
+        "report_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Report Id",
+          "type": "string"
+        },
+        "repository_revision": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Repository Revision",
+          "type": "string"
+        },
+        "request_as_of": {
+          "format": "date",
+          "title": "Request As Of",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "requested_action": {
+          "const": "promote_to_reviewed",
+          "default": "promote_to_reviewed",
+          "title": "Requested Action",
+          "type": "string"
+        },
+        "requester": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+          "title": "Requester",
+          "type": "string"
+        },
+        "reviewed_on": {
+          "format": "date",
+          "title": "Reviewed On",
+          "type": "string"
+        },
+        "reviewer": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+          "title": "Reviewer",
+          "type": "string"
+        },
+        "reviewer_identity_assurance": {
+          "const": "declarative_unverified",
+          "default": "declarative_unverified",
+          "title": "Reviewer Identity Assurance",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "promotion_planned",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "target_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target Version",
+          "type": "string"
+        },
+        "verified_reviewed_page_ids": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Verified Reviewed Page Ids",
+          "type": "array"
+        },
+        "wiki_inventory_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Wiki Inventory Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "report_id",
+        "status",
+        "decision",
+        "request_id",
+        "request_digest",
+        "decision_id",
+        "decision_digest",
+        "page_id",
+        "page_path",
+        "proposed_page_status",
+        "page_content_digest",
+        "catalog_digest",
+        "catalog_content_digest",
+        "index_content_digest",
+        "wiki_inventory_digest",
+        "proposed_catalog_digest",
+        "proposed_catalog_content_digest",
+        "proposed_index_content_digest",
+        "proposed_wiki_inventory_digest",
+        "verified_reviewed_page_ids",
+        "platform",
+        "source_version",
+        "target_version",
+        "owner",
+        "authoritative_source_urls",
+        "page_last_verified",
+        "request_as_of",
+        "reviewed_on",
+        "repository_revision",
+        "requester",
+        "reviewer"
+      ],
+      "title": "WikiPromotionReport",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Private durable record that one exact declarative decision was consumed.",
+  "properties": {
+    "decision_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Decision Digest",
+      "type": "string"
+    },
+    "governance_policy_version": {
+      "const": "wiki-review/1.0",
+      "default": "wiki-review/1.0",
+      "title": "Governance Policy Version",
+      "type": "string"
+    },
+    "receipt_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "report": {
+      "$ref": "#/$defs/WikiPromotionReport"
+    },
+    "report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "decision_consumed",
+      "default": "decision_consumed",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "decision_digest",
+    "report_digest",
+    "report"
+  ],
+  "title": "WikiPromotionReceipt",
+  "type": "object"
+}

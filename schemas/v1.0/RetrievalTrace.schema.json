@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "RetrievalHit": {
+      "additionalProperties": false,
+      "properties": {
+        "content_kind": {
+          "const": "curated_wiki_evidence",
+          "default": "curated_wiki_evidence",
+          "title": "Content Kind",
+          "type": "string"
+        },
+        "expanded_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expanded From"
+        },
+        "last_verified": {
+          "format": "date",
+          "title": "Last Verified",
+          "type": "string"
+        },
+        "matched_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Matched Fields",
+          "type": "array"
+        },
+        "owner": {
+          "title": "Owner",
+          "type": "string"
+        },
+        "page_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Page Digest",
+          "type": "string"
+        },
+        "page_id": {
+          "title": "Page Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "score": {
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "selected_content": {
+          "maxLength": 1600,
+          "minLength": 1,
+          "title": "Selected Content",
+          "type": "string"
+        },
+        "selected_content_digest": {
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "title": "Selected Content Digest",
+          "type": "string"
+        },
+        "source_version": {
+          "title": "Source Version",
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/WikiSource"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "pilot",
+            "reviewed",
+            "deprecated"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "target_version": {
+          "title": "Target Version",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "page_id",
+        "title",
+        "path",
+        "score",
+        "matched_fields",
+        "source_version",
+        "target_version",
+        "status",
+        "owner",
+        "last_verified",
+        "page_digest",
+        "selected_content",
+        "selected_content_digest",
+        "sources"
+      ],
+      "title": "RetrievalHit",
+      "type": "object"
+    },
+    "WikiSource": {
+      "additionalProperties": false,
+      "properties": {
+        "authority": {
+          "enum": [
+            "official",
+            "standard",
+            "project",
+            "research"
+          ],
+          "title": "Authority",
+          "type": "string"
+        },
+        "publisher": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Publisher",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "format": "uri",
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "publisher",
+        "authority"
+      ],
+      "title": "WikiSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "as_of": {
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "catalog_digest": {
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "title": "Catalog Digest",
+      "type": "string"
+    },
+    "evidence_bundle_digest": {
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "title": "Evidence Bundle Digest",
+      "type": "string"
+    },
+    "expand_links": {
+      "title": "Expand Links",
+      "type": "boolean"
+    },
+    "hits": {
+      "items": {
+        "$ref": "#/$defs/RetrievalHit"
+      },
+      "title": "Hits",
+      "type": "array"
+    },
+    "max_age_days": {
+      "minimum": 1,
+      "title": "Max Age Days",
+      "type": "integer"
+    },
+    "max_primary_hits": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Max Primary Hits",
+      "type": "integer"
+    },
+    "normalized_terms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Normalized Terms",
+      "type": "array"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Platform"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "query": {
+      "minLength": 1,
+      "title": "Query",
+      "type": "string"
+    },
+    "retrieval_strategy": {
+      "const": "deterministic_lexical",
+      "default": "deterministic_lexical",
+      "title": "Retrieval Strategy",
+      "type": "string"
+    },
+    "source_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Version"
+    },
+    "target_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Target Version"
+    }
+  },
+  "required": [
+    "query",
+    "normalized_terms",
+    "catalog_digest",
+    "as_of",
+    "max_age_days",
+    "max_primary_hits",
+    "expand_links",
+    "hits",
+    "evidence_bundle_digest"
+  ],
+  "title": "RetrievalTrace",
+  "type": "object"
+}

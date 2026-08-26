@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "fixture_id": "mulesoft-customer-status-api",
+  "platform": "mulesoft",
+  "graph": "source",
+  "review_status": "initial_label_set",
+  "edges": [
+    {
+      "kind": "http_listener_config_reference",
+      "source": "customer-status-api-flow",
+      "target": "customer-status-http-listener",
+      "symbol": "customer-status-http-listener"
+    },
+    {
+      "kind": "flow_reference",
+      "source": "customer-status-api-flow",
+      "target": "build-customer-status-response",
+      "symbol": "build-customer-status-response"
+    },
+    {
+      "kind": "property_reference",
+      "source": "customer-status-http-listener",
+      "target": "http.host",
+      "symbol": "${http.host}"
+    },
+    {
+      "kind": "property_reference",
+      "source": "customer-status-http-listener",
+      "target": "http.port",
+      "symbol": "${http.port}"
+    },
+    {
+      "kind": "dataweave_variable_reference",
+      "source": "build-customer-status-response",
+      "target": "customerId",
+      "symbol": "flowVars.customerId"
+    },
+    {
+      "kind": "dataweave_variable_reference",
+      "source": "build-customer-status-response",
+      "target": "responseStatus",
+      "symbol": "flowVars.responseStatus"
+    },
+    {
+      "kind": "munit_flow_reference",
+      "source": "build-customer-status-response-test",
+      "target": "build-customer-status-response",
+      "symbol": "build-customer-status-response"
+    },
+    {
+      "kind": "dataweave_variable_reference",
+      "source": "build-customer-status-response-test",
+      "target": "responseStatus",
+      "symbol": "flowVars.responseStatus"
+    },
+    {
+      "kind": "munit_suite_test",
+      "source": "customer-status-api-munit",
+      "target": "build-customer-status-response-test",
+      "symbol": "build-customer-status-response-test"
+    }
+  ]
+}

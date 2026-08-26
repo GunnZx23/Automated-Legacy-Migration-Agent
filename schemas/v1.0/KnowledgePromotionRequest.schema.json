@@ -1,0 +1,301 @@
+{
+  "$defs": {
+    "KnowledgeCitation": {
+      "additionalProperties": false,
+      "description": "Portable citation to one exact evidence object and optional locator.",
+      "properties": {
+        "citation_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Citation Id",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence Digest",
+          "type": "string"
+        },
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        }
+      },
+      "required": [
+        "citation_id",
+        "evidence_id",
+        "evidence_digest"
+      ],
+      "title": "KnowledgeCitation",
+      "type": "object"
+    },
+    "KnowledgeFact": {
+      "additionalProperties": false,
+      "description": "Concise structured knowledge; raw prose and source code are prohibited.",
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/KnowledgeCitation"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "fact_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "predicate": {
+          "enum": [
+            "depends_on",
+            "incompatible_with",
+            "maps_to",
+            "preserves",
+            "requires",
+            "uses",
+            "validated_by"
+          ],
+          "title": "Predicate",
+          "type": "string"
+        },
+        "subject": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "support": {
+          "enum": [
+            "direct",
+            "reviewed_derivation"
+          ],
+          "title": "Support",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_id",
+        "subject",
+        "predicate",
+        "value",
+        "support",
+        "citations"
+      ],
+      "title": "KnowledgeFact",
+      "type": "object"
+    },
+    "KnowledgeProvenance": {
+      "additionalProperties": false,
+      "description": "Exact reusable scope and source-run binding copied into every lifecycle record.",
+      "properties": {
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "source_evidence_package_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Evidence Package Digest",
+          "type": "string"
+        },
+        "source_graph_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Graph Digest",
+          "type": "string"
+        },
+        "source_model_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Model Digest",
+          "type": "string"
+        },
+        "source_policy_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Policy Digest",
+          "type": "string"
+        },
+        "source_request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Request Digest",
+          "type": "string"
+        },
+        "source_run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Source Run Id",
+          "type": "string"
+        },
+        "source_session_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Session Digest",
+          "type": "string"
+        },
+        "source_session_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Source Session Id",
+          "type": "string"
+        },
+        "source_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        },
+        "source_wiki_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Wiki Digest",
+          "type": "string"
+        },
+        "target_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target Version",
+          "type": "string"
+        },
+        "version_scope_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Version Scope Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_run_id",
+        "source_session_id",
+        "source_session_digest",
+        "source_evidence_package_digest",
+        "source_request_digest",
+        "source_graph_digest",
+        "source_wiki_digest",
+        "source_model_digest",
+        "source_policy_digest",
+        "platform",
+        "source_version",
+        "target_version",
+        "version_scope_digest"
+      ],
+      "title": "KnowledgeProvenance",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Controller-generated request to promote exact structured facts.",
+  "properties": {
+    "designated_reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Designated Reviewer",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "facts": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeFact"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Facts",
+      "type": "array"
+    },
+    "facts_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Facts Digest",
+      "type": "string"
+    },
+    "policy_version": {
+      "const": "knowledge-store/1.0",
+      "default": "knowledge-store/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "provenance": {
+      "$ref": "#/$defs/KnowledgeProvenance"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "const": "promote_cross_run_knowledge",
+      "default": "promote_cross_run_knowledge",
+      "title": "Requested Action",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requester": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Requester",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "promotion_requested",
+      "default": "promotion_requested",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "provenance",
+    "facts",
+    "facts_digest",
+    "requested_at",
+    "expires_at",
+    "requester",
+    "designated_reviewer"
+  ],
+  "title": "KnowledgePromotionRequest",
+  "type": "object"
+}

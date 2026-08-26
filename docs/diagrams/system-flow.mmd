@@ -1,0 +1,22 @@
+flowchart TB
+    S[Immutable source snapshot] --> G[Revision-bound dependency graph]
+    K[Curated versioned Agentic LLM Wiki] --> A[Architect model]
+    G --> A
+    A --> P[ArchitectManifestProposal]
+    P --> C[Controller policy and canonical manifest]
+    C --> I{Exact human manifest interrupt}
+    I -->|reject or modify| X[Safe stop; no candidate]
+    I -->|approve digest| E[Engineer model returns full-file plan]
+    E --> W[Controller applies exact paths in isolated workspace]
+    W --> D[Disk-derived ChangeSet]
+    D --> V[Controller-owned allowlisted validation]
+    V --> R[Terminal receipts and ValidationReport]
+    R --> Q[Validator evidence-only advisory]
+    Q --> B{Controller evidence classification}
+    B -->|ready for human review| H[Independent final-review stop]
+    B -->|recoverable attempt one| C2{Separate exact correction approval}
+    C2 -->|approved attempt two| E
+    C2 -->|not approved| X2[Safe stop; retry not executed]
+    B -->|plan invalid| N[Stop; new Architect request and manifest required]
+    B -->|environment unavailable or retry exhausted| U[Stop with unavailable or failed evidence]
+    H --> Z[No Git, deploy, publication, or pilot authority]

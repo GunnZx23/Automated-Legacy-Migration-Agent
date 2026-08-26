@@ -1,0 +1,28 @@
+<apex:page controller="LegacyAccountContactExplorerController"
+           readOnly="true"
+           lightningStylesheets="true"
+           showHeader="true"
+           sidebar="false">
+    <apex:form>
+        <apex:pageMessages id="messages" />
+        <apex:pageBlock title="Account Contact Explorer">
+            <apex:pageBlockSection columns="1">
+                <apex:selectList value="{!selectedAccountId}" size="1" label="Account">
+                    <apex:selectOptions value="{!accountOptions}" />
+                </apex:selectList>
+                <apex:commandButton value="Load Contacts"
+                                    action="{!loadContacts}"
+                                    reRender="messages,contactsPanel" />
+            </apex:pageBlockSection>
+
+            <apex:outputPanel id="contactsPanel" layout="block">
+                <apex:pageBlockTable value="{!contacts}" var="contactRecord">
+                    <apex:column headerValue="First Name" value="{!contactRecord.FirstName}" />
+                    <apex:column headerValue="Last Name" value="{!contactRecord.LastName}" />
+                    <apex:column headerValue="Email" value="{!contactRecord.Email}" />
+                    <apex:column headerValue="Phone" value="{!contactRecord.Phone}" />
+                </apex:pageBlockTable>
+            </apex:outputPanel>
+        </apex:pageBlock>
+    </apex:form>
+</apex:page>

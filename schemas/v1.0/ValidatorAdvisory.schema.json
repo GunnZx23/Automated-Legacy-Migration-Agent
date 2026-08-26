@@ -1,0 +1,80 @@
+{
+  "additionalProperties": false,
+  "description": "Review comments only; no field can alter the deterministic disposition.",
+  "properties": {
+    "advisory_only": {
+      "const": true,
+      "title": "Advisory Only",
+      "type": "boolean"
+    },
+    "assessment": {
+      "enum": [
+        "supports_report",
+        "raises_concern",
+        "escalate"
+      ],
+      "title": "Assessment",
+      "type": "string"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "cited_check_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Cited Check Ids",
+      "type": "array"
+    },
+    "cited_receipt_digests": {
+      "default": [],
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Cited Receipt Digests",
+      "type": "array"
+    },
+    "concerns": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 24,
+      "title": "Concerns",
+      "type": "array"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_digest",
+    "change_set_digest",
+    "report_digest",
+    "assessment",
+    "summary",
+    "cited_check_ids",
+    "advisory_only"
+  ],
+  "title": "ValidatorAdvisory",
+  "type": "object"
+}

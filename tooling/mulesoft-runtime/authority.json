@@ -1,0 +1,5 @@
+{
+  "schema_version": "1.0",
+  "enabled": false,
+  "disabled_reason": "No code-reviewed MuleSoft validation container authority has been built and attested."
+}

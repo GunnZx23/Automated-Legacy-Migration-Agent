@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "AgentDefinitionHeader": {
+      "additionalProperties": false,
+      "description": "Strict YAML front matter shared by every role definition.",
+      "properties": {
+        "input_contracts": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Input Contracts",
+          "type": "array"
+        },
+        "model_behavior": {
+          "$ref": "#/$defs/AgentModelBehavior"
+        },
+        "output_contract": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Output Contract",
+          "type": "string"
+        },
+        "permissions": {
+          "$ref": "#/$defs/AgentPermissions"
+        },
+        "role": {
+          "$ref": "#/$defs/AgentRole"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 80,
+          "minLength": 3,
+          "pattern": "^(architect|engineer|validator)/v[1-9][0-9]*$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "role",
+        "version",
+        "permissions",
+        "input_contracts",
+        "output_contract",
+        "model_behavior"
+      ],
+      "title": "AgentDefinitionHeader",
+      "type": "object"
+    },
+    "AgentModelBehavior": {
+      "additionalProperties": false,
+      "properties": {
+        "max_response_chars": {
+          "maximum": 250000,
+          "minimum": 1000,
+          "title": "Max Response Chars",
+          "type": "integer"
+        },
+        "private_chain_of_thought": {
+          "const": false,
+          "title": "Private Chain Of Thought",
+          "type": "boolean"
+        },
+        "structured_output": {
+          "const": true,
+          "title": "Structured Output",
+          "type": "boolean"
+        },
+        "tools": {
+          "const": "none",
+          "title": "Tools",
+          "type": "string"
+        }
+      },
+      "required": [
+        "structured_output",
+        "private_chain_of_thought",
+        "tools",
+        "max_response_chars"
+      ],
+      "title": "AgentModelBehavior",
+      "type": "object"
+    },
+    "AgentPermissions": {
+      "additionalProperties": false,
+      "description": "Declared capabilities; exact role policy is checked during loading.",
+      "properties": {
+        "command_execution": {
+          "title": "Command Execution",
+          "type": "boolean"
+        },
+        "human_gate_override": {
+          "title": "Human Gate Override",
+          "type": "boolean"
+        },
+        "isolated_workspace_write": {
+          "title": "Isolated Workspace Write",
+          "type": "boolean"
+        },
+        "network_access": {
+          "title": "Network Access",
+          "type": "boolean"
+        },
+        "repository_read": {
+          "title": "Repository Read",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "repository_read",
+        "isolated_workspace_write",
+        "command_execution",
+        "network_access",
+        "human_gate_override"
+      ],
+      "title": "AgentPermissions",
+      "type": "object"
+    },
+    "AgentRole": {
+      "enum": [
+        "architect",
+        "engineer",
+        "validator"
+      ],
+      "title": "AgentRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One validated role prompt and its immutable identity metadata.",
+  "properties": {
+    "definition_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Definition Digest",
+      "type": "string"
+    },
+    "header": {
+      "$ref": "#/$defs/AgentDefinitionHeader"
+    },
+    "prompt": {
+      "maxLength": 60000,
+      "minLength": 1200,
+      "title": "Prompt",
+      "type": "string"
+    },
+    "relative_path": {
+      "title": "Relative Path",
+      "type": "string"
+    }
+  },
+  "required": [
+    "header",
+    "relative_path",
+    "prompt",
+    "definition_digest"
+  ],
+  "title": "AgentDefinition",
+  "type": "object"
+}

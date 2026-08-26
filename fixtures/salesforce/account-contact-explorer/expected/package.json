@@ -1,0 +1,11 @@
+{
+  "name": "account-contact-explorer-expected",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:unit": "sfdx-lwc-jest"
+  },
+  "devDependencies": {
+    "@salesforce/sfdx-lwc-jest": "7.9.0"
+  }
+}

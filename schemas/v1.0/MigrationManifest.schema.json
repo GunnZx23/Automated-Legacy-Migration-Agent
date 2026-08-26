@@ -1,0 +1,310 @@
+{
+  "$defs": {
+    "ApprovalAction": {
+      "enum": [
+        "freeze_scope",
+        "approve_manifest",
+        "expand_scope",
+        "accept_high_impact_change",
+        "commit",
+        "push",
+        "open_pull_request",
+        "sandbox_validation",
+        "production_validation",
+        "deploy",
+        "quick_deploy",
+        "destructive_change",
+        "publish"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    },
+    "DependencyEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "relation": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Relation",
+          "type": "string"
+        },
+        "resolved": {
+          "default": true,
+          "title": "Resolved",
+          "type": "boolean"
+        },
+        "source": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "relation",
+        "source"
+      ],
+      "title": "DependencyEvidence",
+      "type": "object"
+    },
+    "EnvironmentKind": {
+      "enum": [
+        "local",
+        "salesforce_sandbox",
+        "mule_runtime",
+        "production"
+      ],
+      "title": "EnvironmentKind",
+      "type": "string"
+    },
+    "ManifestStatus": {
+      "enum": [
+        "planned",
+        "decision_required"
+      ],
+      "title": "ManifestStatus",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "RiskCategory": {
+      "enum": [
+        "security",
+        "public_contract",
+        "destructive_change",
+        "cross_application",
+        "incomplete_evidence",
+        "dynamic_dependency"
+      ],
+      "title": "RiskCategory",
+      "type": "string"
+    },
+    "RiskFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/RiskCategory"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "requires_human_decision": {
+          "default": true,
+          "title": "Requires Human Decision",
+          "type": "boolean"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "summary"
+      ],
+      "title": "RiskFinding",
+      "type": "object"
+    },
+    "TransformationStep": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "input_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Input Paths",
+          "type": "array"
+        },
+        "output_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Output Paths",
+          "type": "array"
+        },
+        "step_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Step Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "description",
+        "input_paths",
+        "output_paths"
+      ],
+      "title": "TransformationStep",
+      "type": "object"
+    },
+    "ValidationCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "command_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/EnvironmentKind",
+          "default": "local"
+        },
+        "purpose": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check_id",
+        "command_id",
+        "purpose"
+      ],
+      "title": "ValidationCommand",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approved_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Approved Paths",
+      "type": "array"
+    },
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/DependencyEvidence"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "implementation_contract": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Implementation Contract",
+      "type": "array"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "required_approvals": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ApprovalAction"
+      },
+      "title": "Required Approvals",
+      "type": "array"
+    },
+    "risks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RiskFinding"
+      },
+      "title": "Risks",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ManifestStatus",
+      "default": "planned"
+    },
+    "transformations": {
+      "items": {
+        "$ref": "#/$defs/TransformationStep"
+      },
+      "title": "Transformations",
+      "type": "array"
+    },
+    "validation_plan": {
+      "items": {
+        "$ref": "#/$defs/ValidationCommand"
+      },
+      "title": "Validation Plan",
+      "type": "array"
+    }
+  },
+  "required": [
+    "manifest_id",
+    "request_id",
+    "platform",
+    "base_revision",
+    "approved_paths",
+    "dependencies",
+    "transformations",
+    "validation_plan"
+  ],
+  "title": "MigrationManifest",
+  "type": "object"
+}

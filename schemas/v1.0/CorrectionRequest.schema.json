@@ -1,0 +1,143 @@
+{
+  "$defs": {
+    "CorrectionAction": {
+      "enum": [
+        "complete",
+        "retry_implementation",
+        "replan_with_new_approval",
+        "stop_environment",
+        "stop_exhausted"
+      ],
+      "title": "CorrectionAction",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Controller output bound to one exact failed validation attempt.",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/CorrectionAction"
+    },
+    "base_revision": {
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "change_set_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Change Set Id",
+      "type": "string"
+    },
+    "completed_attempt": {
+      "minimum": 1,
+      "title": "Completed Attempt",
+      "type": "integer"
+    },
+    "correction_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Correction Id",
+      "type": "string"
+    },
+    "failed_check_ids": {
+      "items": {
+        "maxLength": 160,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Failed Check Ids",
+      "type": "array"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "maximum_attempts": {
+      "minimum": 1,
+      "title": "Maximum Attempts",
+      "type": "integer"
+    },
+    "next_attempt": {
+      "anyOf": [
+        {
+          "minimum": 2,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Next Attempt"
+    },
+    "reason": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "report_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requires_new_manifest_approval": {
+      "title": "Requires New Manifest Approval",
+      "type": "boolean"
+    },
+    "requires_new_manifest_digest": {
+      "title": "Requires New Manifest Digest",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "correction_id",
+    "request_id",
+    "manifest_id",
+    "change_set_id",
+    "report_id",
+    "base_revision",
+    "manifest_digest",
+    "report_digest",
+    "change_set_digest",
+    "failed_check_ids",
+    "completed_attempt",
+    "maximum_attempts",
+    "action",
+    "requires_new_manifest_approval",
+    "requires_new_manifest_digest",
+    "reason"
+  ],
+  "title": "CorrectionRequest",
+  "type": "object"
+}

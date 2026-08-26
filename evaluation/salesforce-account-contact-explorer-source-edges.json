@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "fixture_id": "salesforce-account-contact-explorer",
+  "platform": "salesforce",
+  "graph": "source",
+  "review_status": "unreviewed_initial",
+  "edges": [
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Account.Id", "symbol": "Account.Id"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Account.Name", "symbol": "Account.Name"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.AccountId", "symbol": "Contact.AccountId"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.Email", "symbol": "Contact.Email"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.FirstName", "symbol": "Contact.FirstName"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.Id", "symbol": "Contact.Id"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.LastName", "symbol": "Contact.LastName"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Contact.Phone", "symbol": "Contact.Phone"},
+    {"kind": "soql_object", "source": "LegacyAccountContactExplorerController", "target": "Account", "symbol": "Account"},
+    {"kind": "soql_object", "source": "LegacyAccountContactExplorerController", "target": "Contact", "symbol": "Contact"},
+    {"kind": "apex_class_reference", "source": "LegacyAccountContactExplorerControllerTest", "target": "LegacyAccountContactExplorerController", "symbol": "LegacyAccountContactExplorerController"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerControllerTest", "target": "Account.Id", "symbol": "Account.Id"},
+    {"kind": "soql_field", "source": "LegacyAccountContactExplorerControllerTest", "target": "Account.Name", "symbol": "Account.Name"},
+    {"kind": "apex_page_reference", "source": "LegacyAccountContactExplorerControllerTest", "target": "LegacyAccountContactExplorer", "symbol": "LegacyAccountContactExplorer"},
+    {"kind": "soql_object", "source": "LegacyAccountContactExplorerControllerTest", "target": "Account", "symbol": "Account"},
+    {"kind": "visualforce_controller", "source": "LegacyAccountContactExplorer", "target": "LegacyAccountContactExplorerController", "symbol": "LegacyAccountContactExplorerController"},
+    {"kind": "permission_class_access", "source": "AccountContactExplorerUser", "target": "LegacyAccountContactExplorerController", "symbol": "LegacyAccountContactExplorerController"},
+    {"kind": "permission_field_access", "source": "AccountContactExplorerUser", "target": "Contact.Email", "symbol": "Contact.Email"},
+    {"kind": "permission_field_access", "source": "AccountContactExplorerUser", "target": "Contact.Phone", "symbol": "Contact.Phone"},
+    {"kind": "permission_page_access", "source": "AccountContactExplorerUser", "target": "LegacyAccountContactExplorer", "symbol": "LegacyAccountContactExplorer"},
+    {"kind": "permission_object_access", "source": "AccountContactExplorerUser", "target": "Account", "symbol": "Account"},
+    {"kind": "permission_object_access", "source": "AccountContactExplorerUser", "target": "Contact", "symbol": "Contact"}
+  ]
+}

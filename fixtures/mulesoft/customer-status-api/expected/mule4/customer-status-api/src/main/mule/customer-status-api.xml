@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <configuration-properties file="application.yaml"/>
+
+    <http:listener-config name="customer-status-http-listener" basePath="/api">
+        <http:listener-connection host="${http.host}" port="${http.port}"/>
+    </http:listener-config>
+
+    <flow name="customer-status-api-flow">
+        <http:listener config-ref="customer-status-http-listener"
+                       path="/customers/{customerId}/status"
+                       allowedMethods="GET"/>
+        <set-variable variableName="customerId"
+                      value="#[attributes.uriParams.customerId as String]"/>
+        <flow-ref name="build-customer-status-response"/>
+    </flow>
+
+    <sub-flow name="build-customer-status-response">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload resource="dw/customer-status-response.dwl"/>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+</mule>

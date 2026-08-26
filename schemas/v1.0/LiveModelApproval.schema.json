@@ -1,0 +1,29 @@
+{
+  "additionalProperties": false,
+  "description": "Explicit operator gate for sending capstone context to a live provider.",
+  "properties": {
+    "allow_live_api": {
+      "const": true,
+      "title": "Allow Live Api",
+      "type": "boolean"
+    },
+    "allow_prompt_data_sharing": {
+      "const": true,
+      "title": "Allow Prompt Data Sharing",
+      "type": "boolean"
+    },
+    "approved_by": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Approved By",
+      "type": "string"
+    }
+  },
+  "required": [
+    "allow_live_api",
+    "allow_prompt_data_sharing",
+    "approved_by"
+  ],
+  "title": "LiveModelApproval",
+  "type": "object"
+}

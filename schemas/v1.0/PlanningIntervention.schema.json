@@ -1,0 +1,202 @@
+{
+  "$defs": {
+    "ApprovalAction": {
+      "enum": [
+        "freeze_scope",
+        "approve_manifest",
+        "expand_scope",
+        "accept_high_impact_change",
+        "commit",
+        "push",
+        "open_pull_request",
+        "sandbox_validation",
+        "production_validation",
+        "deploy",
+        "quick_deploy",
+        "destructive_change",
+        "publish"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    },
+    "PlanningInterventionEvidence": {
+      "additionalProperties": false,
+      "description": "One immutable evidence source explaining why planning stopped.",
+      "properties": {
+        "affected_paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Affected Paths",
+          "type": "array"
+        },
+        "category": {
+          "$ref": "#/$defs/RiskCategory"
+        },
+        "source": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "unresolved_items": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Unresolved Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "category",
+        "source",
+        "source_digest",
+        "summary",
+        "affected_paths",
+        "unresolved_items"
+      ],
+      "title": "PlanningInterventionEvidence",
+      "type": "object"
+    },
+    "PlanningInterventionOption": {
+      "description": "Non-authorizing terminal choices for an incomplete planning outcome.",
+      "enum": [
+        "resolve_evidence_and_replan",
+        "expand_scope_and_replan",
+        "stop_request"
+      ],
+      "title": "PlanningInterventionOption",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "RiskCategory": {
+      "enum": [
+        "security",
+        "public_contract",
+        "destructive_change",
+        "cross_application",
+        "incomplete_evidence",
+        "dynamic_dependency"
+      ],
+      "title": "RiskCategory",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Digest-bound preflight stop that grants no implementation authority.",
+  "properties": {
+    "affected_paths": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Affected Paths",
+      "type": "array"
+    },
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/PlanningInterventionEvidence"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "intervention_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Intervention Id",
+      "type": "string"
+    },
+    "options": {
+      "items": {
+        "$ref": "#/$defs/PlanningInterventionOption"
+      },
+      "maxItems": 3,
+      "minItems": 2,
+      "title": "Options",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "reason": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "recommendation": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Recommendation",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "$ref": "#/$defs/ApprovalAction"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intervention_id",
+    "request_id",
+    "request_digest",
+    "platform",
+    "base_revision",
+    "reason",
+    "requested_action",
+    "affected_paths",
+    "evidence",
+    "options",
+    "recommendation"
+  ],
+  "title": "PlanningIntervention",
+  "type": "object"
+}

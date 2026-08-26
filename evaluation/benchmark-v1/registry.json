@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "legacy-migration-benchmark-v1",
+  "declaration_status": "predeclared_unmeasured",
+  "repetitions": 3,
+  "require_full_cross_product": true,
+  "cases": [
+    {
+      "case_id": "salesforce-simple-page-controller",
+      "platform": "salesforce",
+      "complexity": "simple",
+      "title": "Visualforce page and Apex controller migration",
+      "fixture_path": "fixtures/salesforce/account-contact-explorer/input",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "salesforce-medium-account-contact",
+      "platform": "salesforce",
+      "complexity": "medium",
+      "title": "Account and Contact LWC migration unit",
+      "fixture_path": "fixtures/salesforce/account-contact-explorer/input",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "salesforce-complex-dynamic-closure",
+      "platform": "salesforce",
+      "complexity": "complex",
+      "title": "Dynamic SOQL and external-consumer intervention",
+      "fixture_path": "fixtures/salesforce/account-contact-explorer/input",
+      "expected_outcome": "decision_required"
+    },
+    {
+      "case_id": "mule-simple-response-subflow",
+      "platform": "mulesoft",
+      "complexity": "simple",
+      "title": "Mule response-building subflow migration",
+      "fixture_path": "fixtures/mulesoft/customer-status-api/input",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "mule-medium-http-flow",
+      "platform": "mulesoft",
+      "complexity": "medium",
+      "title": "HTTP, DataWeave, configuration, and MUnit migration",
+      "fixture_path": "fixtures/mulesoft/customer-status-api/input",
+      "expected_outcome": "succeeded"
+    },
+    {
+      "case_id": "mule-complex-error-contract",
+      "platform": "mulesoft",
+      "complexity": "complex",
+      "title": "Error-handler and public HTTP contract intervention",
+      "fixture_path": "fixtures/mulesoft/customer-status-api/input",
+      "expected_outcome": "decision_required"
+    }
+  ],
+  "configurations": [
+    {
+      "config_id": "full-agent",
+      "uses_dependency_graph": true,
+      "uses_wiki": true,
+      "uses_agents": true,
+      "uses_bounded_correction": true
+    },
+    {
+      "config_id": "ablation-no-wiki",
+      "uses_dependency_graph": true,
+      "uses_wiki": false,
+      "uses_agents": true,
+      "uses_bounded_correction": true
+    },
+    {
+      "config_id": "ablation-no-correction",
+      "uses_dependency_graph": true,
+      "uses_wiki": true,
+      "uses_agents": true,
+      "uses_bounded_correction": false
+    },
+    {
+      "config_id": "static-only",
+      "uses_dependency_graph": true,
+      "uses_wiki": false,
+      "uses_agents": false,
+      "uses_bounded_correction": false
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "operational_success_rate",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "semantic_conformance_rate",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "authorization_violations",
+      "unit": "count",
+      "direction": "maximum",
+      "threshold": 0
+    },
+    {
+      "metric_id": "ready_claim_precision",
+      "unit": "proportion",
+      "direction": "minimum",
+      "threshold": 1
+    },
+    {
+      "metric_id": "dependency_recall",
+      "unit": "proportion",
+      "direction": "minimum",
+      "threshold": 0.95
+    },
+    {
+      "metric_id": "intervention_precision",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "intervention_recall",
+      "unit": "proportion",
+      "direction": "minimum",
+      "threshold": 1
+    },
+    {
+      "metric_id": "first_pass_validation_rate",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "bounded_repair_success_rate",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "wiki_support_accuracy",
+      "unit": "proportion",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "escaped_defects",
+      "unit": "count",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "escaped_high_impact_defects",
+      "unit": "count",
+      "direction": "maximum",
+      "threshold": 0
+    },
+    {
+      "metric_id": "accepted_migration_units",
+      "unit": "count",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "stage_latency_ms",
+      "unit": "milliseconds",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "accepted_unit_latency_ms",
+      "unit": "milliseconds",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "input_tokens",
+      "unit": "tokens",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "output_tokens",
+      "unit": "tokens",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "cost_micro_usd",
+      "unit": "micro_usd",
+      "direction": "report_only",
+      "threshold": null
+    },
+    {
+      "metric_id": "cost_per_accepted_unit_micro_usd",
+      "unit": "micro_usd_per_unit",
+      "direction": "report_only",
+      "threshold": null
+    }
+  ]
+}

@@ -1,0 +1,727 @@
+{
+  "schema_version": "1.0",
+  "results_id": "legacy-migration-benchmark-v1-current",
+  "registry_id": "legacy-migration-benchmark-v1",
+  "snapshot_status": "not_performed",
+  "execution_boundary": {
+    "provider_invoked": false,
+    "external_platform_invoked": false,
+    "salesforce_org_invoked": false,
+    "mulesoft_runtime_invoked": false,
+    "authentication_invoked": false,
+    "human_gate_performed": false,
+    "external_authority_granted": false
+  },
+  "cells": [
+    {
+      "cell_id": "salesforce-simple-page-controller--full-agent--r1",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--full-agent--r2",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--full-agent--r3",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-wiki--r1",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-wiki--r2",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-wiki--r3",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-correction--r1",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-correction--r2",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--ablation-no-correction--r3",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--static-only--r1",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--static-only--r2",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-simple-page-controller--static-only--r3",
+      "case_id": "salesforce-simple-page-controller",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--full-agent--r1",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--full-agent--r2",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--full-agent--r3",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-wiki--r1",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-wiki--r2",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-wiki--r3",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-correction--r1",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-correction--r2",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--ablation-no-correction--r3",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--static-only--r1",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--static-only--r2",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-medium-account-contact--static-only--r3",
+      "case_id": "salesforce-medium-account-contact",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--full-agent--r1",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--full-agent--r2",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--full-agent--r3",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-wiki--r1",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-wiki--r2",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-wiki--r3",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-correction--r1",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-correction--r2",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--ablation-no-correction--r3",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--static-only--r1",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--static-only--r2",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "salesforce-complex-dynamic-closure--static-only--r3",
+      "case_id": "salesforce-complex-dynamic-closure",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--full-agent--r1",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--full-agent--r2",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--full-agent--r3",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-wiki--r1",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-wiki--r2",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-wiki--r3",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-correction--r1",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-correction--r2",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--ablation-no-correction--r3",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--static-only--r1",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--static-only--r2",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-simple-response-subflow--static-only--r3",
+      "case_id": "mule-simple-response-subflow",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--full-agent--r1",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--full-agent--r2",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--full-agent--r3",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-wiki--r1",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-wiki--r2",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-wiki--r3",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-correction--r1",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-correction--r2",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--ablation-no-correction--r3",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--static-only--r1",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--static-only--r2",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-medium-http-flow--static-only--r3",
+      "case_id": "mule-medium-http-flow",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--full-agent--r1",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "full-agent",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--full-agent--r2",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "full-agent",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--full-agent--r3",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "full-agent",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-wiki--r1",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-wiki",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-wiki--r2",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-wiki",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-wiki--r3",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-wiki",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-correction--r1",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-correction",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-correction--r2",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-correction",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--ablation-no-correction--r3",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "ablation-no-correction",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--static-only--r1",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "static-only",
+      "repetition": 1,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--static-only--r2",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "static-only",
+      "repetition": 2,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    },
+    {
+      "cell_id": "mule-complex-error-contract--static-only--r3",
+      "case_id": "mule-complex-error-contract",
+      "config_id": "static-only",
+      "repetition": 3,
+      "status": "not_performed",
+      "reason": "formal_run_not_performed"
+    }
+  ],
+  "summary": {
+    "planned_cells": 72,
+    "recorded_cells": 72,
+    "status_counts": {
+      "succeeded": 0,
+      "failed": 0,
+      "decision_required": 0,
+      "unavailable": 0,
+      "not_performed": 72
+    },
+    "metrics": [
+      {
+        "metric_id": "operational_success_rate",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "semantic_conformance_rate",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "authorization_violations",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "ready_claim_precision",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "dependency_recall",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "intervention_precision",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "intervention_recall",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "first_pass_validation_rate",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "bounded_repair_success_rate",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "wiki_support_accuracy",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "escaped_defects",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "escaped_high_impact_defects",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "accepted_migration_units",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "stage_latency_ms",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "accepted_unit_latency_ms",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "input_tokens",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "output_tokens",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "cost_micro_usd",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      },
+      {
+        "metric_id": "cost_per_accepted_unit_micro_usd",
+        "value": null,
+        "measured_cells": 0,
+        "threshold_met": null
+      }
+    ],
+    "complete": false,
+    "full_agent_gate_passed": false,
+    "passed": false
+  },
+  "limitations": [
+    "Formal full-agent, ablation, and static benchmark runs were not performed after the redundant raw evidence snapshot was removed.",
+    "No model provider, Salesforce org, MuleSoft runtime, authentication service, human approval gate, deployment, publication, or external authority was invoked."
+  ]
+}

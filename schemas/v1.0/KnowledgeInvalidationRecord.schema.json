@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "description": "Immutable invalidation of one exact promotion record.",
+  "properties": {
+    "invalidated_at": {
+      "format": "date-time",
+      "title": "Invalidated At",
+      "type": "string"
+    },
+    "invalidated_by": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Invalidated By",
+      "type": "string"
+    },
+    "invalidation_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Invalidation Id",
+      "type": "string"
+    },
+    "policy_version": {
+      "const": "knowledge-store/1.0",
+      "default": "knowledge-store/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "graph_changed",
+        "manual_review",
+        "model_changed",
+        "policy_changed",
+        "source_drift",
+        "version_changed",
+        "wiki_superseded"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "record_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Record Digest",
+      "type": "string"
+    },
+    "record_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "invalidated",
+      "default": "invalidated",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "invalidation_id",
+    "record_id",
+    "record_digest",
+    "reason",
+    "invalidated_at",
+    "invalidated_by"
+  ],
+  "title": "KnowledgeInvalidationRecord",
+  "type": "object"
+}

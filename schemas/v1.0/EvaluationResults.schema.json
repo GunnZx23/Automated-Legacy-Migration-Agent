@@ -1,0 +1,337 @@
+{
+  "$defs": {
+    "EvaluationCell": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "cell_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "config_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Config Id",
+          "type": "string"
+        },
+        "reason": {
+          "const": "formal_run_not_performed",
+          "title": "Reason",
+          "type": "string"
+        },
+        "repetition": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Repetition",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/ResultStatus"
+        }
+      },
+      "required": [
+        "cell_id",
+        "case_id",
+        "config_id",
+        "repetition",
+        "status",
+        "reason"
+      ],
+      "title": "EvaluationCell",
+      "type": "object"
+    },
+    "EvaluationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "const": false,
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "full_agent_gate_passed": {
+          "const": false,
+          "title": "Full Agent Gate Passed",
+          "type": "boolean"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricAggregate"
+          },
+          "maxItems": 19,
+          "minItems": 19,
+          "title": "Metrics",
+          "type": "array"
+        },
+        "passed": {
+          "const": false,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "planned_cells": {
+          "const": 72,
+          "title": "Planned Cells",
+          "type": "integer"
+        },
+        "recorded_cells": {
+          "const": 72,
+          "title": "Recorded Cells",
+          "type": "integer"
+        },
+        "status_counts": {
+          "$ref": "#/$defs/StatusCounts"
+        }
+      },
+      "required": [
+        "planned_cells",
+        "recorded_cells",
+        "status_counts",
+        "metrics",
+        "complete",
+        "full_agent_gate_passed",
+        "passed"
+      ],
+      "title": "EvaluationSummary",
+      "type": "object"
+    },
+    "ExecutionBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "authentication_invoked": {
+          "const": false,
+          "title": "Authentication Invoked",
+          "type": "boolean"
+        },
+        "external_authority_granted": {
+          "const": false,
+          "title": "External Authority Granted",
+          "type": "boolean"
+        },
+        "external_platform_invoked": {
+          "const": false,
+          "title": "External Platform Invoked",
+          "type": "boolean"
+        },
+        "human_gate_performed": {
+          "const": false,
+          "title": "Human Gate Performed",
+          "type": "boolean"
+        },
+        "mulesoft_runtime_invoked": {
+          "const": false,
+          "title": "Mulesoft Runtime Invoked",
+          "type": "boolean"
+        },
+        "provider_invoked": {
+          "const": false,
+          "title": "Provider Invoked",
+          "type": "boolean"
+        },
+        "salesforce_org_invoked": {
+          "const": false,
+          "title": "Salesforce Org Invoked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider_invoked",
+        "external_platform_invoked",
+        "salesforce_org_invoked",
+        "mulesoft_runtime_invoked",
+        "authentication_invoked",
+        "human_gate_performed",
+        "external_authority_granted"
+      ],
+      "title": "ExecutionBoundary",
+      "type": "object"
+    },
+    "MetricAggregate": {
+      "additionalProperties": false,
+      "properties": {
+        "measured_cells": {
+          "minimum": 0,
+          "title": "Measured Cells",
+          "type": "integer"
+        },
+        "metric_id": {
+          "$ref": "#/$defs/MetricId"
+        },
+        "threshold_met": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Threshold Met"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "metric_id",
+        "value",
+        "measured_cells",
+        "threshold_met"
+      ],
+      "title": "MetricAggregate",
+      "type": "object"
+    },
+    "MetricId": {
+      "enum": [
+        "operational_success_rate",
+        "semantic_conformance_rate",
+        "authorization_violations",
+        "ready_claim_precision",
+        "dependency_recall",
+        "intervention_precision",
+        "intervention_recall",
+        "first_pass_validation_rate",
+        "bounded_repair_success_rate",
+        "wiki_support_accuracy",
+        "escaped_defects",
+        "escaped_high_impact_defects",
+        "accepted_migration_units",
+        "stage_latency_ms",
+        "accepted_unit_latency_ms",
+        "input_tokens",
+        "output_tokens",
+        "cost_micro_usd",
+        "cost_per_accepted_unit_micro_usd"
+      ],
+      "title": "MetricId",
+      "type": "string"
+    },
+    "ResultStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "decision_required",
+        "unavailable",
+        "not_performed"
+      ],
+      "title": "ResultStatus",
+      "type": "string"
+    },
+    "StatusCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "decision_required": {
+          "minimum": 0,
+          "title": "Decision Required",
+          "type": "integer"
+        },
+        "failed": {
+          "minimum": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "not_performed": {
+          "minimum": 0,
+          "title": "Not Performed",
+          "type": "integer"
+        },
+        "succeeded": {
+          "minimum": 0,
+          "title": "Succeeded",
+          "type": "integer"
+        },
+        "unavailable": {
+          "minimum": 0,
+          "title": "Unavailable",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "succeeded",
+        "failed",
+        "decision_required",
+        "unavailable",
+        "not_performed"
+      ],
+      "title": "StatusCounts",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCell"
+      },
+      "maxItems": 72,
+      "minItems": 72,
+      "title": "Cells",
+      "type": "array"
+    },
+    "execution_boundary": {
+      "$ref": "#/$defs/ExecutionBoundary"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "registry_id": {
+      "const": "legacy-migration-benchmark-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "results_id": {
+      "const": "legacy-migration-benchmark-v1-current",
+      "title": "Results Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_status": {
+      "const": "not_performed",
+      "title": "Snapshot Status",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/EvaluationSummary"
+    }
+  },
+  "required": [
+    "results_id",
+    "registry_id",
+    "snapshot_status",
+    "execution_boundary",
+    "cells",
+    "summary",
+    "limitations"
+  ],
+  "title": "EvaluationResults",
+  "type": "object"
+}

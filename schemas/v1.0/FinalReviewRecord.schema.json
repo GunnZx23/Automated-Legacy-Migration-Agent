@@ -1,0 +1,176 @@
+{
+  "additionalProperties": false,
+  "description": "Terminal, non-authorizing final-review outcome.",
+  "properties": {
+    "candidate_accepted": {
+      "title": "Candidate Accepted",
+      "type": "boolean"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "decision_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Decision Digest",
+      "type": "string"
+    },
+    "decision_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "deployment_performed": {
+      "const": false,
+      "default": false,
+      "title": "Deployment Performed",
+      "type": "boolean"
+    },
+    "external_actions_authorized": {
+      "default": [],
+      "maxItems": 0,
+      "minItems": 0,
+      "title": "External Actions Authorized",
+      "type": "array"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "next_action": {
+      "enum": [
+        "separate_external_action_required",
+        "stop_request",
+        "revise_and_start_new_review"
+      ],
+      "title": "Next Action",
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "changes_requested"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "policy_version": {
+      "const": "final-review/1.0",
+      "default": "final-review/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "publication_performed": {
+      "const": false,
+      "default": false,
+      "title": "Publication Performed",
+      "type": "boolean"
+    },
+    "record_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Record Id",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Review Request Digest",
+      "type": "string"
+    },
+    "reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "reviewer_identity_assurance": {
+      "const": "declarative_unverified",
+      "default": "declarative_unverified",
+      "title": "Reviewer Identity Assurance",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_mutated": {
+      "const": false,
+      "default": false,
+      "title": "Source Mutated",
+      "type": "boolean"
+    },
+    "source_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "thread_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Thread Id",
+      "type": "string"
+    },
+    "validation_report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Validation Report Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "record_id",
+    "review_id",
+    "review_request_digest",
+    "decision_id",
+    "decision_digest",
+    "outcome",
+    "next_action",
+    "candidate_accepted",
+    "run_id",
+    "thread_id",
+    "request_id",
+    "manifest_digest",
+    "change_set_digest",
+    "validation_report_digest",
+    "source_revision",
+    "reviewer",
+    "decided_at"
+  ],
+  "title": "FinalReviewRecord",
+  "type": "object"
+}

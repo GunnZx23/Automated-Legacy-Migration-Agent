@@ -1,0 +1,174 @@
+{
+  "additionalProperties": false,
+  "description": "Deterministic request to review one exact pilot page at one Git commit.",
+  "properties": {
+    "as_of": {
+      "format": "date",
+      "title": "As Of",
+      "type": "string"
+    },
+    "authoritative_source_urls": {
+      "items": {
+        "format": "uri",
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Authoritative Source Urls",
+      "type": "array"
+    },
+    "catalog_content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Catalog Content Digest",
+      "type": "string"
+    },
+    "catalog_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Catalog Digest",
+      "type": "string"
+    },
+    "designated_reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Designated Reviewer",
+      "type": "string"
+    },
+    "governance_policy_version": {
+      "const": "wiki-review/1.0",
+      "default": "wiki-review/1.0",
+      "title": "Governance Policy Version",
+      "type": "string"
+    },
+    "index_content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Index Content Digest",
+      "type": "string"
+    },
+    "owner": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Owner",
+      "type": "string"
+    },
+    "page_content_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Page Content Digest",
+      "type": "string"
+    },
+    "page_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Page Id",
+      "type": "string"
+    },
+    "page_last_verified": {
+      "format": "date",
+      "title": "Page Last Verified",
+      "type": "string"
+    },
+    "page_path": {
+      "title": "Page Path",
+      "type": "string"
+    },
+    "page_status": {
+      "const": "pilot",
+      "default": "pilot",
+      "title": "Page Status",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft",
+        "workflow"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "repository_revision": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "title": "Repository Revision",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "const": "promote_to_reviewed",
+      "default": "promote_to_reviewed",
+      "title": "Requested Action",
+      "type": "string"
+    },
+    "requester": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Requester",
+      "type": "string"
+    },
+    "reviewer_identity_assurance": {
+      "const": "declarative_unverified",
+      "default": "declarative_unverified",
+      "title": "Reviewer Identity Assurance",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_version": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Source Version",
+      "type": "string"
+    },
+    "status": {
+      "const": "review_requested",
+      "default": "review_requested",
+      "title": "Status",
+      "type": "string"
+    },
+    "target_version": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Target Version",
+      "type": "string"
+    },
+    "wiki_inventory_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Wiki Inventory Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "page_id",
+    "page_path",
+    "page_content_digest",
+    "catalog_digest",
+    "catalog_content_digest",
+    "index_content_digest",
+    "wiki_inventory_digest",
+    "platform",
+    "source_version",
+    "target_version",
+    "owner",
+    "authoritative_source_urls",
+    "page_last_verified",
+    "as_of",
+    "repository_revision",
+    "requester",
+    "designated_reviewer"
+  ],
+  "title": "WikiReviewRequest",
+  "type": "object"
+}

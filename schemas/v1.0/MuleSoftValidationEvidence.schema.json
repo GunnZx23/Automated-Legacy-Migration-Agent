@@ -1,0 +1,272 @@
+{
+  "$defs": {
+    "MUnitExecutionPhase": {
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "not_applicable",
+        "unavailable"
+      ],
+      "title": "MUnitExecutionPhase",
+      "type": "string"
+    },
+    "MUnitFailureReason": {
+      "enum": [
+        "test_failures",
+        "command_exit",
+        "test_failures_and_command_exit",
+        "no_executed_tests"
+      ],
+      "title": "MUnitFailureReason",
+      "type": "string"
+    },
+    "MUnitNotApplicableReason": {
+      "enum": [
+        "no_munit_check_planned",
+        "platform_slice_deferred"
+      ],
+      "title": "MUnitNotApplicableReason",
+      "type": "string"
+    },
+    "MUnitUnavailableReason": {
+      "enum": [
+        "maven_tool_missing",
+        "java_runtime_unavailable",
+        "mule_runtime_unavailable",
+        "dependency_resolution_unavailable",
+        "license_unavailable",
+        "report_unavailable"
+      ],
+      "title": "MUnitUnavailableReason",
+      "type": "string"
+    },
+    "MuleSoftEvidenceSource": {
+      "enum": [
+        "surefire_xml",
+        "local_result"
+      ],
+      "title": "MuleSoftEvidenceSource",
+      "type": "string"
+    },
+    "MuleSoftValidationStatus": {
+      "enum": [
+        "passed",
+        "failed",
+        "nonterminal",
+        "not_applicable",
+        "unavailable"
+      ],
+      "title": "MuleSoftValidationStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict aggregate evidence with no raw test or environment details.",
+  "properties": {
+    "applicable": {
+      "title": "Applicable",
+      "type": "boolean"
+    },
+    "artifact_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Artifact Digest",
+      "type": "string"
+    },
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "command_exit_code": {
+      "anyOf": [
+        {
+          "maximum": 255,
+          "minimum": -255,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Command Exit Code"
+    },
+    "errors": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Errors"
+    },
+    "evidence_binding": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Evidence Binding",
+      "type": "string"
+    },
+    "failure_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MUnitFailureReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "failures": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failures"
+    },
+    "local_process_exited": {
+      "title": "Local Process Exited",
+      "type": "boolean"
+    },
+    "not_applicable_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MUnitNotApplicableReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "passed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Passed"
+    },
+    "phase": {
+      "$ref": "#/$defs/MUnitExecutionPhase"
+    },
+    "report_count": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Report Count"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "skipped": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Skipped"
+    },
+    "source": {
+      "$ref": "#/$defs/MuleSoftEvidenceSource"
+    },
+    "status": {
+      "$ref": "#/$defs/MuleSoftValidationStatus"
+    },
+    "suites": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Suites"
+    },
+    "tests": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tests"
+    },
+    "unavailable_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MUnitUnavailableReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "validation_terminal": {
+      "title": "Validation Terminal",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "source",
+    "request_id",
+    "run_id",
+    "base_revision",
+    "artifact_digest",
+    "phase",
+    "status",
+    "applicable",
+    "validation_terminal",
+    "local_process_exited",
+    "evidence_binding"
+  ],
+  "title": "MuleSoftValidationEvidence",
+  "type": "object"
+}

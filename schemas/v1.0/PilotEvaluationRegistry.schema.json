@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "PilotCase": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_path": {
+          "anyOf": [
+            {
+              "maxLength": 240,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Path"
+        },
+        "case_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "evaluation_mode": {
+          "$ref": "#/$defs/PilotEvaluationMode"
+        },
+        "expected_model_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Model Id"
+        },
+        "expected_provider_id": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Provider Id"
+        },
+        "fixture_contract_path": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Fixture Contract Path",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "source_path": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Source Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "platform",
+        "evaluation_mode",
+        "source_path",
+        "fixture_contract_path"
+      ],
+      "title": "PilotCase",
+      "type": "object"
+    },
+    "PilotEvaluationMode": {
+      "enum": [
+        "local_static",
+        "agent_run"
+      ],
+      "title": "PilotEvaluationMode",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/PilotCase"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Cases",
+      "type": "array"
+    },
+    "declaration_status": {
+      "const": "predeclared_bounded_pilot",
+      "title": "Declaration Status",
+      "type": "string"
+    },
+    "registry_id": {
+      "const": "legacy-migration-pilot-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "require_full_completion": {
+      "const": false,
+      "title": "Require Full Completion",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "registry_id",
+    "declaration_status",
+    "require_full_completion",
+    "cases"
+  ],
+  "title": "PilotEvaluationRegistry",
+  "type": "object"
+}

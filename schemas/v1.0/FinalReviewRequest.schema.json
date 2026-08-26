@@ -1,0 +1,340 @@
+{
+  "$defs": {
+    "AgentDefinitionDigests": {
+      "additionalProperties": false,
+      "description": "Exact prompt-definition identities for the only three runtime agents.",
+      "properties": {
+        "architect": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Architect",
+          "type": "string"
+        },
+        "engineer": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Engineer",
+          "type": "string"
+        },
+        "validator": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Validator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "architect",
+        "engineer",
+        "validator"
+      ],
+      "title": "AgentDefinitionDigests",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Exact evidence package presented to one independent reviewer.",
+  "properties": {
+    "agent_definition_digests": {
+      "$ref": "#/$defs/AgentDefinitionDigests"
+    },
+    "architect_context_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Architect Context Digest",
+      "type": "string"
+    },
+    "architect_run_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Architect Run Digest",
+      "type": "string"
+    },
+    "authority_granted": {
+      "const": false,
+      "default": false,
+      "title": "Authority Granted",
+      "type": "boolean"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "change_set_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Change Set Id",
+      "type": "string"
+    },
+    "changed_paths": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Changed Paths",
+      "type": "array"
+    },
+    "completed_attempt": {
+      "maximum": 2,
+      "minimum": 1,
+      "title": "Completed Attempt",
+      "type": "integer"
+    },
+    "completed_lifecycle_index_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Completed Lifecycle Index Digest",
+      "type": "string"
+    },
+    "completed_lifecycle_kind": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Completed Lifecycle Kind",
+      "type": "string"
+    },
+    "dependency_graph_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Dependency Graph Digest",
+      "type": "string"
+    },
+    "designated_reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Designated Reviewer",
+      "type": "string"
+    },
+    "engineer_run_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Engineer Run Digest",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "model_id": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "options": {
+      "default": [
+        "accept",
+        "reject",
+        "request_changes"
+      ],
+      "items": {
+        "enum": [
+          "accept",
+          "reject",
+          "request_changes"
+        ],
+        "type": "string"
+      },
+      "title": "Options",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "policy_version": {
+      "const": "final-review/1.0",
+      "default": "final-review/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "provider_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Provider Id",
+      "type": "string"
+    },
+    "request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "const": "accept_candidate_for_next_manual_action",
+      "default": "accept_candidate_for_next_manual_action",
+      "title": "Requested Action",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requester": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Requester",
+      "type": "string"
+    },
+    "required_command_ids": {
+      "items": {
+        "maxLength": 160,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Required Command Ids",
+      "type": "array"
+    },
+    "required_receipt_digests": {
+      "items": {
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Required Receipt Digests",
+      "type": "array"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "reviewer_identity_assurance": {
+      "const": "declarative_unverified",
+      "default": "declarative_unverified",
+      "title": "Reviewer Identity Assurance",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope_policy_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Scope Policy Digest",
+      "type": "string"
+    },
+    "session_context_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Session Context Digest",
+      "type": "string"
+    },
+    "source_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "status": {
+      "const": "awaiting_final_review",
+      "default": "awaiting_final_review",
+      "title": "Status",
+      "type": "string"
+    },
+    "thread_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Thread Id",
+      "type": "string"
+    },
+    "validation_report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Validation Report Digest",
+      "type": "string"
+    },
+    "validation_report_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Validation Report Id",
+      "type": "string"
+    },
+    "validator_assessment_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Validator Assessment Digest",
+      "type": "string"
+    },
+    "wiki_trace_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Wiki Trace Digest",
+      "type": "string"
+    }
+  },
+  "required": [
+    "review_id",
+    "run_id",
+    "thread_id",
+    "request_id",
+    "manifest_id",
+    "change_set_id",
+    "validation_report_id",
+    "platform",
+    "source_revision",
+    "session_context_digest",
+    "request_digest",
+    "manifest_digest",
+    "change_set_digest",
+    "validation_report_digest",
+    "architect_context_digest",
+    "dependency_graph_digest",
+    "wiki_trace_digest",
+    "scope_policy_digest",
+    "architect_run_digest",
+    "engineer_run_digest",
+    "validator_assessment_digest",
+    "required_command_ids",
+    "required_receipt_digests",
+    "changed_paths",
+    "completed_attempt",
+    "agent_definition_digests",
+    "provider_id",
+    "model_id",
+    "completed_lifecycle_kind",
+    "completed_lifecycle_index_digest",
+    "requester",
+    "designated_reviewer",
+    "requested_at",
+    "expires_at"
+  ],
+  "title": "FinalReviewRequest",
+  "type": "object"
+}

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <http:listener-config name="customer-status-http-listener"
+                          host="${http.host}"
+                          port="${http.port}"
+                          basePath="/api"/>
+
+    <flow name="customer-status-api-flow">
+        <http:listener config-ref="customer-status-http-listener"
+                       path="/customers/{customerId}/status"
+                       allowedMethods="GET"/>
+        <set-variable variableName="customerId"
+                      value="#[inboundProperties.'http.uri.params'.customerId]"/>
+        <flow-ref name="build-customer-status-response"/>
+    </flow>
+
+    <sub-flow name="build-customer-status-response">
+        <set-variable variableName="responseStatus" value="#[&quot;ACTIVE&quot;]"/>
+        <dw:transform-message>
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+  customerId: flowVars.customerId,
+  status: flowVars.responseStatus,
+  source: "synthetic-fixture"
+}]]></dw:set-payload>
+        </dw:transform-message>
+    </sub-flow>
+</mule>

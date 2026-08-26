@@ -1,0 +1,307 @@
+{
+  "schema_version": "1.0",
+  "pages": [
+    {
+      "page_id": "salesforce-visualforce-to-lwc",
+      "title": "Salesforce Visualforce to LWC migration",
+      "path": "pages/salesforce-visualforce-to-lwc.md",
+      "summary": "Behavior-preserving migration from a Visualforce Load-button interaction to a Lightning Web Component with an imperative Apex service.",
+      "platforms": ["salesforce"],
+      "source_version": "Salesforce API 67.0",
+      "target_version": "Salesforce API 67.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["visualforce", "lwc", "apex", "rerender", "migration"],
+      "links": ["salesforce-apex-security", "salesforce-validation"],
+      "sources": [
+        {
+          "title": "Visualforce to Lightning Web Components Equivalents Reference",
+          "url": "https://developer.salesforce.com/files/EquivalentsReference.pdf",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Call Apex Methods",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/apex.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Call Apex Methods Imperatively",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/apex-call-imperative.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "salesforce-lightning-data-service",
+      "title": "Salesforce Lightning Data Service record retrieval",
+      "path": "pages/salesforce-lightning-data-service.md",
+      "summary": "Versioned guidance for LDS record retrieval and why the criteria-based, Load-button fixture instead uses imperative Apex.",
+      "platforms": ["salesforce"],
+      "source_version": "Salesforce API 67.0",
+      "target_version": "Salesforce API 67.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["lwc", "lightning-data-service", "uirecordapi", "getrecord", "wire"],
+      "links": ["salesforce-visualforce-to-lwc", "salesforce-validation"],
+      "sources": [
+        {
+          "title": "getRecord wire adapter",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/reference-wire-adapters-record",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "lightning/uiRecordApi module",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/reference-lightning-ui-api-record.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "getFieldValue helper",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/reference-get-field-value",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Data Guidelines",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/data-guidelines.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "salesforce-apex-security",
+      "title": "Salesforce Apex security for LWC services",
+      "path": "pages/salesforce-apex-security.md",
+      "summary": "API 67 Apex defaults, explicit sharing and user-mode access, safe errors, class access, and LWS/CSP guardrails for LWC services.",
+      "platforms": ["salesforce"],
+      "source_version": "Salesforce API 67.0",
+      "target_version": "Salesforce API 67.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["apex", "security", "with-sharing", "user-mode", "lws", "csp"],
+      "links": ["salesforce-validation", "workflow-safety-gates"],
+      "sources": [
+        {
+          "title": "Secure Apex Classes",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/apex-security.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Expose Apex Methods to Lightning Web Components",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/apex-expose-method.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Salesforce Developer Guide to the Summer 26 Release",
+          "url": "https://developer.salesforce.com/blogs/2026/06/the-salesforce-developers-guide-to-the-summer-26-release",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Build Components to Work with Lightning Web Security",
+          "url": "https://developer.salesforce.com/docs/platform/lightning-components-security/guide/lws-build-components.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Content Security Policy Overview",
+          "url": "https://developer.salesforce.com/docs/platform/lightning-components-security/guide/content-security-policy-intro.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "salesforce-validation",
+      "title": "Salesforce migration validation",
+      "path": "pages/salesforce-validation.md",
+      "summary": "Evidence boundaries for local LWC Jest, Apex tests, manifest-scoped sandbox dry runs, and exact-job terminal reports.",
+      "platforms": ["salesforce"],
+      "source_version": "Salesforce API 67.0",
+      "target_version": "Salesforce API 67.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["salesforce", "jest", "apex-test", "dry-run", "validation"],
+      "links": ["workflow-safety-gates"],
+      "sources": [
+        {
+          "title": "Run LWC Jest Tests",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/unit-testing-using-jest-run-tests.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Salesforce CLI project deploy start",
+          "url": "https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_project_deploy_start.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Test Lightning Web Components",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/testing.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Salesforce CLI project deploy report",
+          "url": "https://developer.salesforce.com/docs/platform/salesforce-cli-reference/guide/cli_reference_project_deploy_report.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "mulesoft-mule3-to-mule4",
+      "title": "Mule 3 to Mule 4 migration",
+      "path": "pages/mulesoft-mule3-to-mule4.md",
+      "summary": "Fixture-bounded Mule 3-to-4 migration semantics for variables, typed attributes, DataWeave 2, and error behavior.",
+      "platforms": ["mulesoft"],
+      "source_version": "Mule 3.9.5",
+      "target_version": "Mule 4.9.20",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["mulesoft", "mule-3", "mule-4", "dataweave", "error-handling"],
+      "links": ["mulesoft-toolchain-validation", "workflow-safety-gates"],
+      "sources": [
+        {
+          "title": "Migrate to Mule 4",
+          "url": "https://docs.mulesoft.com/mule-runtime/4.4/migration-intro",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "Migrating from DataWeave version 1 to 2",
+          "url": "https://docs.mulesoft.com/mule-runtime/4.4/migration-dataweave",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "Introduction to Mule 4: Mule Message",
+          "url": "https://docs.mulesoft.com/mule-runtime/4.9/about-mule-message",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "HTTP Connector XML Reference",
+          "url": "https://docs.mulesoft.com/http-connector/latest/http-connector-xml-reference",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "MUnit Test Structure Fundamentals",
+          "url": "https://docs.mulesoft.com/munit/latest/munit-test-concept",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "Migrating Exception Strategies to Mule Error Handlers",
+          "url": "https://docs.mulesoft.com/mule-runtime/4.4/migration-core-exception-strategies",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "mulesoft-toolchain-validation",
+      "title": "MuleSoft target toolchain and validation",
+      "path": "pages/mulesoft-toolchain-validation.md",
+      "summary": "Exact Mule 4.9.20 compatibility pins and evidence boundaries for static checks, Maven, MUnit, and runtime availability.",
+      "platforms": ["mulesoft"],
+      "source_version": "Mule 3.9.5",
+      "target_version": "Mule 4.9.20",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["mulesoft", "toolchain", "java-17", "maven", "munit", "http-connector"],
+      "links": ["mulesoft-mule3-to-mule4", "workflow-safety-gates"],
+      "sources": [
+        {
+          "title": "Mule Runtime Engine 4.9 Release Notes",
+          "url": "https://docs.mulesoft.com/release-notes/mule-runtime/mule-4.9.0-release-notes",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "Java Support",
+          "url": "https://docs.mulesoft.com/general/java-support",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "Mule Maven Plugin 4.10.1 Release Notes",
+          "url": "https://docs.mulesoft.com/release-notes/mule-maven-plugin/mule-maven-plugin-4.10.1-release-notes",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "MUnit 3.7.3 Release Notes",
+          "url": "https://docs.mulesoft.com/release-notes/munit/munit-3.7.3-release-notes",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        },
+        {
+          "title": "HTTP Connector Release Notes",
+          "url": "https://docs.mulesoft.com/release-notes/connector/connector-http",
+          "publisher": "MuleSoft",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "workflow-safety-gates",
+      "title": "Migration workflow safety gates",
+      "path": "pages/workflow-safety-gates.md",
+      "summary": "Project rules for manifest scope, exact approvals, receipts, terminal validation, retry limits, and human-only external actions.",
+      "platforms": [],
+      "source_version": "workflow 1.0",
+      "target_version": "workflow 1.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-24",
+      "tags": ["manifest", "approval", "receipt", "human-in-the-loop", "validation"],
+      "links": ["workflow-sequential-correction"],
+      "sources": [
+        {
+          "title": "LangGraph interrupts",
+          "url": "https://docs.langchain.com/oss/python/langgraph/interrupts",
+          "publisher": "LangChain",
+          "authority": "official"
+        }
+      ]
+    },
+    {
+      "page_id": "workflow-sequential-correction",
+      "title": "Evidence-grounded sequential planning and correction",
+      "path": "pages/workflow-sequential-correction.md",
+      "summary": "A single evidence-supported plan with bounded correction; ReAct is research inspiration, not a technical standard.",
+      "platforms": [],
+      "source_version": "workflow 1.0",
+      "target_version": "workflow 1.0",
+      "status": "pilot",
+      "owner": "capstone-project",
+      "last_verified": "2026-08-26",
+      "tags": ["react", "sequential-correction", "architect", "planning", "human-in-the-loop"],
+      "links": ["workflow-safety-gates"],
+      "sources": [
+        {
+          "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+          "url": "https://arxiv.org/abs/2210.03629",
+          "publisher": "arXiv",
+          "authority": "research"
+        }
+      ]
+    }
+  ]
+}
