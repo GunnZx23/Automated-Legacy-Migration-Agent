@@ -1073,6 +1073,40 @@ def _homebrew_node_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return lexical, cellar, resolved
 
 
+def test_discover_supported_node_treats_regular_usr_local_shape_as_protected_system(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lexical = tmp_path / "usr/local/bin/node"
+    lexical.parent.mkdir(parents=True)
+    lexical.write_bytes(b"bounded fake setup-node executable\n")
+    lexical.chmod(0o555)
+    sentinel = object()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(salesforce_runtime, "_SUPPORTED_NODE_PATHS", (lexical,))
+    monkeypatch.setattr(
+        salesforce_runtime,
+        "_HOMEBREW_NODE_CELLARS",
+        {lexical: tmp_path / "usr/local/Cellar/node"},
+    )
+    monkeypatch.setattr(
+        salesforce_runtime,
+        "_discover_protected_executable",
+        lambda path: path,
+    )
+
+    def capture(path: Path, *, cellar_root: Path | None) -> object:
+        captured["path"] = path
+        captured["cellar_root"] = cellar_root
+        return sentinel
+
+    monkeypatch.setattr(salesforce_runtime, "_capture_node_binding", capture)
+
+    assert _discover_supported_node() is sentinel
+    assert captured == {"path": lexical, "cellar_root": None}
+
+
 def test_homebrew_node_symlink_is_bound_to_its_resolved_cellar_leaf(tmp_path: Path) -> None:
     lexical, cellar, resolved = _homebrew_node_fixture(tmp_path)
 

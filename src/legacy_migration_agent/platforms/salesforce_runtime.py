@@ -2942,15 +2942,17 @@ def _discover_protected_executable(path: Path) -> Path | None:
 def _discover_supported_node() -> _NodeExecutableBinding | None:
     for lexical in _SUPPORTED_NODE_PATHS:
         try:
-            lexical.lstat()
+            lexical_metadata = lexical.lstat()
         except FileNotFoundError:
             continue
         except OSError as exc:
             raise PolicyViolation("the supported Node executable is unavailable") from exc
-        if lexical == Path("/usr/bin/node"):
+        if stat.S_ISREG(lexical_metadata.st_mode):
             if _discover_protected_executable(lexical) is None:
                 raise PolicyViolation("the protected system Node executable is invalid")
             return _capture_node_binding(lexical, cellar_root=None)
+        if not stat.S_ISLNK(lexical_metadata.st_mode):
+            raise PolicyViolation("the supported Node executable has an invalid file type")
         cellar_root = _HOMEBREW_NODE_CELLARS.get(lexical)
         if cellar_root is None:  # pragma: no cover - constants are controller-owned
             raise PolicyViolation("the supported Node path has no target policy")
