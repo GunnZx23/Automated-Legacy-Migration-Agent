@@ -18,7 +18,7 @@ import hashlib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from xml.etree import ElementTree
 
@@ -64,6 +64,7 @@ class _NodeRecord:
     node_id: str
     kind: NodeKind
     name: str
+    application_scope: str
     metadata_paths: set[str] = field(default_factory=set)
     resolved: bool = True
     external: bool = False
@@ -79,8 +80,30 @@ class _EdgeRecord:
     provenance: dict[tuple[str, int, str, str], SourceProvenance] = field(default_factory=dict)
 
 
-def _identifier(prefix: str, name: str) -> str:
-    return f"mule:{prefix}:{name.casefold()}"
+def _identifier(prefix: str, name: str, application_scope: str) -> str:
+    """Return an ID that cannot alias the same symbol in another Mule app.
+
+    A migration snapshot deliberately contains both the legacy Mule 3 project
+    and the additive Mule 4 project.  Flow, property, and test names are often
+    preserved across those projects, so a name-only ID silently joins two
+    independent applications.  Keep the human-readable symbol while binding
+    it to a stable digest of the inferred application root and Mule generation.
+    """
+
+    scope_digest = hashlib.sha256(application_scope.casefold().encode()).hexdigest()[:16]
+    version = application_scope.split(":", 1)[0]
+    return f"mule:{version}:{scope_digest}:{prefix}:{name.casefold()}"
+
+
+def _application_root(relative_path: str) -> str:
+    parts = PurePosixPath(relative_path).parts
+    try:
+        source_index = parts.index("src")
+    except ValueError:
+        parent = PurePosixPath(relative_path).parent.as_posix()
+        return "" if parent == "." else parent
+    root = PurePosixPath(*parts[:source_index]).as_posix()
+    return "" if root == "." else root
 
 
 def _local_name(tag: str) -> str:
@@ -176,17 +199,18 @@ class _MuleSoftGraphBuilder:
             )
         self.base_revision = source_snapshot.revision
         self.files: dict[str, _File] = {}
+        self.application_scopes: dict[str, str] = {}
         self.nodes: dict[str, _NodeRecord] = {}
         self.path_nodes: dict[str, set[str]] = {}
         self.edges: dict[tuple[str, str, EdgeKind, str | None, bool], _EdgeRecord] = {}
         self.warnings: dict[tuple[WarningCode, str, int, str], ParserWarning] = {}
         self.xml_roots: dict[str, ElementTree.Element] = {}
-        self.flows: dict[str, str] = {}
-        self.configs: dict[str, str] = {}
-        self.properties: dict[str, str] = {}
-        self.variables: dict[str, str] = {}
-        self.dataweave_resources: dict[str, str] = {}
-        self.resources: dict[str, str] = {}
+        self.flows: dict[tuple[str, str], str] = {}
+        self.configs: dict[tuple[str, str], str] = {}
+        self.properties: dict[tuple[str, str], str] = {}
+        self.variables: dict[tuple[str, str], str] = {}
+        self.dataweave_resources: dict[tuple[str, str], str] = {}
+        self.resources: dict[tuple[str, str], str] = {}
         self.flow_elements: dict[str, tuple[_File, ElementTree.Element]] = {}
         self.config_elements: dict[str, tuple[_File, ElementTree.Element]] = {}
         self.test_elements: dict[str, tuple[_File, ElementTree.Element]] = {}
@@ -205,17 +229,46 @@ class _MuleSoftGraphBuilder:
         for entry in self.source_snapshot.entries:
             if _is_supported_path(entry.path):
                 self.files[entry.path] = _file_from_snapshot(entry.path, entry.content)
+        self._index_application_scopes()
         self._index_resources()
         self._index_property_files()
         self._index_dataweave()
         self._index_xml()
         self._index_maven()
 
+    def _index_application_scopes(self) -> None:
+        roots = {_application_root(path) for path in self.files}
+        versions: dict[str, str] = {}
+        for root in roots:
+            prefix = f"{root}/" if root else ""
+            paths = tuple(
+                path[len(prefix) :] for path in self.files if not prefix or path.startswith(prefix)
+            )
+            has_mule3 = any(path.startswith("src/main/app/") for path in paths)
+            has_mule4 = any(path.startswith("src/main/mule/") for path in paths)
+            if has_mule3 and has_mule4:
+                version = "mixed"
+            elif has_mule4:
+                version = "mule4"
+            elif has_mule3:
+                version = "mule3"
+            else:
+                version = "unknown"
+            versions[root] = version
+        self.application_scopes = {
+            path: f"{versions[_application_root(path)]}:{_application_root(path) or '.'}"
+            for path in self.files
+        }
+
+    def _scope_for_path(self, relative_path: str) -> str:
+        return self.application_scopes[relative_path]
+
     def _add_node(
         self,
         node_id: str,
         kind: NodeKind,
         name: str,
+        application_scope: str,
         paths: Iterable[str] = (),
         *,
         resolved: bool = True,
@@ -224,6 +277,8 @@ class _MuleSoftGraphBuilder:
         path_set = set(paths)
         existing = self.nodes.get(node_id)
         if existing is not None:
+            if existing.application_scope != application_scope:
+                raise PolicyViolation("MuleSoft graph node scope collision")
             existing.metadata_paths.update(path_set)
             existing.resolved = existing.resolved or resolved
             existing.external = existing.external or external
@@ -232,6 +287,7 @@ class _MuleSoftGraphBuilder:
                 node_id=node_id,
                 kind=kind,
                 name=name,
+                application_scope=application_scope,
                 metadata_paths=path_set,
                 resolved=resolved,
                 external=external,
@@ -283,40 +339,45 @@ class _MuleSoftGraphBuilder:
             unresolved=True,
         )
 
-    def _unresolved_node(self, category: str, name: str) -> str:
+    def _unresolved_node(self, category: str, name: str, application_scope: str) -> str:
         return self._add_node(
-            _identifier(f"unresolved:{category}", name),
+            _identifier(f"unresolved:{category}", name, application_scope),
             NodeKind.UNRESOLVED,
             name,
+            application_scope,
             resolved=False,
         )
 
     def _index_resources(self) -> None:
         for path in sorted(self.files):
             lowered = path.casefold()
+            application_scope = self._scope_for_path(path)
             resource_suffix = _resource_suffix(path)
             if resource_suffix is not None:
                 resource_name = resource_suffix
                 node_id = self._add_node(
-                    _identifier("metadata", path),
+                    _identifier("metadata", path, application_scope),
                     NodeKind.METADATA_FILE,
                     resource_name,
+                    application_scope,
                     (path,),
                 )
-                self.resources.setdefault(resource_name.casefold(), node_id)
+                self.resources.setdefault((application_scope, resource_name.casefold()), node_id)
             elif "/src/main/app/" in lowered and path.endswith(".properties"):
                 resource_name = path.rsplit("/", 1)[-1]
                 node_id = self._add_node(
-                    _identifier("metadata", path),
+                    _identifier("metadata", path, application_scope),
                     NodeKind.METADATA_FILE,
                     resource_name,
+                    application_scope,
                     (path,),
                 )
-                self.resources.setdefault(resource_name.casefold(), node_id)
+                self.resources.setdefault((application_scope, resource_name.casefold()), node_id)
 
     def _index_property_files(self) -> None:
         for path, file in sorted(self.files.items()):
             lowered = path.casefold()
+            application_scope = self._scope_for_path(path)
             keys: tuple[str, ...]
             if lowered.endswith(".properties"):
                 parsed: list[str] = []
@@ -344,22 +405,25 @@ class _MuleSoftGraphBuilder:
                 continue
             for key in sorted(set(keys), key=str.casefold):
                 node_id = self._add_node(
-                    _identifier("property", key),
+                    _identifier("property", key, application_scope),
                     NodeKind.MULE_PROPERTY,
                     key,
+                    application_scope,
                     (path,),
                 )
-                self.properties[key.casefold()] = node_id
+                self.properties[(application_scope, key.casefold())] = node_id
 
     def _index_dataweave(self) -> None:
         for path in sorted(self.files):
             if not path.casefold().endswith(".dwl"):
                 continue
+            application_scope = self._scope_for_path(path)
             resource_name = _resource_suffix(path) or path
             node_id = self._add_node(
-                _identifier("dataweave", resource_name),
+                _identifier("dataweave", resource_name, application_scope),
                 NodeKind.DATAWEAVE_MODULE,
                 resource_name,
+                application_scope,
                 (path,),
             )
             aliases = {
@@ -367,7 +431,7 @@ class _MuleSoftGraphBuilder:
                 resource_name.removesuffix(".dwl").replace("/", "::").casefold(),
             }
             for alias in aliases:
-                self.dataweave_resources.setdefault(alias, node_id)
+                self.dataweave_resources.setdefault((application_scope, alias), node_id)
 
     def _secure_xml(self, file: _File) -> ElementTree.Element | None:
         forbidden = _XML_GUARD.search(file.text)
@@ -401,12 +465,14 @@ class _MuleSoftGraphBuilder:
         for path, file in sorted(self.files.items()):
             if not path.casefold().endswith(".xml") or path.casefold().endswith("pom.xml"):
                 continue
+            application_scope = self._scope_for_path(path)
             root = self._secure_xml(file)
             if root is None:
                 self._add_node(
-                    _identifier("metadata", path),
+                    _identifier("metadata", path, application_scope),
                     NodeKind.METADATA_FILE,
                     Path(path).name,
+                    application_scope,
                     (path,),
                     resolved=False,
                 )
@@ -419,41 +485,51 @@ class _MuleSoftGraphBuilder:
                 name = child.attrib.get("name", "").strip()
                 if local in {"flow", "sub-flow"} and name:
                     kind = NodeKind.MULE_FLOW if local == "flow" else NodeKind.MULE_SUBFLOW
-                    node_id = self._add_node(_identifier("flow", name), kind, name, (path,))
-                    self.flows[name.casefold()] = node_id
+                    node_id = self._add_node(
+                        _identifier("flow", name, application_scope),
+                        kind,
+                        name,
+                        application_scope,
+                        (path,),
+                    )
+                    self.flows[(application_scope, name.casefold())] = node_id
                     self.flow_elements[node_id] = (file, child)
                 elif local == "test" and "munit" in namespace and name:
                     node_id = self._add_node(
-                        _identifier("munit-test", name),
+                        _identifier("munit-test", name, application_scope),
                         NodeKind.MUNIT_TEST,
                         name,
+                        application_scope,
                         (path,),
                     )
                     self.test_elements[node_id] = (file, child)
                 elif local == "config" and "munit" in namespace and name:
                     node_id = self._add_node(
-                        _identifier("munit-suite", name),
+                        _identifier("munit-suite", name, application_scope),
                         NodeKind.MUNIT_SUITE,
                         name,
+                        application_scope,
                         (path,),
                     )
                     suites.append(node_id)
                 elif (local.endswith("-config") or local == "configuration") and name:
                     node_id = self._add_node(
-                        _identifier("config", name),
+                        _identifier("config", name, application_scope),
                         NodeKind.MULE_CONFIGURATION,
                         name,
+                        application_scope,
                         (path,),
                     )
-                    self.configs[name.casefold()] = node_id
+                    self.configs[(application_scope, name.casefold())] = node_id
                     self.config_elements[node_id] = (file, child)
                 elif local == "configuration-properties":
                     resource = child.attrib.get("file", "").strip()
                     synthetic_name = f"configuration-properties:{resource or path}"
                     node_id = self._add_node(
-                        _identifier("config", synthetic_name),
+                        _identifier("config", synthetic_name, application_scope),
                         NodeKind.MULE_CONFIGURATION,
                         synthetic_name,
+                        application_scope,
                         (path,),
                     )
                     self.config_elements[node_id] = (file, child)
@@ -461,6 +537,7 @@ class _MuleSoftGraphBuilder:
             self._index_variable_definitions(file, root)
 
     def _index_variable_definitions(self, file: _File, root: ElementTree.Element) -> None:
+        application_scope = self._scope_for_path(file.relative_path)
         for element in root.iter():
             local = _local_name(element.tag)
             name = ""
@@ -474,23 +551,26 @@ class _MuleSoftGraphBuilder:
             if not name or _DYNAMIC_EXPRESSION.search(name):
                 continue
             node_id = self._add_node(
-                _identifier("variable", name),
+                _identifier("variable", name, application_scope),
                 NodeKind.MULE_VARIABLE,
                 name,
+                application_scope,
                 (file.relative_path,),
             )
-            self.variables[name.casefold()] = node_id
+            self.variables[(application_scope, name.casefold())] = node_id
 
     def _index_maven(self) -> None:
         for path, file in sorted(self.files.items()):
             if path.rsplit("/", 1)[-1].casefold() != "pom.xml":
                 continue
+            application_scope = self._scope_for_path(path)
             root = self._secure_xml(file)
             if root is None:
                 self._add_node(
-                    _identifier("maven-project", path),
+                    _identifier("maven-project", path, application_scope),
                     NodeKind.MAVEN_PROJECT,
                     Path(path).parent.name or "Maven project",
+                    application_scope,
                     (path,),
                     resolved=False,
                 )
@@ -498,9 +578,10 @@ class _MuleSoftGraphBuilder:
             self.xml_roots[path] = root
             artifact_id = self._direct_text(root, "artifactId") or Path(path).parent.name
             project_id = self._add_node(
-                _identifier("maven-project", path),
+                _identifier("maven-project", path, application_scope),
                 NodeKind.MAVEN_PROJECT,
                 artifact_id,
+                application_scope,
                 (path,),
             )
             properties = next(
@@ -510,12 +591,13 @@ class _MuleSoftGraphBuilder:
                 for child in properties:
                     key = _local_name(child.tag)
                     node_id = self._add_node(
-                        _identifier("property", key),
+                        _identifier("property", key, application_scope),
                         NodeKind.MULE_PROPERTY,
                         key,
+                        application_scope,
                         (path,),
                     )
-                    self.properties[key.casefold()] = node_id
+                    self.properties[(application_scope, key.casefold())] = node_id
             for container_kind, edge_kind, node_kind, prefix in (
                 ("plugins", EdgeKind.MAVEN_PLUGIN, NodeKind.MAVEN_PLUGIN, "maven-plugin"),
                 (
@@ -538,9 +620,10 @@ class _MuleSoftGraphBuilder:
                             continue
                         coordinate = f"{group}:{artifact}"
                         target_id = self._add_node(
-                            _identifier(prefix, coordinate),
+                            _identifier(prefix, coordinate, application_scope),
                             node_kind,
                             coordinate,
+                            application_scope,
                             (path,),
                             external=True,
                         )
@@ -604,7 +687,11 @@ class _MuleSoftGraphBuilder:
             if not resource:
                 return
             provenance = _provenance(file, resource, "mule_xml")
-            target_id, resolved = self._resolve_resource(resource, provenance)
+            target_id, resolved = self._resolve_resource(
+                resource,
+                provenance,
+                self._scope_for_path(file.relative_path),
+            )
             self._add_edge(
                 source_id,
                 target_id,
@@ -622,13 +709,21 @@ class _MuleSoftGraphBuilder:
         *,
         munit: bool,
     ) -> None:
+        application_scope = self._scope_for_path(file.relative_path)
         for child in element.iter():
             local = _local_name(child.tag)
-            if local == "flow-ref":
-                name = child.attrib.get("name", "").strip()
+            if local == "flow-ref" or (munit and local == "enable-flow-source"):
+                attribute = "name" if local == "flow-ref" else "value"
+                name = child.attrib.get(attribute, "").strip()
                 if name:
                     provenance = _provenance(file, name, "munit" if munit else "mule_xml")
-                    target_id, resolved = self._resolve_named(self.flows, "flow", name, provenance)
+                    target_id, resolved = self._resolve_named(
+                        self.flows,
+                        "flow",
+                        name,
+                        provenance,
+                        application_scope,
+                    )
                     edge_kind = EdgeKind.MUNIT_FLOW_REFERENCE if munit else EdgeKind.FLOW_REFERENCE
                     self._add_edge(
                         source_id,
@@ -644,7 +739,11 @@ class _MuleSoftGraphBuilder:
             if config_name:
                 provenance = _provenance(file, config_name, "mule_xml")
                 target_id, resolved = self._resolve_named(
-                    self.configs, "configuration", config_name, provenance
+                    self.configs,
+                    "configuration",
+                    config_name,
+                    provenance,
+                    application_scope,
                 )
                 edge_kind = (
                     EdgeKind.HTTP_LISTENER_CONFIG_REFERENCE
@@ -664,7 +763,11 @@ class _MuleSoftGraphBuilder:
             resource = child.attrib.get("resource", "").strip()
             if resource and (resource.casefold().endswith(".dwl") or "dwl" in resource.casefold()):
                 provenance = _provenance(file, resource, "mule_xml")
-                target_id, resolved = self._resolve_dataweave(resource, provenance)
+                target_id, resolved = self._resolve_dataweave(
+                    resource,
+                    provenance,
+                    application_scope,
+                )
                 self._add_edge(
                     source_id,
                     target_id,
@@ -680,14 +783,15 @@ class _MuleSoftGraphBuilder:
             self._parse_dataweave(source_id, file, text)
 
     def _parse_property_references(self, source_id: str, file: _File, text: str) -> None:
+        application_scope = self._scope_for_path(file.relative_path)
         for match in _PROPERTY_REFERENCE.finditer(text):
             symbol = match.group(0)
             key = match.group(1).strip()
             provenance = _provenance(file, symbol, "mule_property")
-            target_id = self.properties.get(key.casefold())
+            target_id = self.properties.get((application_scope, key.casefold()))
             resolved = target_id is not None and self.nodes[target_id].resolved
             if target_id is None:
-                target_id = self._unresolved_node("property", key)
+                target_id = self._unresolved_node("property", key, application_scope)
                 self._warn(
                     WarningCode.UNRESOLVED_REFERENCE,
                     f"Mule property reference could not be resolved: {key}",
@@ -703,13 +807,14 @@ class _MuleSoftGraphBuilder:
             )
 
     def _parse_dataweave(self, source_id: str, file: _File, text: str) -> None:
+        application_scope = self._scope_for_path(file.relative_path)
         for match in _VARIABLE_REFERENCE.finditer(text):
             name = match.group(1) or match.group(2)
             provenance = _provenance(file, match.group(0), "dataweave")
-            target_id = self.variables.get(name.casefold())
+            target_id = self.variables.get((application_scope, name.casefold()))
             resolved = target_id is not None and self.nodes[target_id].resolved
             if target_id is None:
-                target_id = self._unresolved_node("variable", name)
+                target_id = self._unresolved_node("variable", name, application_scope)
                 self._warn(
                     WarningCode.UNRESOLVED_REFERENCE,
                     f"DataWeave variable reference could not be resolved: {name}",
@@ -726,7 +831,11 @@ class _MuleSoftGraphBuilder:
         for match in _DATAWEAVE_IMPORT.finditer(text):
             module = match.group(1)
             provenance = _provenance(file, module, "dataweave")
-            target_id, resolved = self._resolve_dataweave(module, provenance)
+            target_id, resolved = self._resolve_dataweave(
+                module,
+                provenance,
+                application_scope,
+            )
             self._add_edge(
                 source_id,
                 target_id,
@@ -738,7 +847,11 @@ class _MuleSoftGraphBuilder:
         for dynamic in re.finditer(r"\breadUrl\s*\(\s*(?!['\"])", text):
             symbol = dynamic.group(0).strip()
             provenance = _provenance(file, dynamic.group(0), "dataweave")
-            target_id = self._unresolved_node("dataweave-resource", symbol)
+            target_id = self._unresolved_node(
+                "dataweave-resource",
+                symbol,
+                application_scope,
+            )
             self._warn(
                 WarningCode.DYNAMIC_REFERENCE,
                 "dynamic DataWeave readUrl target cannot be resolved statically",
@@ -755,23 +868,24 @@ class _MuleSoftGraphBuilder:
 
     def _resolve_named(
         self,
-        index: dict[str, str],
+        index: dict[tuple[str, str], str],
         category: str,
         name: str,
         provenance: SourceProvenance,
+        application_scope: str,
     ) -> tuple[str, bool]:
         if _DYNAMIC_EXPRESSION.search(name):
-            target_id = self._unresolved_node(category, name)
+            target_id = self._unresolved_node(category, name, application_scope)
             self._warn(
                 WarningCode.DYNAMIC_REFERENCE,
                 f"dynamic Mule {category} reference cannot be resolved statically: {name}",
                 provenance,
             )
             return target_id, False
-        resolved_id: str | None = index.get(name.casefold())
+        resolved_id: str | None = index.get((application_scope, name.casefold()))
         if resolved_id is not None and self.nodes[resolved_id].resolved:
             return resolved_id, True
-        target_id = resolved_id or self._unresolved_node(category, name)
+        target_id = resolved_id or self._unresolved_node(category, name, application_scope)
         self._warn(
             WarningCode.UNRESOLVED_REFERENCE,
             f"Mule {category} reference could not be resolved: {name}",
@@ -779,14 +893,29 @@ class _MuleSoftGraphBuilder:
         )
         return target_id, False
 
-    def _resolve_dataweave(self, resource: str, provenance: SourceProvenance) -> tuple[str, bool]:
+    def _resolve_dataweave(
+        self,
+        resource: str,
+        provenance: SourceProvenance,
+        application_scope: str,
+    ) -> tuple[str, bool]:
         if _DYNAMIC_EXPRESSION.search(resource):
-            return self._resolve_named({}, "DataWeave module", resource, provenance)
+            return self._resolve_named(
+                {},
+                "DataWeave module",
+                resource,
+                provenance,
+                application_scope,
+            )
         normalized = resource.removeprefix("classpath://").lstrip("/")
         try:
             normalized = validate_relative_path(normalized)
         except ValueError:
-            target_id = self._unresolved_node("dataweave-module", resource)
+            target_id = self._unresolved_node(
+                "dataweave-module",
+                resource,
+                application_scope,
+            )
             self._warn(
                 WarningCode.UNRESOLVED_REFERENCE,
                 f"DataWeave module reference is not a safe relative resource: {resource}",
@@ -799,15 +928,19 @@ class _MuleSoftGraphBuilder:
         )
         resolved_id: str | None = next(
             (
-                self.dataweave_resources[alias]
+                self.dataweave_resources[(application_scope, alias)]
                 for alias in aliases
-                if alias in self.dataweave_resources
+                if (application_scope, alias) in self.dataweave_resources
             ),
             None,
         )
         if resolved_id is not None:
             return resolved_id, True
-        target_id = self._unresolved_node("dataweave-module", resource)
+        target_id = self._unresolved_node(
+            "dataweave-module",
+            resource,
+            application_scope,
+        )
         self._warn(
             WarningCode.UNRESOLVED_REFERENCE,
             f"DataWeave module reference could not be resolved: {resource}",
@@ -815,24 +948,35 @@ class _MuleSoftGraphBuilder:
         )
         return target_id, False
 
-    def _resolve_resource(self, resource: str, provenance: SourceProvenance) -> tuple[str, bool]:
+    def _resolve_resource(
+        self,
+        resource: str,
+        provenance: SourceProvenance,
+        application_scope: str,
+    ) -> tuple[str, bool]:
         if _DYNAMIC_EXPRESSION.search(resource):
-            return self._resolve_named({}, "resource", resource, provenance)
+            return self._resolve_named(
+                {},
+                "resource",
+                resource,
+                provenance,
+                application_scope,
+            )
         normalized = resource.removeprefix("classpath://").lstrip("/")
         try:
             normalized = validate_relative_path(normalized)
         except ValueError:
-            target_id = self._unresolved_node("resource", resource)
+            target_id = self._unresolved_node("resource", resource, application_scope)
             self._warn(
                 WarningCode.UNRESOLVED_REFERENCE,
                 f"Mule resource reference is not a safe relative path: {resource}",
                 provenance,
             )
             return target_id, False
-        resolved_id: str | None = self.resources.get(normalized.casefold())
+        resolved_id: str | None = self.resources.get((application_scope, normalized.casefold()))
         if resolved_id is not None:
             return resolved_id, True
-        target_id = self._unresolved_node("resource", resource)
+        target_id = self._unresolved_node("resource", resource, application_scope)
         self._warn(
             WarningCode.UNRESOLVED_REFERENCE,
             f"Mule resource reference could not be resolved: {resource}",
@@ -871,9 +1015,11 @@ class _MuleSoftGraphBuilder:
                     changed = True
             for edge in self.edges.values():
                 source = self.nodes[edge.source_id]
+                target = self.nodes[edge.target_id]
                 if (
                     edge.target_id in selected
                     and source.kind in {NodeKind.MUNIT_TEST, NodeKind.MUNIT_SUITE}
+                    and source.application_scope == target.application_scope
                     and edge.source_id not in selected
                 ):
                     selected.add(edge.source_id)

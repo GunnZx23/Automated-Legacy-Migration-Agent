@@ -9,6 +9,7 @@ therefore does not require a second model call or retain a mutable workspace.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
@@ -22,10 +23,12 @@ from legacy_migration_agent.agent_runtime.correction import (
     validate_correction_attempt_evidence,
 )
 from legacy_migration_agent.agent_runtime.model_agents import (
+    AgentRuntimeError,
     ArchitectAgent,
     ArchitectContext,
     ArchitectRun,
     EngineerAgent,
+    EngineerCorrectionAuthority,
     EngineerCorrectionContext,
     EngineerRun,
     EngineerWorkspaceContext,
@@ -33,6 +36,7 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     ValidatorAssessment,
     ValidatorEvidenceContext,
     apply_engineer_file_plan,
+    correction_wiki_query,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
     ModelEvidenceError,
@@ -47,9 +51,11 @@ from legacy_migration_agent.contracts import (
     PlanningIntervention,
     Sha256Digest,
     StrictModel,
+    ValidationDisposition,
     ValidationReport,
 )
 from legacy_migration_agent.core.integrity import ArtifactStore, artifact_digest
+from legacy_migration_agent.core.observability import lifecycle_event
 from legacy_migration_agent.core.policies import (
     PolicyViolation,
     validate_change_set,
@@ -57,6 +63,7 @@ from legacy_migration_agent.core.policies import (
     validate_report,
 )
 from legacy_migration_agent.core.workspace import IsolatedWorkspace
+from legacy_migration_agent.knowledge.wiki import RetrievalTrace
 from legacy_migration_agent.workflow import (
     MigrationWorkflow,
     build_workflow,
@@ -97,6 +104,16 @@ class DeterministicValidator(Protocol):
     ) -> ValidationReport: ...
 
 
+class CorrectionWikiRetriever(Protocol):
+    """Retrieve version-bound Wiki evidence for one deterministic repair query."""
+
+    def __call__(
+        self,
+        request: MigrationRequest,
+        query: str,
+    ) -> RetrievalTrace: ...
+
+
 class ModelWorkflowIntegrationError(PolicyViolation):
     """Raised when a persisted role handoff cannot be safely replayed."""
 
@@ -113,6 +130,7 @@ class RoleInvocationBinding(StrictModel):
     agent_definition_digest: Sha256Digest
     manifest_digest: Sha256Digest
     correction_evidence_digest: Sha256Digest | None = None
+    correction_wiki_trace_digest: Sha256Digest | None = None
     change_set_digest: Sha256Digest | None = None
     report_digest: Sha256Digest | None = None
 
@@ -127,6 +145,7 @@ class RoleInvocationBinding(StrictModel):
                 value is not None
                 for value in (
                     self.correction_evidence_digest,
+                    self.correction_wiki_trace_digest,
                     self.change_set_digest,
                     self.report_digest,
                 )
@@ -136,6 +155,7 @@ class RoleInvocationBinding(StrictModel):
                 value is None
                 for value in (
                     self.correction_evidence_digest,
+                    self.correction_wiki_trace_digest,
                     self.change_set_digest,
                     self.report_digest,
                 )
@@ -146,6 +166,10 @@ class RoleInvocationBinding(StrictModel):
                 raise ValueError("Validator dispatch requires change-set and report digests")
             if (self.attempt == 1) is (self.correction_evidence_digest is not None):
                 raise ValueError("Validator correction binding must be present only on attempt two")
+            if (self.attempt == 1) is (self.correction_wiki_trace_digest is not None):
+                raise ValueError(
+                    "Validator correction Wiki binding must be present only on attempt two"
+                )
         return self
 
 
@@ -187,6 +211,7 @@ SanitizedRolePolicyReason = Literal[
     "required_approval_missing",
     "implementation_contract_invalid",
     "transformation_scope_invalid",
+    "unresolved_question_risk_missing",
     "policy_rejected",
 ]
 
@@ -222,6 +247,7 @@ class ModelAgentWorkflowRoles:
         engineer_model: StructuredModelClient,
         validator_model: StructuredModelClient,
         architect_context_factory: ArchitectContextFactory,
+        correction_wiki_retriever: CorrectionWikiRetriever | None = None,
         workspace_factory: WorkspaceFactory,
         deterministic_validator: DeterministicValidator,
         artifact_store: ArtifactStore,
@@ -230,6 +256,7 @@ class ModelAgentWorkflowRoles:
         self.engineer_agent = EngineerAgent(registry, engineer_model)
         self.validator_agent = ValidatorAgent(registry, validator_model)
         self.architect_context_factory = architect_context_factory
+        self.correction_wiki_retriever = correction_wiki_retriever
         self.workspace_factory = workspace_factory
         self.deterministic_validator = deterministic_validator
         self.artifact_store = artifact_store
@@ -254,18 +281,24 @@ class ModelAgentWorkflowRoles:
     ) -> MigrationManifest | PlanningIntervention:
         """Run/replay the Architect or persist a non-model preflight stop."""
 
-        supplied = self.architect_context_factory(request)
         path = self._architect_path(request)
         existing = self._read_optional(path)
         preflight_path = self._architect_preflight_path(request)
         existing_preflight = self._read_optional(preflight_path)
+        if existing is not None:
+            if existing_preflight is not None:
+                raise ModelWorkflowIntegrationError(
+                    "persisted preflight stop conflicts with persisted Architect model run"
+                )
+            context = self._load_architect_evidence(request)
+            run = ArchitectRun.model_validate(existing)
+            self._verify_architect_replay(run, context)
+            return run.proposal.manifest
+
+        supplied = self.architect_context_factory(request)
         if isinstance(supplied, PlanningIntervention):
             intervention = PlanningIntervention.model_validate(supplied.model_dump(mode="python"))
             validate_planning_intervention_for_request(intervention, request)
-            if existing is not None:
-                raise ModelWorkflowIntegrationError(
-                    "persisted Architect model run conflicts with current preflight stop"
-                )
             if existing_preflight is None:
                 self.artifact_store.write_json(preflight_path, intervention)
                 return intervention
@@ -283,15 +316,18 @@ class ModelAgentWorkflowRoles:
             )
         context = ArchitectContext.model_validate(supplied.model_dump(mode="python"))
         self._persist_architect_evidence(request, context)
-        if existing is None:
-            try:
-                run = self.architect_agent.propose(context)
-            except PolicyViolation as error:
-                raise _sanitized_role_policy_error("architect", error) from None
-            self.artifact_store.write_json(path, run)
-        else:
-            run = ArchitectRun.model_validate(existing)
-            self._verify_architect_replay(run, context)
+        try:
+            run = self.architect_agent.propose(context)
+        except PolicyViolation as error:
+            sanitized = _sanitized_role_policy_error("architect", error)
+            lifecycle_event(
+                "model.policy.rejected",
+                level=logging.WARNING,
+                role="architect",
+                policy_code=sanitized.reason_code,
+            )
+            raise sanitized from None
+        self.artifact_store.write_json(path, run)
         return run.proposal.manifest
 
     def engineer(
@@ -306,9 +342,10 @@ class ModelAgentWorkflowRoles:
 
         self._require_attempt(attempt)
         validate_manifest_for_request(manifest, request)
+        architect_wiki_trace = self._load_engineer_architect_wiki_handoff(request, manifest)
         path = self._engineer_path(request, attempt)
         existing = self._read_optional(path)
-        correction_context, prior_run = self._prepare_engineer_correction(
+        correction_authority, prior_run = self._prepare_engineer_correction(
             request,
             manifest,
             attempt=attempt,
@@ -325,22 +362,24 @@ class ModelAgentWorkflowRoles:
                         request,
                         manifest,
                         workspace,
+                        architect_wiki_trace=architect_wiki_trace,
                         attempt=1,
-                        correction=None,
+                        correction_authority=None,
                     )
                 context = self.engineer_agent.prepare_context(
                     request,
                     manifest,
                     workspace,
+                    architect_wiki_trace=architect_wiki_trace,
                     attempt=attempt,
-                    correction=correction_context,
+                    correction_authority=correction_authority,
                 )
                 binding = self._engineer_invocation_binding(
                     request,
                     manifest,
                     attempt=attempt,
                     context=context,
-                    correction=correction_context,
+                    correction=context.correction,
                 )
                 self._verify_role_invocation_lease_if_present(
                     self._engineer_lease_path(request, attempt),
@@ -351,8 +390,9 @@ class ModelAgentWorkflowRoles:
                     request,
                     manifest,
                     workspace,
+                    architect_wiki_trace=architect_wiki_trace,
                     attempt=attempt,
-                    correction=correction_context,
+                    correction_authority=correction_authority,
                 )
             return self._engineer_outcome(run)
 
@@ -363,22 +403,24 @@ class ModelAgentWorkflowRoles:
                     request,
                     manifest,
                     workspace,
+                    architect_wiki_trace=architect_wiki_trace,
                     attempt=1,
-                    correction=None,
+                    correction_authority=None,
                 )
             context = self.engineer_agent.prepare_context(
                 request,
                 manifest,
                 workspace,
+                architect_wiki_trace=architect_wiki_trace,
                 attempt=attempt,
-                correction=correction_context,
+                correction_authority=correction_authority,
             )
             binding = self._engineer_invocation_binding(
                 request,
                 manifest,
                 attempt=attempt,
                 context=context,
-                correction=correction_context,
+                correction=context.correction,
             )
             self._claim_role_invocation(
                 self._engineer_lease_path(request, attempt),
@@ -389,11 +431,18 @@ class ModelAgentWorkflowRoles:
                     request,
                     manifest,
                     workspace,
+                    architect_wiki_trace=architect_wiki_trace,
                     attempt=attempt,
-                    correction=correction_context,
+                    correction_authority=correction_authority,
                     prepared_context=context,
                 )
             except PolicyViolation as error:
+                lifecycle_event(
+                    "model.policy.rejected",
+                    level=logging.WARNING,
+                    role="engineer",
+                    policy_code=_safe_engineer_policy_code(error),
+                )
                 raise _sanitized_role_policy_error("engineer", error) from None
         self._validate_engineer_run(run, request, manifest)
         self.artifact_store.write_json(path, run)
@@ -413,7 +462,8 @@ class ModelAgentWorkflowRoles:
         self._require_attempt(attempt)
         validate_manifest_for_request(manifest, request)
         validate_change_set(change_set, manifest)
-        correction_context, prior_run = self._prepare_engineer_correction(
+        architect_wiki_trace = self._load_engineer_architect_wiki_handoff(request, manifest)
+        correction_authority, prior_run = self._prepare_engineer_correction(
             request,
             manifest,
             attempt=attempt,
@@ -442,16 +492,18 @@ class ModelAgentWorkflowRoles:
                     request,
                     manifest,
                     workspace,
+                    architect_wiki_trace=architect_wiki_trace,
                     attempt=1,
-                    correction=None,
+                    correction_authority=None,
                 )
             self._verify_engineer_replay(
                 engineer_run,
                 request,
                 manifest,
                 workspace,
+                architect_wiki_trace=architect_wiki_trace,
                 attempt=attempt,
-                correction=correction_context,
+                correction_authority=correction_authority,
             )
             if existing_report is None:
                 file_plan = engineer_run.file_plan
@@ -507,17 +559,60 @@ class ModelAgentWorkflowRoles:
             manifest,
             attempt=attempt,
             evidence=evidence,
-            correction=correction_context,
+            correction=(
+                correction_authority.model_context if correction_authority is not None else None
+            ),
         )
         if existing_assessment is None:
-            self._claim_role_invocation(
-                self._validator_lease_path(request, attempt),
-                validator_binding,
-            )
-            try:
-                assessment = self.validator_agent.assess(evidence)
-            except PolicyViolation as error:
-                raise _sanitized_role_policy_error("validator", error) from None
+            if attempt == 1 and report.disposition is ValidationDisposition.RECOVERABLE_FAILURE:
+                assessment = self.validator_agent.unavailable(
+                    evidence,
+                    reason_code="deferred_recoverable_attempt",
+                    attempted=False,
+                )
+                lifecycle_event(
+                    "validator.advisory.deferred",
+                    attempt=attempt,
+                    disposition=report.disposition.value,
+                )
+            else:
+                validator_lease_path = self._validator_lease_path(request, attempt)
+                existing_lease = self._read_optional(validator_lease_path)
+                if existing_lease is not None:
+                    self._validate_role_invocation_lease(existing_lease, validator_binding)
+                    assessment = self.validator_agent.unavailable(
+                        evidence,
+                        reason_code="invocation_incomplete",
+                        attempted=True,
+                    )
+                else:
+                    self._claim_role_invocation(
+                        validator_lease_path,
+                        validator_binding,
+                    )
+                    try:
+                        assessment = self.validator_agent.assess(evidence)
+                    except (TypeError, ValueError, PolicyViolation):
+                        assessment = self.validator_agent.unavailable(
+                            evidence,
+                            reason_code="model_output_invalid",
+                            attempted=True,
+                        )
+                    except Exception:  # noqa: BLE001 - advisory failure is explicitly non-fatal
+                        assessment = self.validator_agent.unavailable(
+                            evidence,
+                            reason_code="model_call_failed",
+                            attempted=True,
+                        )
+                    if assessment.model_call is None:
+                        lifecycle_event(
+                            "validator.advisory.unavailable",
+                            level=logging.WARNING,
+                            attempt=attempt,
+                            reason_code=assessment.unavailable_receipt.reason_code
+                            if assessment.unavailable_receipt is not None
+                            else "unknown",
+                        )
             self.artifact_store.write_json(assessment_path, assessment)
         else:
             assessment = ValidatorAssessment.model_validate(existing_assessment)
@@ -539,7 +634,7 @@ class ModelAgentWorkflowRoles:
     ) -> None:
         try:
             self.architect_agent.verify_replay(run, context)
-        except ModelEvidenceError as exc:
+        except (AgentRuntimeError, ModelEvidenceError) as exc:
             raise ModelWorkflowIntegrationError(str(exc)) from exc
 
     def _verify_engineer_replay(
@@ -549,8 +644,9 @@ class ModelAgentWorkflowRoles:
         manifest: MigrationManifest,
         workspace: IsolatedWorkspace,
         *,
+        architect_wiki_trace: RetrievalTrace,
         attempt: int,
-        correction: EngineerCorrectionContext | None,
+        correction_authority: EngineerCorrectionAuthority | None,
     ) -> None:
         try:
             self.engineer_agent.verify_replay(
@@ -558,10 +654,11 @@ class ModelAgentWorkflowRoles:
                 request,
                 manifest,
                 workspace,
+                architect_wiki_trace=architect_wiki_trace,
                 attempt=attempt,
-                correction=correction,
+                correction_authority=correction_authority,
             )
-        except ModelEvidenceError as exc:
+        except (AgentRuntimeError, ModelEvidenceError) as exc:
             raise ModelWorkflowIntegrationError(str(exc)) from exc
 
     def _verify_validator_replay(
@@ -571,7 +668,7 @@ class ModelAgentWorkflowRoles:
     ) -> None:
         try:
             self.validator_agent.verify_replay(assessment, context)
-        except ModelEvidenceError as exc:
+        except (AgentRuntimeError, ModelEvidenceError) as exc:
             raise ModelWorkflowIntegrationError(str(exc)) from exc
 
     @staticmethod
@@ -653,6 +750,9 @@ class ModelAgentWorkflowRoles:
 
     def _engineer_correction_path(self, request: MigrationRequest) -> str:
         return f"model-runs/{request.request_id}/engineer-correction-attempt-2.json"
+
+    def _correction_wiki_path(self, request: MigrationRequest) -> str:
+        return f"model-runs/{request.request_id}/correction-wiki-attempt-2.json"
 
     def _report_path(self, request: MigrationRequest, attempt: int) -> str:
         return f"model-runs/{request.request_id}/report-attempt-{attempt}.json"
@@ -757,6 +857,9 @@ class ModelAgentWorkflowRoles:
             correction_evidence_digest=(
                 correction.correction_evidence_digest if correction is not None else None
             ),
+            correction_wiki_trace_digest=(
+                correction.correction_wiki_trace_digest if correction is not None else None
+            ),
             change_set_digest=(
                 correction.prior_change_set_digest if correction is not None else None
             ),
@@ -786,6 +889,9 @@ class ModelAgentWorkflowRoles:
             correction_evidence_digest=(
                 correction.correction_evidence_digest if correction is not None else None
             ),
+            correction_wiki_trace_digest=(
+                correction.correction_wiki_trace_digest if correction is not None else None
+            ),
             change_set_digest=evidence.evidence.change_set_digest,
             report_digest=evidence.evidence.report_digest,
         )
@@ -798,7 +904,7 @@ class ModelAgentWorkflowRoles:
         attempt: int,
         correction: CorrectionAttemptEvidence | None,
         allow_create: bool,
-    ) -> tuple[EngineerCorrectionContext | None, EngineerRun | None]:
+    ) -> tuple[EngineerCorrectionAuthority | None, EngineerRun | None]:
         """Validate and persist the safe attempt-two model correction projection."""
 
         if attempt == 1:
@@ -833,38 +939,163 @@ class ModelAgentWorkflowRoles:
             raise ModelWorkflowIntegrationError(
                 "correction change set differs from persisted attempt-one Engineer evidence"
             )
+        if artifact_digest(prior_run.change_set) != frozen.prior_change_set_digest:
+            raise ModelWorkflowIntegrationError(
+                "persisted attempt-one ChangeSet digest differs from correction evidence"
+            )
         validate_report(prior_report, manifest, frozen.prior_change_set)
         if prior_report != frozen.prior_validation_report:
             raise ModelWorkflowIntegrationError(
                 "correction report differs from persisted attempt-one validation evidence"
             )
 
-        expected = EngineerCorrectionContext.freeze(frozen, prior_run.file_plan)
-        correction_path = self._engineer_correction_path(request)
-        existing = self._read_optional(correction_path)
-        if existing is None:
+        if prior_run.workspace_after_revision is None:
+            raise ModelWorkflowIntegrationError(
+                "attempt two requires a persisted attempt-one candidate revision"
+            )
+        try:
+            repair_signal_ids = EngineerCorrectionContext.require_repair_contract(
+                frozen,
+                prior_run.file_plan,
+            )
+        except AgentRuntimeError as exc:
+            raise ModelWorkflowIntegrationError(
+                "attempt two is not authorized because deterministic repair coverage is "
+                f"incomplete: {exc}"
+            ) from exc
+        wiki_query = correction_wiki_query(request.platform, repair_signal_ids)
+        wiki_path = self._correction_wiki_path(request)
+        existing_wiki = self._read_optional(wiki_path)
+        if existing_wiki is None:
             if not allow_create:
                 raise ModelWorkflowIntegrationError(
-                    "persisted attempt-two Engineer correction context is missing"
+                    "persisted attempt-two correction Wiki trace is missing"
                 )
-            self.artifact_store.write_json(correction_path, expected)
-            persisted = EngineerCorrectionContext.model_validate(
-                self.artifact_store.read_json(correction_path)
+            if self.correction_wiki_retriever is None:
+                raise ModelWorkflowIntegrationError(
+                    "attempt two requires targeted correction Wiki retrieval before model dispatch"
+                )
+            try:
+                supplied_trace = self.correction_wiki_retriever(request, wiki_query)
+                trace = RetrievalTrace.model_validate(supplied_trace.model_dump(mode="python"))
+            except (PolicyViolation, TypeError, ValueError) as exc:
+                raise ModelWorkflowIntegrationError(
+                    "targeted correction Wiki retrieval could not be completed safely"
+                ) from exc
+            self._validate_correction_wiki_trace(
+                trace,
+                request,
+                wiki_query,
+                repair_signal_ids,
+            )
+            self.artifact_store.write_json(wiki_path, trace)
+            persisted_trace = RetrievalTrace.model_validate(
+                self.artifact_store.read_json(wiki_path)
+            )
+            if persisted_trace != trace:
+                raise ModelWorkflowIntegrationError(
+                    "persisted correction Wiki trace differs from retrieved evidence"
+                )
+            lifecycle_event(
+                "engineer.correction.wiki.retrieved",
+                signal_count=len(repair_signal_ids),
+                hit_count=len(trace.hits),
+                trace_digest=artifact_digest(trace),
             )
         else:
-            persisted = EngineerCorrectionContext.model_validate(existing)
+            try:
+                trace = RetrievalTrace.model_validate(existing_wiki)
+            except (TypeError, ValueError) as exc:
+                raise ModelWorkflowIntegrationError(
+                    "persisted correction Wiki trace is structurally invalid"
+                ) from exc
+            self._validate_correction_wiki_trace(
+                trace,
+                request,
+                wiki_query,
+                repair_signal_ids,
+            )
+
+        expected_authority = EngineerCorrectionAuthority.freeze(
+            frozen,
+            prior_run.file_plan,
+            prior_candidate_revision=prior_run.workspace_after_revision,
+            correction_wiki_trace=trace,
+        )
+        expected = expected_authority.model_context
+        correction_path = self._engineer_correction_path(request)
+        existing = self._read_optional(correction_path)
+        try:
+            if existing is None:
+                if not allow_create:
+                    raise ModelWorkflowIntegrationError(
+                        "persisted attempt-two Engineer correction context is missing"
+                    )
+                self.artifact_store.write_json(correction_path, expected)
+                persisted = EngineerCorrectionContext.model_validate(
+                    self.artifact_store.read_json(correction_path)
+                )
+            else:
+                persisted = EngineerCorrectionContext.model_validate(existing)
+        except (TypeError, ValueError) as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Engineer correction context differs from exact prior evidence"
+            ) from exc
         if persisted != expected:
             raise ModelWorkflowIntegrationError(
                 "persisted Engineer correction context differs from exact prior evidence"
             )
-        return persisted, prior_run
+        authority = EngineerCorrectionAuthority(
+            evidence=frozen,
+            model_context=persisted,
+        )
+        try:
+            authority.require_canonical_context(request, manifest)
+        except AgentRuntimeError as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Engineer correction context differs from exact prior evidence"
+            ) from exc
+        return authority, prior_run
+
+    @staticmethod
+    def _validate_correction_wiki_trace(
+        trace: RetrievalTrace,
+        request: MigrationRequest,
+        expected_query: str,
+        repair_signal_ids: tuple[str, ...],
+    ) -> None:
+        if trace.query != expected_query:
+            raise ModelWorkflowIntegrationError(
+                "correction Wiki trace query differs from exact repair signals"
+            )
+        if not trace.hits:
+            raise ModelWorkflowIntegrationError(
+                "targeted correction Wiki retrieval returned no relevant evidence"
+            )
+        if (
+            trace.platform is not request.platform
+            or trace.source_version != request.target.source_version
+            or trace.target_version != request.target.target_version
+        ):
+            raise ModelWorkflowIntegrationError(
+                "correction Wiki trace differs from the request version scope"
+            )
+        try:
+            EngineerCorrectionContext.require_wiki_signal_coverage(
+                trace,
+                repair_signal_ids,
+            )
+        except AgentRuntimeError as exc:
+            raise ModelWorkflowIntegrationError(
+                "targeted correction Wiki evidence does not cover every repair signal"
+            ) from exc
 
     def _persist_architect_evidence(
         self,
         request: MigrationRequest,
         context: ArchitectContext,
     ) -> None:
-        """Persist the exact graph and Wiki inputs before any Architect call."""
+        """Persist exact source, graph, and Wiki inputs before any Architect call."""
 
         artifacts = (
             (self._architect_graph_path(request), context.dependency_graph),
@@ -884,6 +1115,55 @@ class ModelAgentWorkflowRoles:
                 raise ModelWorkflowIntegrationError(
                     "persisted Architect input evidence differs from current context"
                 )
+
+    def _load_architect_evidence(self, request: MigrationRequest) -> ArchitectContext:
+        """Load and cross-bind the immutable planning evidence for a completed run."""
+
+        try:
+            raw_context = self.artifact_store.read_json(self._architect_context_path(request))
+            raw_graph = self.artifact_store.read_json(self._architect_graph_path(request))
+            raw_wiki = self.artifact_store.read_json(self._architect_wiki_path(request))
+            context = ArchitectContext.model_validate(raw_context)
+        except (FileNotFoundError, TypeError, ValueError) as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect input evidence is missing or structurally invalid"
+            ) from exc
+        if context.request != request:
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect context belongs to another request"
+            )
+        if raw_graph != context.dependency_graph.model_dump(mode="json"):
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect dependency graph differs from frozen context"
+            )
+        if raw_wiki != context.wiki_trace.model_dump(mode="json"):
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect Wiki trace differs from frozen context"
+            )
+        return context
+
+    def _load_engineer_architect_wiki_handoff(
+        self,
+        request: MigrationRequest,
+        manifest: MigrationManifest,
+    ) -> RetrievalTrace:
+        """Bind the Engineer to the exact Wiki trace used by the approved Architect run."""
+
+        context = self._load_architect_evidence(request)
+        try:
+            run = ArchitectRun.model_validate(
+                self.artifact_store.read_json(self._architect_path(request))
+            )
+        except (FileNotFoundError, TypeError, ValueError) as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect run is missing or structurally invalid for Engineer handoff"
+            ) from exc
+        self._verify_architect_replay(run, context)
+        if run.proposal.manifest != manifest:
+            raise ModelWorkflowIntegrationError(
+                "Engineer manifest differs from the persisted Architect proposal"
+            )
+        return RetrievalTrace.model_validate(context.wiki_trace.model_dump(mode="python"))
 
 
 def filesystem_workspace_factory(
@@ -936,11 +1216,53 @@ def _sanitized_role_policy_error(
         )
     ):
         reason = "transformation_scope_invalid"
+    elif role == "architect" and message.startswith(
+        "Architect unresolved questions require a material human-decision risk"
+    ):
+        reason = "unresolved_question_risk_missing"
     return SanitizedModelPolicyError(role, reason)
+
+
+def _safe_engineer_policy_code(error: PolicyViolation) -> str:
+    """Classify an Engineer rejection without logging model text or paths."""
+
+    message = str(error)
+    prefixes = (
+        (
+            "controller-classified correction requires a nonempty Engineer delta",
+            "correction_delta_required",
+        ),
+        (
+            "Engineer correction delta contains no material file changes",
+            "correction_no_material_changes",
+        ),
+        (
+            "Engineer correction delta does not cover repair signals",
+            "correction_signal_coverage_missing",
+        ),
+        (
+            "Engineer correction delta contains paths outside the code-owned repair boundary",
+            "correction_scope_invalid",
+        ),
+        (
+            "Engineer correction delta produced an identical attempt-one candidate",
+            "correction_identical_candidate",
+        ),
+        ("Engineer file plan scope mismatch", "file_plan_scope_mismatch"),
+        (
+            "Engineer actual filesystem delta does not equal the proposed update paths",
+            "file_plan_delta_mismatch",
+        ),
+        ("Engineer workspace scope does not exactly match", "workspace_scope_mismatch"),
+        ("Engineer requires a clean isolated workspace", "workspace_not_clean"),
+        ("attempt-two scope expansion must identify", "attempt_two_scope_expansion_invalid"),
+    )
+    return next((code for prefix, code in prefixes if message.startswith(prefix)), "other")
 
 
 __all__ = [
     "ArchitectContextFactory",
+    "CorrectionWikiRetriever",
     "DeterministicValidator",
     "ModelAgentWorkflowRoles",
     "ModelWorkflowIntegrationError",

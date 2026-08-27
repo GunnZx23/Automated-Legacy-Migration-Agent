@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Agent UI: VS Code Integrated Browser",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "uv run --frozen legacy-migration-agent ui --project-root . --ollama-model qwen3.8:latest --ollama-timeout-seconds 600",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Agent UI available at (http://127\\.0\\.0\\.1:\\d+/)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser"
+      },
+      "presentation": {
+        "group": "demo",
+        "order": 1
+      }
+    }
+  ]
+}

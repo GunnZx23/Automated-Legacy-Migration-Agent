@@ -1,0 +1,30 @@
+{
+  "additionalProperties": false,
+  "description": "Portable non-secret inputs needed to reproduce runtime composition.",
+  "properties": {
+    "preset_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Preset Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "wiki_as_of": {
+      "format": "date",
+      "title": "Wiki As Of",
+      "type": "string"
+    }
+  },
+  "required": [
+    "preset_id",
+    "wiki_as_of"
+  ],
+  "title": "AgentRunConfig",
+  "type": "object"
+}

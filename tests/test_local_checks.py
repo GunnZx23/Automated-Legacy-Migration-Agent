@@ -2,23 +2,33 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 from pathlib import Path
 from typing import IO, Any
 
 import pytest
+from salesforce_candidate_factory import salesforce_candidate_outputs
 
 from legacy_migration_agent.core.workspace import IsolatedWorkspace
 from legacy_migration_agent.platforms.local_checks import (
+    APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
+    APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     CONTROLLER_PATH,
     CONTROLLER_TEST_PATH,
+    JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
+    LWC_JAVASCRIPT_PATH,
     LWC_JEST_TOOLCHAIN_DIGESTS,
+    LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
+    LWC_TEST_PATH,
+    MANIFEST_PATH,
+    PERMISSION_SET_PATH,
     SALESFORCE_AGENT_OUTPUT_PATHS,
+    SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS,
+    SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
+    SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS,
+    SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS,
+    SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
-    SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS,
-    SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS,
-    SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS,
     LocalCheckFailure,
     check_dependency_closure,
     check_lwc_jest_toolchain,
@@ -30,30 +40,11 @@ from legacy_migration_agent.platforms.local_checks import (
 
 REPOSITORY = Path(__file__).parents[1]
 FIXTURE = REPOSITORY / "fixtures" / "salesforce" / "account-contact-explorer"
-ORACLE = FIXTURE / "expected"
 TOOLCHAIN = REPOSITORY / "tooling" / "lwc-jest"
+CANDIDATE_BUILDER = Path(__file__).with_name("salesforce_candidate_factory.py")
 
-
-def test_reactive_account_options_check_is_disclosed_in_implementation_contract() -> None:
-    contract = "\n".join(SALESFORCE_IMPLEMENTATION_CONTRACT)
-
-    assert "this.accountOptions = [BLANK_ACCOUNT_OPTION, ...data.map(...)]" in contract
-    assert "Do not stage the mapped options in an intermediate variable" in contract
-    assert "mutate the array with `push`" in contract
-
-
-def test_has_loaded_reset_check_is_disclosed_in_implementation_contract() -> None:
-    contract = "\n".join(SALESFORCE_IMPLEMENTATION_CONTRACT)
-
-    assert "handleAccountChange, use the direct sequence" in contract
-    assert "`this.isLoading = true;`, `this.hasLoaded = false;`, `this.contacts = [];`" in contract
-    assert "after the valid-selection guard and before awaiting getContacts" in contract
-
-
-def load_agent_outputs() -> dict[str, bytes]:
-    """Stand in for model results loaded into memory before validation."""
-
-    return {path: (ORACLE / path).read_bytes() for path in SALESFORCE_AGENT_OUTPUT_PATHS}
+LWC_TEMPLATE_PATH = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html"
+LWC_STYLES_PATH = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css"
 
 
 def candidate_from_memory(outputs: dict[str, bytes]) -> IsolatedWorkspace:
@@ -63,8 +54,15 @@ def candidate_from_memory(outputs: dict[str, bytes]) -> IsolatedWorkspace:
     return workspace
 
 
+def rejected_candidate(outputs: dict[str, bytes]) -> LocalCheckFailure:
+    with candidate_from_memory(outputs) as workspace:
+        with pytest.raises(LocalCheckFailure) as caught:
+            check_salesforce_candidate(workspace.root)
+    return caught.value
+
+
 def outputs_with_controller_statement(statement: str) -> dict[str, bytes]:
-    outputs = load_agent_outputs()
+    outputs = salesforce_candidate_outputs()
     source = outputs[CONTROLLER_PATH].decode("utf-8")
     insertion_point = "        try {\n            return [\n                SELECT Id, FirstName"
     assert insertion_point in source
@@ -76,13 +74,349 @@ def outputs_with_controller_statement(statement: str) -> dict[str, bytes]:
     return outputs
 
 
+def structurally_distinct_safe_outputs() -> dict[str, bytes]:
+    outputs = salesforce_candidate_outputs()
+    outputs[CONTROLLER_PATH] = b"""public with sharing class AccountContactExplorerController {
+    @AuraEnabled (cacheable = true)
+    public static List<Account> getAccounts() {
+        try {
+            List<Account> visibleAccounts = [
+                SELECT Name, Id
+                FROM Account
+                WITH USER_MODE
+                ORDER BY Name
+                LIMIT 25
+            ];
+            return visibleAccounts;
+        } catch (QueryException queryError) {
+            throw new AuraHandledException('Account choices are unavailable.');
+        }
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Contact> getContacts(Id accountId) {
+        if (accountId == null) {
+            return new List<Contact>();
+        }
+        try {
+            List<Contact> visibleContacts = [
+                SELECT LastName, FirstName, Phone, Email, Id
+                FROM Contact
+                WHERE AccountId = :accountId
+                WITH USER_MODE
+                ORDER BY LastName, FirstName
+                LIMIT 80
+            ];
+            return visibleContacts;
+        } catch (QueryException queryError) {
+            throw new AuraHandledException('Contact results are unavailable.');
+        }
+    }
+}
+"""
+    outputs[CONTROLLER_TEST_PATH] = b"""@IsTest
+private class AccountContactExplorerControllerTest {
+    @IsTest
+    static void modelSelectedThisScenarioName() {
+        Account sampleAccount = new Account(Name = 'Different Synthetic Tenant');
+        insert sampleAccount;
+
+        Test.startTest();
+        List<Account> visibleAccounts =
+            AccountContactExplorerController.getAccounts();
+        List<Contact> visibleContacts =
+            AccountContactExplorerController.getContacts(sampleAccount.Id);
+        Test.stopTest();
+
+        Assert.isNotNull(visibleAccounts);
+        Assert.areEqual(0, visibleContacts.size());
+    }
+}
+"""
+    outputs[
+        LWC_JAVASCRIPT_PATH
+    ] = b"""import loadContacts from "@salesforce/apex/AccountContactExplorerController.getContacts";
+import { wire as observe, LightningElement } from "lwc";
+import loadAccounts from "@salesforce/apex/AccountContactExplorerController.getAccounts";
+
+const LABELS = { primary: "Name" };
+
+export default class ModelChosenExplorer extends LightningElement {
+    get firstColumnLabel() {
+        return `${LABELS["primary"]}`;
+    }
+
+    availableOperations() {
+        return [observe, loadAccounts, loadContacts];
+    }
+}
+"""
+    outputs[LWC_TEST_PATH] = b"""import { describe, expect, it, jest } from '@jest/globals';
+import { createElement } from 'lwc';
+import ModelChosenExplorer from 'c/accountContactExplorer';
+import loadAccounts from '@salesforce/apex/AccountContactExplorerController.getAccounts';
+import loadContacts from '@salesforce/apex/AccountContactExplorerController.getContacts';
+
+jest.mock(
+    '@salesforce/apex/AccountContactExplorerController.getAccounts',
+    () => {
+        const { createApexTestWireAdapter } = require('@salesforce/sfdx-lwc-jest');
+        return {
+            __esModule: true,
+            default: createApexTestWireAdapter(jest.fn())
+        };
+    },
+    { virtual: true }
+);
+
+jest.mock(
+    '@salesforce/apex/AccountContactExplorerController.getContacts',
+    () => ({ __esModule: true, default: jest.fn() }),
+    { virtual: true }
+);
+
+describe('candidate-authored outcomes', () => {
+    it('uses a completely different safe title and structure', () => {
+        loadAccounts.emit([]);
+        loadContacts.mockResolvedValue([]);
+        const element = createElement('c-account-contact-explorer', {
+            is: ModelChosenExplorer
+        });
+        document.body.appendChild(element);
+        expect(element).not.toBeNull();
+    });
+});
+"""
+    outputs[LWC_TEMPLATE_PATH] = b"""<template>
+    <section aria-label="Account contacts">
+        <slot data-role="account-selector"></slot>
+        <button data-role="load-contacts">Load</button>
+        <div data-role="contact-results"></div>
+        <div data-state="loading"></div>
+        <div data-state="empty"></div>
+        <div data-state="warning"></div>
+        <div data-state="error"></div>
+    </section>
+</template>
+"""
+    outputs[LWC_STYLES_PATH] = b"""[data-state='ready'] {
+    display: block;
+}
+"""
+    return outputs
+
+
+def outputs_with_bounded_semantic_bindings() -> dict[str, bytes]:
+    outputs = structurally_distinct_safe_outputs()
+    template = outputs[LWC_TEMPLATE_PATH].decode("utf-8")
+    replacements = {
+        'data-role="account-selector"': "data-role={selectorHook}",
+        'data-role="load-contacts"': "data-role={loadHook}",
+        'data-role="contact-results"': "data-role={resultsHook}",
+        'data-state="loading"': "data-state={busyHook}",
+        'data-state="empty"': "data-state={emptyHook}",
+    }
+    for literal, binding in replacements.items():
+        assert literal in template
+        template = template.replace(literal, binding, 1)
+    outputs[LWC_TEMPLATE_PATH] = template.encode("utf-8")
+
+    javascript = outputs[LWC_JAVASCRIPT_PATH].decode("utf-8")
+    body, closing_brace = javascript.rsplit("}", 1)
+    outputs[LWC_JAVASCRIPT_PATH] = (
+        body
+        + """
+    get selectorHook() { return 'account-selector'; }
+    get loadHook() { return 'load-contacts'; }
+    get resultsHook() { return 'contact-results'; }
+    get busyHook() { return 'loading'; }
+    get emptyHook() { return 'empty'; }
+"""
+        + closing_brace
+    ).encode("utf-8")
+    return outputs
+
+
+def test_implementation_contract_assigns_candidate_owned_behavior_to_runtime_tests() -> None:
+    contract = "\n".join(SALESFORCE_IMPLEMENTATION_CONTRACT)
+
+    assert "Internal constants, helpers, control flow" in contract
+    assert "Test names, helpers, setup, counts" in contract
+    assert "Test titles, helpers, assertions, mock implementation" in contract
+    assert "validated by the pinned Jest runner" in contract
+    assert "inline in the test file" in contract
+    assert "stable data-role values" in contract
+    assert "supported simple identifiers or dotted properties" in contract
+    assert "public static cacheable methods" in contract
+    assert "safe nontechnical AuraHandledException" in contract
+    assert "Do not create User records, query Profile, or use System.runAs" in contract
+    assert "stale by an account change" in contract
+    assert "Do not render the contact-results hook" in contract
+    assert "FirstName, LastName, Email and Phone" in contract
+    assert "option whose value is the empty string" in contract
+    assert "a combobox placeholder is not that option" in contract
+    assert "disabled-state getter that returns true for a blank selection" in contract
+    assert "do not bind a positive canLoadContacts getter directly" in contract
+    assert "do not call non-@api component methods through the host element" in contract
+
+    for obsolete_oracle_literal in (
+        "MAX_ACCOUNTS = 50",
+        "returnsAccountsInNameOrder",
+        "Synthetic Account 000",
+        "renders a blank option followed by wired accounts",
+        "createDeferredPromise",
+        "toHaveBeenNthCalledWith",
+        "001000000000001AAA",
+        "Skynet",
+        "A-to-B-to-A",
+        "{ virtual: true }",
+        "jest.requireActual",
+    ):
+        assert obsolete_oracle_literal not in contract
+
+
+def test_agent_output_inventory_remains_exact_and_excludes_controller_tooling() -> None:
+    assert set(SALESFORCE_AGENT_OUTPUT_PATHS) == {
+        "manifest/package.xml",
+        "force-app/main/default/classes/AccountContactExplorerController.cls",
+        "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+        "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+        "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+        ("force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html"),
+        ("force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"),
+        ("force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css"),
+        ("force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml"),
+        (
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/"
+            "accountContactExplorer.test.js"
+        ),
+        ("force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml"),
+    }
+    assert len(SALESFORCE_AGENT_OUTPUT_PATHS) == 11
+    assert not {
+        "package.json",
+        "package-lock.json",
+        "jest.config.js",
+        "jest.setup.js",
+    } & set(SALESFORCE_AGENT_OUTPUT_PATHS)
+
+
+def test_candidate_jest_execution_failure_is_in_the_public_repair_vocabulary() -> None:
+    diagnostic_id = SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID
+
+    assert diagnostic_id == "candidate_jest_execution_failure"
+    assert diagnostic_id in SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS
+    assert diagnostic_id not in SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS
+
+
+def test_controller_jest_execution_failure_is_a_controller_repair_signal() -> None:
+    diagnostic_id = SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID
+
+    assert diagnostic_id == "controller_jest_execution_failure"
+    assert diagnostic_id in SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS
+    assert diagnostic_id not in SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS
+
+
+def test_granular_first_pass_diagnostics_are_in_the_static_repair_vocabulary() -> None:
+    assert {
+        APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+        APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
+        JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
+        LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
+    } <= SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS
+
+
+def test_candidate_contract_accepts_structurally_distinct_safe_implementation() -> None:
+    with candidate_from_memory(structurally_distinct_safe_outputs()) as workspace:
+        result = check_salesforce_candidate(workspace.root)
+
+    assert result["passed"] is True
+    assert result["apex_tests_prepared"] is True
+    assert result["lwc_jest_tests_prepared"] is True
+    assert result["apex_tests_executed"] is False
+    assert result["lwc_jest_executed"] is False
+
+
+def test_candidate_contract_accepts_bounded_semantic_hook_bindings() -> None:
+    outputs = outputs_with_bounded_semantic_bindings()
+
+    with candidate_from_memory(outputs) as workspace:
+        result = check_salesforce_candidate(workspace.root)
+
+    assert result["passed"] is True
+    contract = "\n".join(SALESFORCE_IMPLEMENTATION_CONTRACT)
+    for candidate_owned_name in ("selectorHook", "resultsHook", "busyHook"):
+        assert candidate_owned_name not in contract
+
+
+def test_candidate_contract_rejects_unbounded_semantic_hook_expression() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    template = outputs[LWC_TEMPLATE_PATH].decode("utf-8")
+    outputs[LWC_TEMPLATE_PATH] = template.replace(
+        'data-role="account-selector"',
+        "data-role={semanticRoles[currentRole]}",
+        1,
+    ).encode("utf-8")
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_template_contract"
+    assert failure.diagnostic_ids == (LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "isLoading || !selectedAccountId",
+        "!isLoading",
+        "accounts[selectedIndex]",
+        "computeDisabled()",
+    ),
+)
+def test_candidate_contract_reports_unsupported_lwc_template_expression(
+    expression: str,
+) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    template = outputs[LWC_TEMPLATE_PATH].decode("utf-8")
+    outputs[LWC_TEMPLATE_PATH] = template.replace(
+        '<button data-role="load-contacts"',
+        f'<button disabled={{{expression}}} data-role="load-contacts"',
+        1,
+    ).encode("utf-8")
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_template_contract"
+    assert failure.diagnostic_ids == (LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,)
+
+
+def test_candidate_contract_accepts_semicolon_free_aliased_lwc_base_import() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_JAVASCRIPT_PATH] = b"""import {
+    LightningElement as ComponentBase,
+    wire as observe
+} from 'lwc'
+import loadAccounts from '@salesforce/apex/AccountContactExplorerController.getAccounts'
+import loadContacts from '@salesforce/apex/AccountContactExplorerController.getContacts'
+
+export default class extends ComponentBase {
+    get availableOperations() {
+        return [observe, loadAccounts, loadContacts]
+    }
+}
+"""
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
 def test_candidate_contract_uses_only_in_memory_outputs_and_candidate_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    outputs = load_agent_outputs()
+    outputs = salesforce_candidate_outputs()
     original_open = Path.open
 
-    def reject_oracle_open(
+    def reject_builder_open(
         path: Path,
         mode: str = "r",
         buffering: int = -1,
@@ -90,22 +424,12 @@ def test_candidate_contract_uses_only_in_memory_outputs_and_candidate_root(
         errors: str | None = None,
         newline: str | None = None,
     ) -> IO[Any]:
-        try:
-            path.resolve(strict=False).relative_to(ORACLE.resolve(strict=True))
-        except ValueError:
+        if path.resolve(strict=False) != CANDIDATE_BUILDER.resolve(strict=True):
             return original_open(path, mode, buffering, encoding, errors, newline)
-        raise PermissionError("golden tree is unavailable during candidate validation")
+        raise PermissionError("test candidate builder is unavailable during validation")
 
     with candidate_from_memory(outputs) as workspace:
-        monkeypatch.setattr(Path, "open", reject_oracle_open)
-
-        assert not (workspace.root / "package.json").exists()
-        assert not (workspace.root / "package-lock.json").exists()
-        assert not (workspace.root / "jest.config.js").exists()
-        assert all(
-            Path(path).name not in {"package.json", "package-lock.json", "jest.config.js"}
-            for path in SALESFORCE_AGENT_OUTPUT_PATHS
-        )
+        monkeypatch.setattr(Path, "open", reject_builder_open)
 
         result = check_salesforce_candidate(workspace.root)
         dependency_result, graph = check_dependency_closure(workspace.root)
@@ -113,9 +437,7 @@ def test_candidate_contract_uses_only_in_memory_outputs_and_candidate_root(
         revision_result = check_workspace_revision(workspace.root, tree_fingerprint(workspace.root))
 
         assert result["check"] == "salesforce-candidate-contract"
-        assert result["agent_output_files"] == 13
-        assert result["apex_tests_executed"] is False
-        assert result["lwc_jest_executed"] is False
+        assert result["agent_output_files"] == 11
         assert result["org_validation_performed"] is False
         assert result["deployment_claim"] is False
         assert changes.changed_paths == SALESFORCE_AGENT_OUTPUT_PATHS
@@ -124,40 +446,649 @@ def test_candidate_contract_uses_only_in_memory_outputs_and_candidate_root(
         assert revision_result["passed"] is True
 
 
-def test_candidate_contract_rejects_security_regression() -> None:
-    with candidate_from_memory(load_agent_outputs()) as workspace:
-        source = (workspace.root / CONTROLLER_PATH).read_text(encoding="utf-8")
-        workspace.write_text(CONTROLLER_PATH, source.replace("with sharing", "without sharing"))
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
+@pytest.mark.parametrize(
+    "declaration",
+    (
+        "public without sharing class AccountContactExplorerController",
+        "public inherited sharing class AccountContactExplorerController",
+        "public class AccountContactExplorerController",
+    ),
+)
+def test_candidate_contract_rejects_non_with_sharing_controller(
+    declaration: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace(
+        "public with sharing class AccountContactExplorerController",
+        declaration,
+        1,
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
 
 
-def test_candidate_contract_rejects_extra_exposed_apex_query() -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_PATH].decode("utf-8")
+def test_candidate_contract_rejects_extra_aura_enabled_surface() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
     body, closing_brace = source.rsplit("}", 1)
     outputs[CONTROLLER_PATH] = (
         body
         + """
     @AuraEnabled(cacheable=true)
-    public static List<Contact> getAllContacts() {
-        return [SELECT Id FROM Contact LIMIT 1];
+    public static List<Account> getEveryAccount() {
+        return [SELECT Id FROM Account WITH USER_MODE LIMIT 1];
     }
 """
         + closing_brace
-    ).encode("utf-8")
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,)
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    (
+        "@AuraEnabled",
+        "@AuraEnabled(cacheable=false)",
+        "@AuraEnabled(cacheable=true)\n    private static List<Account>",
+    ),
+)
+def test_candidate_contract_reports_exact_apex_public_interface_mismatch(
+    replacement: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    if replacement.startswith("@AuraEnabled(cacheable=true)\n"):
+        source = source.replace(
+            "@AuraEnabled(cacheable=true)\n    public static List<Account>",
+            replacement,
+            1,
+        )
+    else:
+        source = source.replace("@AuraEnabled(cacheable=true)", replacement, 1)
+    outputs[CONTROLLER_PATH] = source.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,)
+
+
+def test_candidate_contract_rejects_queries_without_user_mode() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace("WITH USER_MODE", "WITH SYSTEM_MODE").encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+def test_candidate_contract_rejects_extra_non_user_mode_query() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    body, closing_brace = source.rsplit("}", 1)
+    outputs[CONTROLLER_PATH] = (
+        body
+        + """
+    private static List<Account> unsafeHelper() {
+        return [SELECT Id FROM Account LIMIT 1];
+    }
+"""
+        + closing_brace
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+def test_candidate_contract_rejects_clear_invalid_apex_statement() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace(
+        "public with sharing class AccountContactExplorerController {",
+        "public with sharing class AccountContactExplorerController {\n    THIS IS NOT VALID APEX;",
+        1,
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+@pytest.mark.parametrize(
+    ("unsafe_fallback", "safe_exception"),
+    (
+        (
+            "return new List<Account>();",
+            "throw new AuraHandledException('Accounts could not be read.');",
+        ),
+        (
+            "return new List<Contact>();",
+            "throw new AuraHandledException('Contacts could not be read.');",
+        ),
+    ),
+)
+def test_candidate_contract_rejects_uncontrolled_query_failure(
+    unsafe_fallback: str,
+    safe_exception: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    assert safe_exception in source
+    outputs[CONTROLLER_PATH] = source.replace(safe_exception, unsafe_fallback, 1).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,)
+
+
+@pytest.mark.parametrize(
+    "removed_clause",
+    (
+        "WHERE AccountId = :accountId",
+        "ORDER BY LastName, FirstName",
+        "LIMIT :MAX_CONTACTS",
+    ),
+)
+def test_candidate_contract_rejects_incomplete_method_bound_contact_query(
+    removed_clause: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    assert removed_clause in source
+    outputs[CONTROLLER_PATH] = source.replace(removed_clause, "", 1).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+def test_candidate_contract_rejects_contact_query_missing_visible_field() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace(
+        "SELECT Id, FirstName, LastName, Email, Phone",
+        "SELECT Id, FirstName, LastName, Email",
+        1,
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+@pytest.mark.parametrize(
+    "invalid_guard",
+    (
+        "if (String.isBlank(accountId))",
+        "if (accountId != null)",
+    ),
+)
+def test_candidate_contract_rejects_invalid_contact_null_guard(invalid_guard: str) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace("if (accountId == null)", invalid_guard, 1).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "if (accountId != null) { insert new Account(); }",
+        "if (accountId != null) { update new Account(); }",
+        "if (accountId != null) { upsert new Account(); }",
+        "if (accountId != null) { delete new Account(); }",
+        "if (accountId != null) { undelete new Account(); }",
+        "if (accountId != null) { merge new Account(), new Account(); }",
+        (
+            "Database.queryWithBinds('SELECT Id FROM Account', "
+            "new Map<String, Object>(), AccessLevel.USER_MODE);"
+        ),
+        "Database.query('SELECT Id FROM Account');",
+        "HttpRequest request = new HttpRequest();",
+        "String access_token = 'synthetic-but-forbidden';",
+        "String endpoint = 'https://example.invalid/service';",
+    ),
+)
+def test_candidate_contract_rejects_controller_capabilities(statement: str) -> None:
+    failure = rejected_candidate(outputs_with_controller_statement(statement))
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
+def test_candidate_contract_ignores_harmless_controller_comments_and_strings() -> None:
+    outputs = outputs_with_controller_statement(
+        "String harmless = 'insert update Database.queryWithBinds HttpRequest'; "
+        "// delete Database.merge(new Account())"
+    )
 
     with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_apex_controller_contract"
+        result = check_salesforce_candidate(workspace.root)
+
+    assert result["security"] == "with-sharing-user-mode-read-only"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "@IsTest(SeeAllData=true)",
+        "Database.query('SELECT Id FROM Account')",
+        "new HttpRequest()",
+        "String authorization = 'Bearer fake'",
+        "String endpoint = 'https://example.invalid/test'",
+    ),
+)
+def test_candidate_contract_rejects_unsafe_apex_test_source(mutation: str) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_TEST_PATH].decode()
+    if mutation.startswith("@IsTest"):
+        source = source.replace("@IsTest\nprivate class", f"{mutation}\nprivate class", 1)
+    else:
+        body, closing_brace = source.rsplit("}", 1)
+        source = (
+            body
+            + f"""
+    @IsTest
+    static void unsafeCapabilityProbe() {{
+        Object unsafeValue = {mutation};
+        Assert.isNotNull(unsafeValue);
+    }}
+"""
+            + closing_brace
+        )
+    outputs[CONTROLLER_TEST_PATH] = source.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_test_contract"
+
+
+@pytest.mark.parametrize("method_name", ("getAccounts", "getContacts"))
+def test_candidate_contract_requires_generated_tests_to_call_public_methods(
+    method_name: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_TEST_PATH].decode()
+    outputs[CONTROLLER_TEST_PATH] = source.replace(
+        f"AccountContactExplorerController.{method_name}",
+        f"AccountContactExplorerController.unrelated{method_name}",
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_test_contract"
+
+
+@pytest.mark.parametrize(
+    "injection",
+    (
+        'import extra from "unapproved-module";\n',
+        "export { ModelChosenExplorer };\n",
+        "const execute = eval;\n",
+        "window.alert('unsafe');\n",
+        "const prototype = Object.getPrototypeOf({});\n",
+        (
+            "const { ['con' + 'structor']: evaluator } = Object.freeze(() => {});\n"
+            "const runtimeObject = evaluator('return this')();\n"
+        ),
+        "const promise = import('unapproved-module');\n",
+        "const hidden = `${eval('1')}`;\n",
+        "fetch('/external');\n",
+    ),
+)
+def test_candidate_contract_rejects_unapproved_lwc_capabilities(injection: str) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_JAVASCRIPT_PATH] = (injection + outputs[LWC_JAVASCRIPT_PATH].decode()).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_javascript_contract"
+    assert failure.diagnostic_ids == (
+        ("salesforce_lwc_javascript_contract",)
+        if injection.startswith("export")
+        else ("lwc_forbidden_runtime_capability",)
+    )
+
+
+def test_candidate_contract_allows_capability_words_in_lwc_comments_and_strings() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_JAVASCRIPT_PATH].decode()
+    outputs[LWC_JAVASCRIPT_PATH] = (
+        "const harmlessText = 'window eval process fetch';\n// globalThis.fetch()\n" + source
+    ).encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda source: "private requestGeneration = 0;\n" + source,
+        lambda source: "@api requestGeneration = 0;\n" + source,
+        lambda source: source.replace(
+            "[observe, loadAccounts, loadContacts]",
+            "[observe, unusedAccountLoader, loadContacts]",
+            1,
+        ),
+    ),
+)
+def test_candidate_contract_rejects_non_executable_lwc_javascript(
+    mutate: Any,
+) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_JAVASCRIPT_PATH].decode()
+    mutated = mutate(source)
+    assert mutated != source
+    outputs[LWC_JAVASCRIPT_PATH] = mutated.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_javascript_contract"
+
+
+@pytest.mark.parametrize(
+    "test_source",
+    (
+        "it.skip('skipped', () => {});",
+        "it.todo('todo');",
+        "xit('disabled', () => {});",
+        "pending(); it('present', () => {});",
+        "describe.only('focused', () => { it('present', () => {}); });",
+        "test.only('focused', () => {});",
+    ),
+)
+def test_candidate_contract_rejects_skipped_todo_pending_or_focused_jest(
+    test_source: str,
+) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_TEST_PATH] = test_source.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_jest_contract"
+
+
+@pytest.mark.parametrize(
+    ("injection", "expected_diagnostics"),
+    (
+        (
+            "const files = require('node:fs');\n",
+            (JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID, "jest_forbidden_capability"),
+        ),
+        (
+            "import { readFileSync } from 'fs';\n",
+            (JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID, "jest_forbidden_capability"),
+        ),
+        (
+            "import {\n    readFileSync\n} from 'node:fs';\n",
+            (JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID, "jest_forbidden_capability"),
+        ),
+        (
+            "const files = jest.requireActual('node:fs');\n",
+            ("jest_forbidden_capability",),
+        ),
+        (
+            "const files = jest.requireMock('node:fs');\n",
+            ("jest_forbidden_capability",),
+        ),
+        (
+            "const files = jest.createMockFromModule('node:fs');\n",
+            ("jest_forbidden_capability",),
+        ),
+        (
+            "jest.setMock('node:fs', {});\n",
+            ("jest_forbidden_capability",),
+        ),
+        (
+            "jest.unstable_mockModule('node:fs', () => ({}));\n",
+            ("jest_forbidden_capability",),
+        ),
+        ("const stop = process.exit;\n", ("jest_forbidden_capability",)),
+        ("globalThis.it = () => {};\n", ("jest_forbidden_capability",)),
+        ("const execute = eval;\n", ("jest_forbidden_capability",)),
+        ("fetch('/external');\n", ("jest_forbidden_capability",)),
+        ("const loader = require;\n", ("jest_forbidden_capability",)),
+    ),
+)
+def test_candidate_contract_rejects_dangerous_jest_capabilities(
+    injection: str,
+    expected_diagnostics: tuple[str, ...],
+) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_TEST_PATH] = (injection + outputs[LWC_TEST_PATH].decode()).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_jest_contract"
+    assert failure.diagnostic_ids == expected_diagnostics
+
+
+@pytest.mark.parametrize(
+    "injection",
+    (
+        "import helper from 'candidate-helper';\n",
+        (
+            "const getAccounts = require("
+            "'@salesforce/apex/AccountContactExplorerController.getAccounts');\n"
+        ),
+    ),
+)
+def test_candidate_contract_reports_unapproved_jest_module_target(injection: str) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_TEST_PATH] = (injection + outputs[LWC_TEST_PATH].decode()).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_jest_contract"
+    assert failure.diagnostic_ids == (JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,)
+
+
+def test_candidate_contract_leaves_jest_globals_compatibility_to_runtime() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    outputs[LWC_TEST_PATH] = source.replace(
+        "describe, expect, it, jest",
+        "expect, it, jest",
+        1,
+    ).encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_allows_arbitrary_jest_titles_and_helper_names() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    outputs[LWC_TEST_PATH] = (
+        source.replace(
+            "candidate-authored outcomes",
+            "model chose this organization",
+            1,
+        )
+        .replace(
+            "uses a completely different safe title and structure",
+            "proves a user outcome under an arbitrary title",
+            1,
+        )
+        .replace("element", "modelChosenElement")
+        .encode()
+    )
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_accepts_parameterized_jest_with_inline_data() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = (
+        outputs[LWC_TEST_PATH]
+        .decode()
+        .replace(
+            "describe, expect, it, jest",
+            "describe, expect, it, jest, test",
+            1,
+        )
+    )
+    source += """
+
+const requiredAccounts = [{ Id: '001000000000001AAA', Name: 'Inline Account' }];
+test.each(requiredAccounts)('accepts candidate row %s', (account) => {
+    expect(account.Id).toMatch(/^001/);
+});
+"""
+    outputs[LWC_TEST_PATH] = source.encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_accepts_static_sfdx_lwc_jest_import() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = (
+        "import { createApexTestWireAdapter } from '@salesforce/sfdx-lwc-jest';\n"
+        + outputs[LWC_TEST_PATH].decode()
+        + """
+
+it('uses the public wire adapter helper', () => {
+    expect(typeof createApexTestWireAdapter).toBe('function');
+});
+"""
+    )
+    outputs[LWC_TEST_PATH] = source.encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_ignores_skip_and_capability_words_in_jest_text() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = (
+        outputs[LWC_TEST_PATH].decode()
+        + """
+
+// it.skip('commented out', () => {});
+describe('safe words', () => {
+    it('mentions todo, pending, process and eval in its title', () => {
+        const explanation = 'process, eval, jest.requireActual("fs") and import x from "fs" are only words';
+        expect(explanation).toContain('words');
+    });
+});
+"""
+    )
+    outputs[LWC_TEST_PATH] = source.encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_rejects_empty_jest_source() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    outputs[LWC_TEST_PATH] = b"describe('empty', () => {});\n"
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_jest_contract"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda source: source.replace("createElement(", "document.createElement(", 1),
+        lambda source: source.replace(
+            "import ModelChosenExplorer from 'c/accountContactExplorer';\n",
+            "",
+            1,
+        ),
+    ),
+)
+def test_candidate_contract_leaves_lwc_jest_harness_shape_to_runtime(mutate: Any) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    mutated = mutate(source)
+    assert mutated != source
+    outputs[LWC_TEST_PATH] = mutated.encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda source: source.replace("__esModule: true,", "", 1),
+        lambda source: source.replace("default: jest.fn()", "named: jest.fn()", 1),
+        lambda source: source.replace("{ virtual: true }", "{}", 1),
+    ),
+)
+def test_candidate_contract_leaves_apex_mock_shape_to_runtime(mutate: Any) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    mutated = mutate(source)
+    assert mutated != source
+    outputs[LWC_TEST_PATH] = mutated.encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_accepts_inline_synthetic_jest_data() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    outputs[LWC_TEST_PATH] = (
+        "const inlineAccounts = [{ Id: '001000000000030AAA', Name: 'Inline' }];\n" + source
+    ).encode()
+
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+@pytest.mark.parametrize(
+    ("path", "injection"),
+    (
+        (LWC_TEMPLATE_PATH, "<script>unsafe()</script>"),
+        (LWC_TEMPLATE_PATH, '<iframe src="local"></iframe>'),
+        (LWC_TEMPLATE_PATH, '<div lwc:dom="manual"></div>'),
+        (LWC_STYLES_PATH, "@import 'theme.css';"),
+        (LWC_STYLES_PATH, "section { background: url(asset.png); }"),
+    ),
+)
+def test_candidate_contract_rejects_template_and_css_capabilities(
+    path: str,
+    injection: str,
+) -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[path].decode()
+    if path == LWC_TEMPLATE_PATH:
+        source = source.replace("</template>", f"{injection}\n</template>")
+    else:
+        source += f"\n{injection}\n"
+    outputs[path] = source.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code in {
+        "salesforce_lwc_template_contract",
+        "salesforce_lwc_styles_contract",
+    }
 
 
 def test_candidate_contract_rejects_unapproved_permission_capability() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace(
+    outputs = salesforce_candidate_outputs()
+    source = outputs[PERMISSION_SET_PATH].decode()
+    outputs[PERMISSION_SET_PATH] = source.replace(
         "</PermissionSet>",
         """    <userPermissions>
         <enabled>true</enabled>
@@ -165,1274 +1096,68 @@ def test_candidate_contract_rejects_unapproved_permission_capability() -> None:
     </userPermissions>
 </PermissionSet>""",
         1,
-    ).encode("utf-8")
+    ).encode()
 
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_permission_set_contract"
+    failure = rejected_candidate(outputs)
 
-
-def test_candidate_contract_rejects_missing_stale_response_guard() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    stale_guard = (
-        "            if (!this.isCurrentRequest(accountId, requestGeneration)) {\n"
-        "                return;\n"
-        "            }\n"
-    )
-    assert source.count(stale_guard) == 2
-    outputs[path] = source.replace(stale_guard, "", 1).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_request_generation_increment",)
+    assert failure.failure_code == "salesforce_permission_set_contract"
 
 
-def test_candidate_contract_rejects_missing_handle_load_generation_increment() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    handle_load_increment = (
-        "        const accountId = this.selectedAccountId;\n"
-        "        this.loadRequestGeneration += 1;\n"
-        "        const requestGeneration = this.loadRequestGeneration;\n"
-    )
-    assert handle_load_increment in source
-    source = source.replace(
-        handle_load_increment,
+def test_candidate_contract_rejects_manifest_outside_exact_dependency_closure() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[MANIFEST_PATH].decode()
+    outputs[MANIFEST_PATH] = source.replace(
+        "<members>AccountContactExplorerController</members>",
         (
-            "        const accountId = this.selectedAccountId;\n"
-            "        const requestGeneration = this.loadRequestGeneration;\n"
+            "<members>AccountContactExplorerController</members>\n"
+            "        <members>UnapprovedController</members>"
         ),
-        1,
-    )
-    # Preserve the old global count so this proves method and sequence binding.
-    source += "\nconst harmlessGenerationText = 'this.loadRequestGeneration += 1';\n"
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_request_generation_increment",)
-
-
-def test_candidate_contract_accepts_equivalent_current_request_operand_order() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    source = source.replace(
-        "accountId === this.selectedAccountId",
-        "this.selectedAccountId === accountId",
-        1,
-    ).replace(
-        "requestGeneration === this.loadRequestGeneration",
-        "this.loadRequestGeneration === requestGeneration",
-        1,
-    )
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_binds_stale_guard_to_catch_block_not_source_text() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    guard = (
-        "            if (!this.isCurrentRequest(accountId, requestGeneration)) {\n"
-        "                return;\n"
-        "            }\n"
-    )
-    assert source.count(guard) == 2
-    source = source.replace(guard, "", 1)
-    source += "\nconst staleGuardDecoy = 'this.isCurrentRequest(accountId, requestGeneration)';\n"
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_request_generation_increment",)
-
-
-def test_candidate_contract_rejects_component_jest_global_tampering_before_runtime() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = (
-        "const trustedIt = globalThis.it;\n"
-        "globalThis.it = (title, body, timeout) => trustedIt(title, () => {}, timeout);\n" + source
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-    assert "lwc_forbidden_runtime_capability" not in SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS
-
-
-def test_component_capability_check_ignores_harmless_string_text() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    anchor = "const BLANK_ACCOUNT_OPTION = Object.freeze({\n"
-    assert anchor in source
-    outputs[path] = source.replace(
-        anchor,
-        "const harmlessText = 'globalThis.it';\n\n" + anchor,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-@pytest.mark.parametrize(
-    "attack",
-    (
-        "const runDynamic = eval;\nrunDynamic('void 0');\n",
-        "const Dynamic = Function;\nDynamic('return 1')();\n",
-        ("const loader = require;\nconst matcherApi = loader('@jest/globals');\n"),
-        "function inspectArgs() { return arguments; }\n",
-        "const reflector = Object;\n",
-    ),
-)
-def test_candidate_contract_rejects_aliased_component_runtime_capabilities(
-    attack: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    outputs[path] = (attack + outputs[path].decode("utf-8")).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-def test_candidate_contract_rejects_computed_constructor_global_bypass() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    attack = (
-        "const runtime = [][ 'filter' ][ 'con' + 'structor' ]('return this')();\n"
-        "const trustedCall = runtime['i' + 't'];\n"
-        "runtime['i' + 't'] = (title, body, timeout) => "
-        "trustedCall(title, () => {}, timeout);\n"
-    )
-    outputs[path] = (attack + source).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-def test_candidate_contract_rejects_reflective_function_global_bypass() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    attack = (
-        "const callableBase = Object.getPrototypeOf(() => {});\n"
-        "const hiddenDescriptor = "
-        "Object.getOwnPropertyDescriptor(callableBase, 'constructor');\n"
-        "const evaluator = hiddenDescriptor.value;\n"
-        "const runtimeObject = evaluator('return this')();\n"
-    )
-    outputs[path] = (attack + source).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-@pytest.mark.parametrize(
-    "attack",
-    (
-        (
-            "const { ['con' + 'structor']: evaluator } = Object.freeze(() => {});\n"
-            "const runtimeObject = evaluator('return this')();\n"
-        ),
-        (
-            "const evaluator = Object.freeze(() => {})?.['con' + 'structor'];\n"
-            "const runtimeObject = evaluator('return this')();\n"
-        ),
-        (
-            "const { 'constructor': evaluator } = Object.freeze(() => {});\n"
-            "const runtimeObject = evaluator('return this')();\n"
-        ),
-    ),
-)
-def test_candidate_contract_rejects_indirect_constructor_extraction(
-    attack: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    outputs[path] = (attack + outputs[path].decode("utf-8")).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-@pytest.mark.parametrize("browser_global", ("top", "parent", "location", "navigator"))
-def test_candidate_contract_rejects_unapproved_browser_globals(
-    browser_global: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = (f"const runtimeObject = {browser_global};\n" + source).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-def test_candidate_contract_accepts_approved_component_imports_in_another_order() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    accounts_import = (
-        "import getAccounts from '@salesforce/apex/AccountContactExplorerController.getAccounts';\n"
-    )
-    contacts_import = (
-        "import getContacts from '@salesforce/apex/AccountContactExplorerController.getContacts';\n"
-    )
-    assert accounts_import + contacts_import in source
-    outputs[path] = source.replace(
-        accounts_import + contacts_import,
-        contacts_import + accounts_import,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-@pytest.mark.parametrize(
-    "extra_import",
-    (
-        "import '@jest/globals';\n",
-        "import {\n    expect\n} from '@jest/globals';\n",
-    ),
-)
-def test_candidate_contract_rejects_extra_component_static_import_forms(
-    extra_import: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    outputs[path] = (extra_import + outputs[path].decode("utf-8")).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-@pytest.mark.parametrize(
-    "extra_export",
-    (
-        "export { readFileSync as runtimeRead } from 'node:fs';\n",
-        "export {\n    readFileSync as runtimeRead\n} from 'node:fs';\n",
-        "export * from 'node:fs';\n",
-    ),
-)
-def test_candidate_contract_rejects_component_module_re_exports(
-    extra_export: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    outputs[path] = (extra_export + outputs[path].decode("utf-8")).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_forbidden_runtime_capability",)
-
-
-def test_candidate_contract_rejects_account_options_getter_setter_expando() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_field = "    accountOptions = [BLANK_ACCOUNT_OPTION];\n"
-    assert direct_field in source
-    outputs[path] = source.replace(
-        direct_field,
-        """    get accountOptions() {
-        return this._accountOptions || [];
-    }
-
-    set accountOptions(options) {
-        this._accountOptions = options;
-    }
-""",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_account_options_reactive_field",)
-
-
-def test_candidate_contract_rejects_later_account_change_state_rewrites() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    reset = (
-        "        this.contacts = [];\n"
-        "        this.isLoading = false;\n"
-        "        this.hasLoaded = false;\n"
-    )
-    assert reset in source
-    outputs[path] = source.replace(
-        reset,
-        reset
-        + "        if (!this.selectedAccountId) {\n"
-        + "            this.hasLoaded = true;\n"
-        + "            this.isLoading = true;\n"
-        + "        }\n",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_allows_read_only_account_change_state_reference() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    increment = "        this.loadRequestGeneration += 1;\n"
-    assert increment in source
-    outputs[path] = source.replace(
-        increment,
-        increment + "        const wasLoading = this.isLoading;\n",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_rejects_account_options_push_mutation_in_wire_handler() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_assignment = """            this.accountOptions = [
-                BLANK_ACCOUNT_OPTION,
-                ...data.map((accountRecord) => ({
-                    label: accountRecord.Name,
-                    value: accountRecord.Id
-                }))
-            ];
-"""
-    push_mutation = """            this.accountOptions = [BLANK_ACCOUNT_OPTION];
-            this.accountOptions.push(
-                ...data.map((accountRecord) => ({
-                    label: accountRecord.Name,
-                    value: accountRecord.Id
-                }))
-            );
-"""
-    assert direct_assignment in source
-    outputs[path] = source.replace(direct_assignment, push_mutation, 1).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_account_options_reactive_field",)
-
-
-def test_candidate_contract_rejects_missing_handle_load_has_loaded_reset() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    reset_anchor = "        this.isLoading = true;\n        this.hasLoaded = false;\n"
-    assert reset_anchor in source
-    # Keep three total occurrences so an unrelated reset cannot satisfy the
-    # method-scoped lifecycle contract that the old count-based check missed.
-    source = source.replace(
-        reset_anchor,
-        "        this.isLoading = true;\n",
-        1,
-    ).replace(
-        "        if (data) {\n",
-        "        if (data) {\n            this.hasLoaded = false;\n",
-        1,
-    )
-    assert source.count("hasLoaded = false") == 3
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_rejects_has_loaded_reset_inside_blank_guard_only() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    valid_reset = "        this.isLoading = true;\n        this.hasLoaded = false;\n"
-    blank_guard = (
-        "            this.warningMessage = 'Select an account before loading contacts.';\n"
-        "            return;\n"
-    )
-    assert valid_reset in source and blank_guard in source
-    outputs[path] = (
-        source.replace(
-            valid_reset,
-            "        this.isLoading = true;\n",
-            1,
-        )
-        .replace(
-            blank_guard,
-            (
-                "            this.warningMessage = 'Select an account before loading contacts.';\n"
-                "            this.hasLoaded = false;\n"
-                "            return;\n"
-            ),
-            1,
-        )
-        .encode("utf-8")
-    )
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_accepts_extra_guard_cleanup_with_valid_path_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    blank_guard = (
-        "            this.warningMessage = 'Select an account before loading contacts.';\n"
-        "            return;\n"
-    )
-    assert blank_guard in source
-    outputs[path] = source.replace(
-        blank_guard,
-        (
-            "            this.warningMessage = 'Select an account before loading contacts.';\n"
-            "            this.hasLoaded = false;\n"
-            "            this.contacts = [];\n"
-            "            return;\n"
-        ),
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_accepts_extra_pre_guard_cleanup_with_valid_path_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    method_start = "    async handleLoad() {\n"
-    assert method_start in source
-    outputs[path] = source.replace(
-        method_start,
-        (
-            "    async handleLoad() {\n"
-            "        this.hasLoaded = false;\n"
-            "        this.contacts = [];\n"
-        ),
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_rejects_conditional_valid_path_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_cleanup = "        this.hasLoaded = false;\n        this.contacts = [];\n"
-    assert direct_cleanup in source
-    outputs[path] = source.replace(
-        direct_cleanup,
-        (
-            "        if (this.contacts.length === 0) {\n"
-            "            this.hasLoaded = false;\n"
-            "            this.contacts = [];\n"
-            "        }\n"
-        ),
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-@pytest.mark.parametrize(
-    "conditional_cleanup",
-    (
-        (
-            "        if (this.contacts.length === 0) this.isLoading = true;\n"
-            "        if (this.contacts.length === 0) this.hasLoaded = false;\n"
-            "        if (this.contacts.length === 0) this.contacts = [];\n"
-        ),
-        (
-            "        if (this.contacts.length === 0)\n"
-            "            this.isLoading = true;\n"
-            "        if (this.contacts.length === 0)\n"
-            "            this.hasLoaded = false;\n"
-            "        if (this.contacts.length === 0)\n"
-            "            this.contacts = [];\n"
-        ),
-    ),
-)
-def test_candidate_contract_rejects_braceless_conditional_valid_path_cleanup(
-    conditional_cleanup: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_cleanup = (
-        "        this.isLoading = true;\n"
-        "        this.hasLoaded = false;\n"
-        "        this.contacts = [];\n"
-    )
-    assert direct_cleanup in source
-    outputs[path] = source.replace(direct_cleanup, conditional_cleanup, 1).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_rejects_single_braceless_guard_before_load_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_cleanup = (
-        "        this.isLoading = true;\n"
-        "        this.hasLoaded = false;\n"
-        "        this.contacts = [];\n"
-    )
-    assert direct_cleanup in source
-    outputs[path] = source.replace(
-        direct_cleanup,
-        "        if (this.contacts.length === 0)\n" + direct_cleanup,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_rejects_single_braceless_guard_before_change_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_cleanup = (
-        "        this.contacts = [];\n"
-        "        this.isLoading = false;\n"
-        "        this.hasLoaded = false;\n"
-    )
-    assert direct_cleanup in source
-    outputs[path] = source.replace(
-        direct_cleanup,
-        "        if (this.contacts.length === 0)\n" + direct_cleanup,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_rejects_missing_pre_request_contact_clear() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    anchor = (
-        "        this.isLoading = true;\n"
-        "        this.hasLoaded = false;\n"
-        "        this.contacts = [];\n"
-    )
-    assert anchor in source
-    outputs[path] = source.replace(
-        anchor,
-        "        this.isLoading = true;\n        this.hasLoaded = false;\n",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("lwc_has_loaded_reset",)
-
-
-def test_candidate_contract_aggregates_simultaneous_lwc_javascript_diagnostics() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    direct_field = "    accountOptions = [BLANK_ACCOUNT_OPTION];\n"
-    reset_anchor = "        this.isLoading = true;\n        this.hasLoaded = false;\n"
-    assert direct_field in source and reset_anchor in source
-    outputs[path] = (
-        source.replace(
-            direct_field,
-            "    accountOptions = [];\n",
-            1,
-        )
-        .replace(
-            reset_anchor,
-            "        this.isLoading = true;\n",
-            1,
-        )
-        .encode("utf-8")
-    )
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == (
-        "lwc_account_options_reactive_field",
-        "lwc_has_loaded_reset",
-    )
-
-
-def test_forbidden_lwc_capability_cannot_be_masked_by_safe_diagnostic() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    reset_anchor = "        this.isLoading = true;\n        this.hasLoaded = false;\n"
-    assert reset_anchor in source
-    outputs[path] = (
-        source.replace(reset_anchor, "        this.isLoading = true;\n", 1)
-        + "\neval('forbidden');\n"
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-    assert caught.value.diagnostic_ids == (
-        "lwc_forbidden_runtime_capability",
-        "lwc_has_loaded_reset",
-    )
-
-
-def test_candidate_contract_rejects_lwc_javascript_comment_decoy() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = (
-        source.replace("extends LightningElement", "extends MissingBase", 1)
-        + "\n// extends LightningElement\n"
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_javascript_contract"
-
-
-def test_candidate_contract_rejects_lwc_template_comment_decoy() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = (
-        source.replace('role="alert"', 'role="status"') + '\n<!-- role="alert" -->\n'
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_template_contract"
-
-
-def test_candidate_contract_rejects_native_select_for_detail_value_handler() -> None:
-    outputs = load_agent_outputs()
-    path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html"
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace(
-        "<lightning-combobox",
-        '<select data-form="account"',
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_template_contract"
-
-
-def test_candidate_contract_rejects_lwc_jest_comment_decoy() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    outputs[path] = (
-        source.replace("getAccounts.emit(ACCOUNTS)", "getAccounts.fakeEmit(ACCOUNTS)")
-        + "\n// getAccounts.emit(ACCOUNTS)\n"
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_jest_contract"
-
-
-def test_candidate_contract_rejects_missing_exact_stale_response_title() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace(
-        "ignores a stale response after the selected account changes",
-        "resolves the current second request before the stale first request",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_jest_contract"
-
-
-def test_candidate_contract_requires_lexical_jest_globals() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    explicit_import = "import { afterEach, describe, expect, it, jest } from '@jest/globals';\n"
-    assert explicit_import in outputs[path].decode("utf-8")
-    outputs[path] = outputs[path].replace(explicit_import.encode("utf-8"), b"", 1)
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_explicit_globals",)
-
-
-def test_candidate_contract_requires_two_turn_jest_flush_helper() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    helper = (
-        "async function flushPromises() {\n"
-        "    await Promise.resolve();\n"
-        "    await Promise.resolve();\n"
-        "}\n"
-    )
-    assert helper in source
-    outputs[path] = source.replace(
-        helper,
-        "function flushPromises() {\n    return Promise.resolve();\n}\n",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_settled_render_flush",)
-
-
-def test_candidate_contract_requires_jest_dom_cleanup() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    cleanup = (
-        "        while (document.body.firstChild) {\n"
-        "            document.body.removeChild(document.body.firstChild);\n"
-        "        }\n"
-    )
-    assert cleanup in source
-    outputs[path] = source.replace(cleanup, "", 1).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_dom_cleanup",)
-
-
-def test_candidate_contract_accepts_once_scoped_resolved_value_mocks() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = source.replace(
-        "getContacts.mockResolvedValue(CONTACTS)",
-        "getContacts.mockResolvedValueOnce(CONTACTS)",
-        1,
-    ).replace(
-        "getContacts.mockResolvedValue([])",
-        "getContacts.mockResolvedValueOnce([])",
-        1,
-    )
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_accepts_indexed_ordered_call_proof() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = re.sub(
-        r"expect\(getContacts\)\.toHaveBeenNthCalledWith\(1,\s*\{\s*"
-        r"accountId: ACCOUNTS\[0\]\.Id\s*\}\s*\);",
-        "expect(getContacts.mock.calls[0][0].accountId).toBe(ACCOUNTS[0].Id);",
-        source,
-        count=1,
-    )
-    source = re.sub(
-        r"expect\(getContacts\)\.toHaveBeenNthCalledWith\(2,\s*\{\s*"
-        r"accountId: ACCOUNTS\[1\]\.Id\s*\}\s*\);",
-        "expect(getContacts.mock.calls[1][0].accountId).toBe(ACCOUNTS[1].Id);",
-        source,
-        count=1,
-    )
-    assert "toHaveBeenNthCalledWith" not in source
-    outputs[path] = source.encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_accepts_argument_array_ordered_call_proof() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = re.sub(
-        r"expect\(getContacts\)\.toHaveBeenNthCalledWith\(1,\s*\{\s*"
-        r"accountId: ACCOUNTS\[0\]\.Id\s*\}\s*\);",
-        "expect(getContacts.mock.calls[0]).toEqual([{ accountId: ACCOUNTS[0].Id }]);",
-        source,
-        count=1,
-    )
-    source = re.sub(
-        r"expect\(getContacts\)\.toHaveBeenNthCalledWith\(2,\s*\{\s*"
-        r"accountId: ACCOUNTS\[1\]\.Id\s*\}\s*\);",
-        "expect(getContacts.mock.calls[1]).toEqual([{ accountId: ACCOUNTS[1].Id }]);",
-        source,
-        count=1,
-    )
-    assert "toHaveBeenNthCalledWith" not in source
-    outputs[path] = source.encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_accepts_direct_component_creation_before_wire_emit() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    direct_creation = """const element = createElement('c-account-contact-explorer', {
-            is: AccountContactExplorer
-        });
-        document.body.appendChild(element);"""
-    assert source.count("const element = createComponent();") == 10
-    source = source.replace("const element = createComponent();", direct_creation)
-    outputs[path] = source.encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_rejects_wire_emit_before_component_subscription() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = source.replace(
-        "        const element = createComponent();\n\n        getAccounts.emit(ACCOUNTS);",
-        "        getAccounts.emit(ACCOUNTS);\n\n        const element = createComponent();",
-        1,
-    )
-    outputs[path] = source.encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert "jest_component_before_wire_emit" in caught.value.diagnostic_ids
-
-
-def test_candidate_contract_requires_imperative_mock_reset_between_tests() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace("        getContacts.mockReset();\n", "", 1).encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_mock_not_reset",)
-
-
-def test_candidate_contract_rejects_vacuous_whole_root_stale_assertion() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace(
-        "expect(datatable.data[0].FirstName).not.toBe('Stale');",
-        "expect(element.shadowRoot.textContent).not.toBe('Stale');",
         1,
     ).encode()
 
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_manifest_contract"
+
+
+@pytest.mark.parametrize("suffix", ("/* unterminated", "String value = 'unterminated"))
+def test_candidate_contract_fails_closed_on_unterminated_apex_lexemes(suffix: str) -> None:
+    outputs = salesforce_candidate_outputs()
+    outputs[CONTROLLER_PATH] = (outputs[CONTROLLER_PATH].decode() + f"\n{suffix}").encode()
+
+    assert rejected_candidate(outputs).failure_code == "salesforce_apex_controller_contract"
+
+
+def test_candidate_contract_rejects_xml_entities_with_controlled_failure() -> None:
+    outputs = salesforce_candidate_outputs()
+    outputs[MANIFEST_PATH] = (
+        b'<?xml version="1.0"?><!DOCTYPE Package [<!ENTITY leak SYSTEM "file:///etc/passwd">]>'
+        b'<Package xmlns="http://soap.sforce.com/2006/04/metadata">&leak;</Package>'
+    )
+
     with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
+        with pytest.raises(LocalCheckFailure, match="local contract assertion failed"):
             check_salesforce_candidate(workspace.root)
 
-    assert "jest_stale_assertion_vacuous" in caught.value.diagnostic_ids
-    assert "jest_stale_render_proof" in caught.value.diagnostic_ids
 
-
-def test_candidate_contract_accepts_targeted_stale_text_absence() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    outputs[path] = source.replace(
-        "expect(datatable.data[0].FirstName).not.toBe('Stale');",
-        "expect(element.shadowRoot.textContent).not.toContain('Stale');",
-        1,
-    ).encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-@pytest.mark.parametrize("matcher", ("toBe", "toEqual"))
-def test_candidate_contract_accepts_spinner_public_property_assertion(matcher: str) -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    assertion = "        expect(spinner.alternativeText).toBe('Loading contacts');\n"
-    assert assertion in source
-    outputs[path] = source.replace(
-        assertion,
-        f"        expect(spinner.alternativeText).{matcher}('Loading contacts');\n",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_rejects_missing_spinner_public_property_assertion() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    assertion = b"        expect(spinner.alternativeText).toBe('Loading contacts');\n"
-    assert assertion in outputs[path]
-    outputs[path] = outputs[path].replace(assertion, b"", 1)
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_spinner_public_property",)
-
-
-def test_candidate_contract_rejects_inline_spinner_attribute_read_decoy() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    assertion = "        expect(spinner.alternativeText).toBe('Loading contacts');\n"
-    inline_attribute_assertion = (
-        "        expect(element.shadowRoot.querySelector('lightning-spinner')"
-        ".getAttribute('alternative-text')).toBe('Loading contacts');\n"
-    )
-    assert assertion in source
-    outputs[path] = source.replace(assertion, inline_attribute_assertion, 1).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == ("jest_spinner_public_property",)
-
-
-def test_candidate_contract_accepts_get_accounts_mock_reset() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    anchor = "        getContacts.mockReset();\n"
-    assert anchor in source
-    outputs[path] = source.replace(
-        anchor,
-        "        getAccounts.mockReset();\n" + anchor,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_aggregates_exact_live_lwc_and_jest_diagnostics() -> None:
-    outputs = load_agent_outputs()
-    javascript_path = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    javascript = outputs[javascript_path].decode("utf-8")
-    direct_field = "    accountOptions = [BLANK_ACCOUNT_OPTION];\n"
-    assert direct_field in javascript
-    outputs[javascript_path] = javascript.replace(
-        direct_field,
-        """    get accountOptions() {
-        return this._accountOptions || [];
-    }
-
-    set accountOptions(options) {
-        this._accountOptions = options;
-    }
-""",
-        1,
-    ).encode("utf-8")
-
-    jest_path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    jest_source = outputs[jest_path].decode("utf-8")
-    spinner_anchor = "        expect(spinner.alternativeText).toBe('Loading contacts');\n"
-    assert spinner_anchor in jest_source
-    jest_source = jest_source.replace(
-        spinner_anchor,
-        "        expect(spinner.getAttribute('alternative-text')).toBe('Loading contacts');\n",
-        1,
-    )
-    first_call = """        expect(getContacts).toHaveBeenNthCalledWith(1, {
-            accountId: ACCOUNTS[0].Id
-        });
-"""
-    second_call = """        expect(getContacts).toHaveBeenNthCalledWith(2, {
-            accountId: ACCOUNTS[1].Id
-        });
-"""
-    assert first_call in jest_source and second_call in jest_source
-    jest_source = jest_source.replace(
-        first_call,
-        "        expect(getContacts.mock.calls[0]).toEqual({ accountId: ACCOUNTS[0].Id });\n",
-        1,
-    ).replace(
-        second_call,
-        "        expect(getContacts.mock.calls[1]).toEqual({ accountId: ACCOUNTS[1].Id });\n",
-        1,
-    )
-    outputs[jest_path] = jest_source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.diagnostic_ids == (
-        "lwc_account_options_reactive_field",
-        "jest_spinner_public_property",
-        "jest_ordered_call_proof",
-    )
-    assert set(caught.value.diagnostic_ids) <= SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS
-
-
-def test_new_lwc_runtime_diagnostics_are_canonical_and_sandbox_safe() -> None:
-    expected_safe = {
-        "lwc_account_options_reactive_field",
-        "lwc_has_loaded_reset",
-        "lwc_request_generation_increment",
-        "jest_spinner_public_property",
-    }
-    assert {
-        "lwc_account_options_reactive_field",
-        "lwc_forbidden_runtime_capability",
-        "lwc_has_loaded_reset",
-        "lwc_request_generation_increment",
-    } == SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS
-    assert expected_safe <= SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS
-    assert expected_safe <= SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS
-    assert "lwc_forbidden_runtime_capability" in SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS
-    assert "lwc_forbidden_runtime_capability" not in (SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS)
-
-
-def test_candidate_contract_aggregates_safe_stage_diagnostics() -> None:
-    outputs = load_agent_outputs()
-    apex_source = outputs[CONTROLLER_TEST_PATH].decode("utf-8")
-    outputs[CONTROLLER_TEST_PATH] = apex_source.replace(
-        "System.assertEquals(AccountContactExplorerController.MAX_CONTACTS, contacts.size());",
-        "System.assert(contacts.size() > 0);",
-        1,
-    ).encode()
-    jest_path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    outputs[jest_path] = outputs[jest_path].replace(
-        b"        getContacts.mockReset();\n",
-        b"",
-        1,
-    )
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-
-    assert caught.value.failure_code == "salesforce_apex_test_contract"
-    assert caught.value.diagnostic_ids == (
-        "salesforce_apex_test_contract",
-        "jest_mock_not_reset",
-    )
-
-
-def test_candidate_contract_rejects_missing_contact_cap_assertion() -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_TEST_PATH].decode("utf-8")
-    required_assertion = (
-        "System.assertEquals(AccountContactExplorerController.MAX_CONTACTS, contacts.size());"
-    )
-    assert required_assertion in source
-    outputs[CONTROLLER_TEST_PATH] = source.replace(
-        required_assertion,
-        "System.assert(contacts.size() > 0);",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_apex_test_contract"
-
-
-@pytest.mark.parametrize(
-    "replacement",
-    (
-        "Assert.isFalse(returnedIds.contains(foreignContact.Id));",
-        "System.Assert.isFalse(returnedIds.contains(foreignContact.Id));",
-    ),
-)
-def test_candidate_contract_accepts_valid_assert_is_false_syntax(replacement: str) -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_TEST_PATH].decode("utf-8")
-    outputs[CONTROLLER_TEST_PATH] = source.replace(
-        "System.assert(!returnedIds.contains(foreignContact.Id));",
-        replacement,
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        assert check_salesforce_candidate(workspace.root)["passed"] is True
-
-
-def test_candidate_contract_rejects_nonexistent_system_assert_false_method() -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_TEST_PATH].decode("utf-8")
-    outputs[CONTROLLER_TEST_PATH] = source.replace(
-        "System.assert(!returnedIds.contains(foreignContact.Id));",
-        "System.assertFalse(returnedIds.contains(foreignContact.Id));",
-        1,
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_apex_test_contract"
-
-
-def test_candidate_contract_cli_emits_only_the_allowlisted_stage_code(
+def test_candidate_contract_cli_emits_only_controlled_stage_evidence(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     secret = "planted-secret-that-must-not-cross-the-validator-boundary"
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_TEST_PATH].decode("utf-8")
-    required_assertion = (
-        "System.assertEquals(AccountContactExplorerController.MAX_CONTACTS, contacts.size());"
-    )
-    outputs[CONTROLLER_TEST_PATH] = source.replace(
-        required_assertion,
-        f"System.assert(contacts.size() > 0); // {secret}",
-        1,
-    ).encode("utf-8")
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_TEST_PATH].decode()
+    body, closing_brace = source.rsplit("}", 1)
+    outputs[CONTROLLER_TEST_PATH] = (
+        body
+        + f"""
+    private static String access_token = '{secret}';
+"""
+        + closing_brace
+    ).encode()
 
     with candidate_from_memory(outputs) as workspace:
+        workspace_root = str(workspace.root)
         monkeypatch.chdir(workspace.root)
         assert main(["candidate-contract"]) == 1
         serialized = capsys.readouterr().out
@@ -1445,184 +1170,7 @@ def test_candidate_contract_cli_emits_only_the_allowlisted_stage_code(
         "passed": False,
     }
     assert secret not in serialized
-    assert str(workspace.root) not in serialized
-
-
-@pytest.mark.parametrize(
-    "incorrect_mock",
-    (
-        "return { default: createApexTestWireAdapter(jest.fn()) };",
-        "return { __esModule: true, default: createApexTestWireAdapter() };",
-    ),
-)
-def test_candidate_contract_rejects_incorrect_virtual_apex_wire_mock(
-    incorrect_mock: str,
-) -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = source.replace(
-        "return { __esModule: true, default: createApexTestWireAdapter(jest.fn()) };",
-        incorrect_mock,
-        1,
-    )
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-def test_candidate_contract_rejects_combined_or_wrong_apex_mock_modules() -> None:
-    outputs = load_agent_outputs()
-    path = (
-        "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
-    )
-    source = outputs[path].decode("utf-8")
-    source = source.replace(
-        "@salesforce/apex/AccountContactExplorerController.getAccounts",
-        "@salesforce/apex/AccountContactExplorerController",
-    ).replace(
-        "@salesforce/sfdx-lwc-jest",
-        "@salesforce/lwc-jest",
-    )
-    outputs[path] = source.encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure) as caught:
-            check_salesforce_candidate(workspace.root)
-    assert caught.value.failure_code == "salesforce_lwc_jest_contract"
-
-
-@pytest.mark.parametrize(
-    "statement",
-    (
-        "if (accountId != null) { insert new Account(); }",
-        "if (accountId != null) { update new Account(); }",
-        "if (accountId != null) { upsert new Account(); }",
-        "if (accountId != null) { delete new Account(); }",
-        "if (accountId != null) { undelete new Account(); }",
-        "if (accountId != null) { merge new Account(), new Account(); }",
-    ),
-)
-def test_candidate_contract_rejects_dml_tokens_anywhere(statement: str) -> None:
-    with candidate_from_memory(outputs_with_controller_statement(statement)) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-@pytest.mark.parametrize(
-    "operation",
-    ("insert", "update", "upsert", "delete", "undelete", "merge"),
-)
-def test_candidate_contract_rejects_database_dml_methods(operation: str) -> None:
-    statement = f"Database.{operation}(new Account());"
-    with candidate_from_memory(outputs_with_controller_statement(statement)) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-@pytest.mark.parametrize(
-    "method",
-    ("Database.queryWithBinds", "database.QUERYWITHBINDS", "Database.query"),
-)
-def test_candidate_contract_rejects_dynamic_database_queries(method: str) -> None:
-    statement = (
-        f"{method}('SELECT Id FROM Account', new Map<String, Object>(), AccessLevel.USER_MODE);"
-    )
-    with candidate_from_memory(outputs_with_controller_statement(statement)) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-@pytest.mark.parametrize(
-    "declaration",
-    (
-        "public without sharing class AccountContactExplorerController",
-        "public inherited sharing class AccountContactExplorerController",
-        "public class AccountContactExplorerController",
-    ),
-)
-def test_candidate_contract_rejects_non_with_sharing_despite_comment_decoy(
-    declaration: str,
-) -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_PATH].decode("utf-8")
-    source = source.replace(
-        "public with sharing class AccountContactExplorerController",
-        declaration,
-        1,
-    )
-    outputs[CONTROLLER_PATH] = (
-        "// public with sharing class AccountContactExplorerController\n" + source
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-def test_candidate_contract_rejects_user_mode_markers_only_in_comments() -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_PATH].decode("utf-8")
-    source = source.replace("WITH USER_MODE", "WITH SYSTEM_MODE")
-    outputs[CONTROLLER_PATH] = (
-        source + "\n/* decoy markers: WITH USER_MODE WITH USER_MODE */\n"
-    ).encode("utf-8")
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-def test_candidate_contract_rejects_aura_markers_only_in_string_literal() -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_PATH].decode("utf-8")
-    source = source.replace("@AuraEnabled(cacheable=true)", "@AuraEnabled")
-    body, closing_brace = source.rsplit("}", 1)
-    decoy = (
-        "    private static final String DECOY = "
-        "'@AuraEnabled(cacheable=true) @AuraEnabled(cacheable=true)';\n"
-    )
-    outputs[CONTROLLER_PATH] = f"{body}{decoy}{closing_brace}".encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-def test_candidate_contract_ignores_forbidden_tokens_in_comments_and_strings() -> None:
-    statement = (
-        "String harmless = 'insert update Database.queryWithBinds'; "
-        "// delete Database.merge(new Account())"
-    )
-    with candidate_from_memory(outputs_with_controller_statement(statement)) as workspace:
-        result = check_salesforce_candidate(workspace.root)
-        assert result["security"] == "with-sharing-user-mode-read-only"
-
-
-@pytest.mark.parametrize("suffix", ("/* unterminated", "String value = 'unterminated"))
-def test_candidate_contract_fails_closed_on_unterminated_apex_lexemes(suffix: str) -> None:
-    outputs = load_agent_outputs()
-    source = outputs[CONTROLLER_PATH].decode("utf-8")
-    outputs[CONTROLLER_PATH] = f"{source}\n{suffix}".encode()
-
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure):
-            check_salesforce_candidate(workspace.root)
-
-
-def test_candidate_contract_rejects_xml_entities_with_controlled_failure() -> None:
-    outputs = load_agent_outputs()
-    outputs["manifest/package.xml"] = (
-        b'<?xml version="1.0"?><!DOCTYPE Package [<!ENTITY leak SYSTEM "file:///etc/passwd">]>'
-        b'<Package xmlns="http://soap.sforce.com/2006/04/metadata">&leak;</Package>'
-    )
-    with candidate_from_memory(outputs) as workspace:
-        with pytest.raises(LocalCheckFailure, match="local contract assertion failed"):
-            check_salesforce_candidate(workspace.root)
+    assert workspace_root not in serialized
 
 
 def test_toolchain_contract_returns_pinned_digests_without_candidate_inspection(
@@ -1703,9 +1251,10 @@ def test_toolchain_contract_rejects_symlinked_config(tmp_path: Path) -> None:
 
 
 def test_workspace_revision_rejects_mutation() -> None:
-    with candidate_from_memory(load_agent_outputs()) as workspace:
+    with candidate_from_memory(salesforce_candidate_outputs()) as workspace:
         before = tree_fingerprint(workspace.root)
         source = (workspace.root / CONTROLLER_PATH).read_text(encoding="utf-8")
         workspace.write_text(CONTROLLER_PATH, f"{source}\n")
+
         with pytest.raises(LocalCheckFailure):
             check_workspace_revision(workspace.root, before)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import stat
@@ -9,7 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from legacy_migration_agent.application.candidate_export import export_candidate
+from legacy_migration_agent.application.candidate_export import (
+    build_candidate_archive,
+    export_candidate,
+)
 from legacy_migration_agent.core.policies import PolicyViolation
 
 HANDLE = "0123456789abcdef01234567"
@@ -265,6 +269,35 @@ def test_identity_and_utf8_inputs_are_strictly_validated(tmp_path: Path) -> None
         _export(tmp_path, files=(("generated.js", "\ud800"),))
 
     assert not (tmp_path / "output").exists()
+
+
+def test_secret_candidate_is_rejected_before_archive_or_output(tmp_path: Path) -> None:
+    secret = "literal-client-secret-123456"
+    files = (("generated.js", f'const client_secret = "{secret}";\n'),)
+
+    with pytest.raises(PolicyViolation, match="candidate content"):
+        build_candidate_archive(files)
+    with pytest.raises(PolicyViolation, match="candidate content"):
+        _export(tmp_path, files=files)
+
+    assert not (tmp_path / "output").exists()
+    assert not any(
+        secret.encode() in path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()
+    )
+
+
+def test_benign_request_token_code_exports_exact_bytes(tmp_path: Path) -> None:
+    content = "const token = ++this.requestGeneration;\nconst accessToken = response.accessToken;\n"
+    files = (("generated.js", content),)
+
+    archive = build_candidate_archive(files)
+    result = _export(tmp_path, files=files)
+
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        assert bundle.read("generated.js") == content.encode()
+    assert (tmp_path / result.candidate_path / "generated.js").read_text(
+        encoding="utf-8"
+    ) == content
 
 
 def _precreate_candidate_root(project_root: Path) -> Path:

@@ -66,35 +66,12 @@ jobs:
           --registry evaluation/benchmark-v1/registry.json
           --results evaluation/results.json
 
-      - name: Verify and re-execute bounded pilot evidence
+      - name: Verify the bounded agent-run pilot snapshot
         run: >-
           uv run --frozen legacy-migration-agent evaluation-pilot-verify
           --project-root .
           --registry evaluation/pilot-v1/registry.json
           --snapshot-dir evaluation/pilot-v1
-
-  lwc-jest:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: fixtures/salesforce/account-contact-explorer/expected
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v7
-
-      - name: Install Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: fixtures/salesforce/account-contact-explorer/expected/package-lock.json
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Run LWC Jest tests
-        run: npm run test:unit
 
   agent-runtime-contracts:
     runs-on: ubuntu-latest

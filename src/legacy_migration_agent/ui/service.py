@@ -1,11 +1,11 @@
 """Bounded Ollama-backed application service for the interactive Agent UI.
 
-The browser selects a fixed source fixture and supplies a bounded migration
-description.  The server owns the Ollama model identity; filesystem routes,
-provider endpoints, request identities, approved paths, validation commands,
-and deployment boundaries also remain controller owned.  The service executes
-the real :class:`AgentRun` lifecycle and projects its durable evidence into a
-deliberately small UI contract.
+The browser selects one fixed scenario and supplies advisory conversation
+messages; it cannot author the launch request. The server owns the canonical
+launch contract, Ollama identity, filesystem routes, request identities,
+approved paths, validation commands, and deployment boundaries. The service
+executes the real :class:`AgentRun` lifecycle and projects its durable evidence
+into a deliberately small UI contract.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import secrets
 import stat
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, Literal, TypeAlias, cast
 
@@ -29,6 +29,8 @@ from legacy_migration_agent.agent_runtime.correction import (
     CorrectionApproval,
     CorrectionController,
     CorrectionRequest,
+    correction_failure_ids,
+    validation_failure_dependencies,
 )
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectAgent,
@@ -54,9 +56,11 @@ from legacy_migration_agent.application.agent_run import (
     AgentRunFailure,
     AgentRunModelClients,
     AgentRunStatus,
+    assert_agent_request_secret_free,
     build_local_ollama_model_clients,
     get_agent_run_status,
     prepare_agent_run_request,
+    recover_incomplete_agent_run_start,
     resume_agent_run,
     retry_agent_run,
     start_agent_run,
@@ -66,6 +70,7 @@ from legacy_migration_agent.application.architect_conversation import (
     MAX_CONVERSATIONS,
     ArchitectConversationExchange,
     ArchitectConversationSnapshot,
+    ArchitectConversationStaleLaunch,
     ArchitectConversationStore,
     ArchitectConversationView,
     conversation_history,
@@ -78,16 +83,34 @@ from legacy_migration_agent.application.candidate_export import (
 from legacy_migration_agent.application.candidate_export import (
     export_candidate as persist_candidate_export,
 )
+from legacy_migration_agent.application.final_review import (
+    FINAL_REVIEW_DECISION_PATH,
+    FINAL_REVIEW_RECORD_PATH,
+    FINAL_REVIEW_REQUEST_PATH,
+    FinalReviewDecision,
+    FinalReviewRecord,
+    FinalReviewRequest,
+    get_final_review_status_for_run,
+)
+from legacy_migration_agent.application.final_review import (
+    decide_final_review_for_run as persist_final_review_decision,
+)
+from legacy_migration_agent.application.final_review import (
+    request_final_review_for_run as persist_final_review_request,
+)
 from legacy_migration_agent.application.migration_scenarios import (
+    MigrationLaunchContract,
+    migration_launch_contract,
     migration_scenario,
+    migration_scenario_by_id,
     migration_scenarios,
+    require_canonical_launch_contract,
 )
 from legacy_migration_agent.contracts import (
     ImplementationIntervention,
     MigrationManifest,
     MigrationRequest,
     PlanningIntervention,
-    Platform,
     StrictModel,
     ValidationDisposition,
     ValidationReport,
@@ -95,8 +118,13 @@ from legacy_migration_agent.contracts import (
 )
 from legacy_migration_agent.core.integrity import ArtifactStore, artifact_digest
 from legacy_migration_agent.core.observability import lifecycle_event
-from legacy_migration_agent.core.policies import validate_change_set, validate_report
+from legacy_migration_agent.core.policies import (
+    PolicyViolation,
+    validate_change_set,
+    validate_report,
+)
 from legacy_migration_agent.core.redaction import SecretRedactor
+from legacy_migration_agent.core.run_session import AgentRunContext
 from legacy_migration_agent.core.workspace import snapshot_tree
 from legacy_migration_agent.graphs.graph_contracts import DependencyGraph
 from legacy_migration_agent.knowledge.wiki import RetrievalTrace
@@ -114,6 +142,7 @@ AgentFailureReasonCode = Literal[
     "required_approval_missing",
     "implementation_contract_invalid",
     "transformation_scope_invalid",
+    "unresolved_question_risk_missing",
     "policy_rejected",
     "provider_timeout",
     "provider_unavailable",
@@ -131,7 +160,6 @@ AgentFailurePhase = Literal[
 ]
 AgentUiErrorCode = Literal[
     "invalid_platform",
-    "invalid_prompt",
     "invalid_decision",
     "invalid_reviewer",
     "invalid_correction",
@@ -143,8 +171,8 @@ AgentUiErrorCode = Literal[
     "candidate_unavailable",
     "candidate_export_unavailable",
     "run_unavailable",
-    "invalid_conversation",
     "invalid_message",
+    "secret_material",
     "conversation_capacity_reached",
     "unknown_conversation",
     "conversation_closed",
@@ -152,10 +180,18 @@ AgentUiErrorCode = Literal[
     "conversation_unavailable",
     "stale_conversation",
     "conversation_launch_pending",
+    "final_review_unavailable",
+    "final_review_already_requested",
+    "final_review_already_decided",
 ]
 JsonScalar: TypeAlias = str | int | bool | None
 
 _HANDLE_PATTERN: Final = re.compile(r"^[0-9a-f]{24}$")
+_SERVICE_LOCKS_GUARD = threading.Lock()
+_SERVICE_LOCKS: dict[tuple[Path, str], threading.RLock] = {}
+_REVIEWER_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_FINAL_REVIEW_ACTOR_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@+-]{0,159}$")
+_MAX_FINAL_REVIEW_WINDOW: Final = timedelta(days=14)
 _OLLAMA_RUNTIME_PROVIDER: Final[Literal["ollama"]] = "ollama"
 _OLLAMA_READINESS_TIMEOUT_SECONDS: Final = 3.0
 _LOCAL_MODEL_APPROVER: Final = "local-ui-operator"
@@ -179,7 +215,6 @@ _LOCAL_BOUNDARY_NOTICE: Final = (
 )
 _ERROR_MESSAGES: Final[dict[AgentUiErrorCode, str]] = {
     "invalid_platform": "Select one of the available migration scenarios.",
-    "invalid_prompt": "Enter a migration request between 10 and 1000 characters.",
     "invalid_decision": "The manifest decision must be approve or reject.",
     "invalid_reviewer": "Enter a valid reviewer name.",
     "invalid_correction": "The correction approval does not match the offered retry.",
@@ -191,15 +226,24 @@ _ERROR_MESSAGES: Final[dict[AgentUiErrorCode, str]] = {
     "candidate_unavailable": "A migration candidate is not available for this run.",
     "candidate_export_unavailable": "The candidate could not be saved to output/ safely.",
     "run_unavailable": "The agent run could not be verified safely.",
-    "invalid_conversation": "The conversation request is invalid.",
     "invalid_message": "Enter a message between 1 and 2000 characters.",
+    "secret_material": "Remove credentials or secret-shaped values before continuing.",
     "conversation_capacity_reached": "This Agent UI has reached its conversation limit.",
     "unknown_conversation": "The requested conversation is not available.",
     "conversation_closed": "This conversation already launched a migration run.",
-    "conversation_not_ready": "Continue the conversation until the Architect marks the request ready.",
+    "conversation_not_ready": (
+        "Select a supported scenario and receive an Architect advisory before using the "
+        "Controller launch gate."
+    ),
     "conversation_unavailable": "The Architect conversation could not be completed safely.",
     "stale_conversation": "The conversation changed after this migration preview was shown. Review the latest Architect reply before launching.",
     "conversation_launch_pending": "This conversation already has a pending migration launch. Retry the exact launch instead of sending another message.",
+    "final_review_unavailable": (
+        "Final review requires a completed candidate whose deterministic disposition is "
+        "ready for human review."
+    ),
+    "final_review_already_requested": "Final review has already been requested for this run.",
+    "final_review_already_decided": "The final-review decision has already been recorded.",
 }
 _FAILURE_DETAILS: Final[
     dict[
@@ -244,8 +288,14 @@ _FAILURE_DETAILS: Final[
         True,
         False,
         None,
-        "The local model attempted a tool call even though the role is tool-free.",
-        "Start a fresh run; the controller blocked the unauthorized tool request.",
+        (
+            "The local model returned a native provider tool call instead of the required "
+            "structured role response."
+        ),
+        (
+            "Start a fresh run; the controller blocked the provider tool interface. Declared "
+            "evidence selections are typed output fields, not native tool calls."
+        ),
     ),
     "model_inventory_invalid": (
         "configuration",
@@ -268,27 +318,51 @@ _FAILURE_DETAILS: Final[
         True,
         True,
         False,
-        "The Architect returned a schema-valid plan but omitted the required manifest approval gate.",
-        "Start a fresh run; the Architect contract must include approve_manifest before work can continue.",
+        "The Controller-expanded manifest was missing its required human-approval binding.",
+        (
+            "Start a fresh run and inspect the Controller expansion and scope-policy binding; "
+            "the Architect does not author approval actions."
+        ),
     ),
     "implementation_contract_invalid": (
         "policy_validation",
         True,
         True,
         False,
-        "The Architect changed or omitted the controller-owned implementation contract.",
-        "Start a fresh run; the Architect must copy every implementation-contract entry exactly and preserve its order.",
+        (
+            "The Controller-expanded manifest failed its controller-owned implementation-contract "
+            "check."
+        ),
+        (
+            "Start a fresh run and inspect Controller expansion against the frozen scope policy; "
+            "the Architect does not copy or author implementation-contract entries."
+        ),
     ),
     "transformation_scope_invalid": (
         "policy_validation",
         True,
         True,
         False,
-        "The Architect returned a schema-valid plan that violated the frozen transformation boundary.",
+        "The Controller-expanded manifest violated the frozen transformation boundary.",
         (
             "Start a fresh run. Use only frozen legacy files as inputs, cover every required "
             "source input, and assign every approved output to exactly one transformation; "
             "generated target files cannot become inputs to later steps."
+        ),
+    ),
+    "unresolved_question_risk_missing": (
+        "policy_validation",
+        True,
+        True,
+        False,
+        (
+            "The Architect returned unresolved planning questions without identifying a "
+            "material risk that requires a human decision."
+        ),
+        (
+            "Start a fresh run. The Architect must either resolve those questions from the "
+            "frozen evidence or identify the material risk and mark it as requiring a human "
+            "decision."
         ),
     ),
     "policy_rejected": (
@@ -448,6 +522,7 @@ class AgentValidationResultView(StrictModel):
     status: Literal["passed", "failed", "unavailable", "nonterminal"]
     summary: str = Field(min_length=1, max_length=2000)
     diagnostic_ids: tuple[str, ...] = ()
+    dependent_on: str | None = Field(default=None, min_length=1, max_length=160)
 
 
 class AgentValidationView(StrictModel):
@@ -465,7 +540,7 @@ class AgentValidationView(StrictModel):
     validator_completed: bool = True
     concerns: tuple[str, ...]
     deterministic_report_controls_disposition: Literal[True] = True
-    final_review_enabled: Literal[False] = False
+    final_review_enabled: bool
 
 
 class AgentInterventionView(StrictModel):
@@ -551,12 +626,48 @@ class AgentAttemptView(StrictModel):
     diagnostic_ids: tuple[str, ...]
 
 
+class AgentFinalReviewView(StrictModel):
+    """Public, non-authorizing projection of the named final-human-review gate."""
+
+    status: Literal[
+        "not_requested",
+        "awaiting_final_review",
+        "accepted",
+        "rejected",
+        "changes_requested",
+    ]
+    eligible: bool
+    can_request: bool
+    can_decide: bool
+    review_id: str | None = Field(default=None, max_length=160)
+    requester: str | None = Field(default=None, max_length=160)
+    designated_reviewer: str | None = Field(default=None, max_length=160)
+    requested_at: datetime | None = None
+    expires_at: datetime | None = None
+    selection: Literal["accept", "reject", "request_changes"] | None = None
+    reviewer: str | None = Field(default=None, max_length=160)
+    decided_at: datetime | None = None
+    comment: str = Field(default="", max_length=2000)
+    candidate_accepted: bool | None = None
+    next_action: (
+        Literal[
+            "separate_external_action_required",
+            "stop_request",
+            "revise_and_start_new_review",
+        ]
+        | None
+    ) = None
+    authority_granted: Literal[False] = False
+    external_actions_authorized: tuple[()] = ()
+
+
 class AgentRunView(StrictModel):
     """Complete JSON-safe projection consumed by the local HTTP layer."""
 
     schema_version: Literal["1.0"] = "1.0"
     handle: str = Field(pattern=r"^[0-9a-f]{24}$")
     platform: Literal["salesforce", "mulesoft"]
+    scenario_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
     scenario_title: str = Field(min_length=1, max_length=200)
     prompt: str = Field(min_length=1, max_length=1000)
     status: str = Field(min_length=1, max_length=80)
@@ -575,6 +686,7 @@ class AgentRunView(StrictModel):
     human_decision: AgentHumanDecisionView | None = None
     correction: AgentCorrectionView | None = None
     attempt_history: tuple[AgentAttemptView, ...] = ()
+    final_review: AgentFinalReviewView
     failure: AgentFailureView | None = None
 
 
@@ -601,18 +713,19 @@ class AgentUiService:
         self._max_runs = max_runs
         self._ollama_model_id = _normalize_ollama_model_id(ollama_model_id)
         self._ollama_timeout_seconds = _normalize_ollama_timeout_seconds(ollama_timeout_seconds)
-        self._registry_lock = threading.Lock()
-        self._locks_lock = threading.Lock()
-        self._run_locks: dict[str, threading.RLock] = {}
+        self._registry_lock = _shared_service_lock(self._run_root, "registry")
 
     def scenarios(self) -> tuple[dict[str, JsonScalar], ...]:
-        """Return browser-safe metadata; no routes, IDs, or commands are exposed."""
+        """Return the exact public sample contract without filesystem routes or commands."""
 
         return tuple(
             {
+                "scenario_id": scenario.scenario_id,
                 "platform": scenario.platform.value,
                 "title": scenario.title,
-                "prompt": scenario.prompt,
+                "canonical_request": scenario.canonical_description,
+                "source": " + ".join(scenario.display_source_artifacts),
+                "target": scenario.target_summary,
             }
             for scenario in migration_scenarios()
         )
@@ -696,10 +809,11 @@ class AgentUiService:
             "status": status,
         }
 
-    def create_conversation(self, *, platform: str | None) -> ArchitectConversationView:
+    def create_conversation(self, *, scenario_id: str | None) -> ArchitectConversationView:
         """Create one append-only public intake conversation without starting a run."""
 
-        selected_platform = self._validate_conversation_platform(platform)
+        launch_contract = self._conversation_launch_contract(scenario_id)
+        selected_platform = None if launch_contract is None else launch_contract.platform
         try:
             with self._registry_lock:
                 self._prepare_run_root()
@@ -710,6 +824,9 @@ class AgentUiService:
                 snapshot = store.create(
                     conversation_id,
                     initial_platform=selected_platform,
+                    initial_scenario_id=(
+                        None if launch_contract is None else launch_contract.scenario_id
+                    ),
                 )
                 lifecycle_event(
                     "ui.conversation.created",
@@ -759,12 +876,21 @@ class AgentUiService:
         conversation_id: str,
         *,
         message: str,
-        platform: str | None,
+        scenario_id: str | None,
     ) -> ArchitectConversationView:
         """Ask the Architect for one advisory intake reply; never start migration work."""
 
         self._validate_conversation_id(conversation_id)
-        selected_platform = self._validate_conversation_platform(platform)
+        launch_contract = self._conversation_launch_contract(scenario_id)
+        scenario = (
+            None
+            if launch_contract is None
+            else migration_scenario_by_id(launch_contract.scenario_id)
+        )
+        launch_contract_digest = (
+            None if launch_contract is None else artifact_digest(launch_contract)
+        )
+        selected_platform = None if launch_contract is None else launch_contract.platform
         user_message = ArchitectConversationMessage(
             role="user",
             content=self._validate_conversation_message(message),
@@ -787,6 +913,17 @@ class AgentUiService:
 
                 context = ArchitectConversationContext(
                     selected_platform=selected_platform,
+                    scenario_id=(None if launch_contract is None else launch_contract.scenario_id),
+                    source_artifacts=(
+                        () if scenario is None else scenario.display_source_artifacts
+                    ),
+                    target_summary=(
+                        None if launch_contract is None else launch_contract.target_summary
+                    ),
+                    canonical_request=(
+                        None if launch_contract is None else launch_contract.canonical_description
+                    ),
+                    launch_contract_digest=launch_contract_digest,
                     history=conversation_history(snapshot, user_message),
                 )
                 models = self._local_models(self._ollama_model_id)
@@ -812,6 +949,8 @@ class AgentUiService:
                 updated = store.append_exchange(
                     conversation_id,
                     selected_platform=selected_platform,
+                    scenario_id=(None if launch_contract is None else launch_contract.scenario_id),
+                    launch_contract_digest=launch_contract_digest,
                     user_message=user_message,
                     architect_run=run,
                 )
@@ -873,37 +1012,63 @@ class AgentUiService:
                 if (
                     not view.readiness.ready
                     or view.readiness.platform is None
-                    or view.readiness.refined_request is None
+                    or view.readiness.scenario_id is None
+                    or view.readiness.canonical_request is None
+                    or view.readiness.launch_contract_digest is None
                 ):
                     raise AgentUiError("conversation_not_ready")
+                launch_contract = migration_launch_contract(view.readiness.scenario_id)
+                if artifact_digest(launch_contract) != view.readiness.launch_contract_digest:
+                    raise AgentUiError("conversation_unavailable")
                 if snapshot.launch_intent is None:
                     reserved_handle = self._new_handle()
-                    snapshot = store.begin_launch(
-                        conversation_id,
-                        handle=reserved_handle,
-                    )
+                    try:
+                        snapshot = store.begin_launch(
+                            conversation_id,
+                            handle=reserved_handle,
+                            expected_launch_token=launch_token,
+                        )
+                    except ArchitectConversationStaleLaunch:
+                        raise AgentUiError("stale_conversation") from None
+                    if snapshot.launch_intent is None:
+                        raise AgentUiError("conversation_unavailable")
+                    # A concurrent exact-token caller may have published the
+                    # one immutable reservation first. Always follow the
+                    # persisted handle instead of the caller's unused random
+                    # proposal.
+                    reserved_handle = snapshot.launch_intent.handle
                 else:
                     reserved_handle = snapshot.launch_intent.handle
                 if snapshot.launch_intent is None:
                     raise AgentUiError("conversation_unavailable")
                 expected_model_revision = snapshot.launch_intent.model_revision
+                requested_at = snapshot.launch_intent.requested_at
                 lifecycle_event(
                     "ui.conversation.launch.started",
                     conversation_id=conversation_id,
                     platform=view.readiness.platform.value,
+                    scenario_id=view.readiness.scenario_id,
                 )
                 if self._run_dir(reserved_handle).exists():
                     # A prior request may have completed the run but crashed
                     # before publishing the conversation receipt. Reconcile
                     # only that immutable reserved handle; never create a
                     # second run for the same intake decision.
-                    run_view = self.get(reserved_handle)
+                    try:
+                        run_view = self.get(reserved_handle)
+                    except AgentUiError:
+                        run_view = self._recover_incomplete_reserved_start(
+                            launch_contract,
+                            handle=reserved_handle,
+                            expected_model_revision=expected_model_revision,
+                            requested_at=requested_at,
+                        )
                 else:
                     run_view = self.start(
-                        view.readiness.platform.value,
-                        prompt=view.readiness.refined_request,
+                        launch_contract,
                         _reserved_handle=reserved_handle,
                         _expected_model_revision=expected_model_revision,
+                        _requested_at=requested_at,
                     )
                 if run_view.handle != reserved_handle:
                     raise AgentUiError("conversation_unavailable")
@@ -937,18 +1102,20 @@ class AgentUiService:
 
     def start(
         self,
-        platform: str,
+        launch_contract: MigrationLaunchContract,
         *,
-        prompt: str,
         _reserved_handle: str | None = None,
         _expected_model_revision: str | None = None,
+        _requested_at: datetime | None = None,
     ) -> AgentRunView:
         """Run the real Architect and stop at the real manifest approval gate."""
 
-        if not isinstance(platform, str):
-            raise AgentUiError("invalid_platform")
-        if not isinstance(prompt, str):
-            raise AgentUiError("invalid_prompt")
+        if not isinstance(launch_contract, MigrationLaunchContract):
+            raise AgentUiError("run_unavailable")
+        try:
+            contract = require_canonical_launch_contract(launch_contract)
+        except (TypeError, ValueError, KeyError):
+            raise AgentUiError("run_unavailable") from None
         if _reserved_handle is not None and (
             not isinstance(_reserved_handle, str)
             or _HANDLE_PATTERN.fullmatch(_reserved_handle) is None
@@ -959,10 +1126,12 @@ class AgentUiService:
             or re.fullmatch(r"sha256:[0-9a-f]{64}", _expected_model_revision) is None
         ):
             raise AgentUiError("run_unavailable")
-        try:
-            parsed_platform = Platform(platform)
-        except ValueError:
-            raise AgentUiError("invalid_platform") from None
+        if _requested_at is not None and (
+            _reserved_handle is None or not _is_utc_timestamp(_requested_at)
+        ):
+            raise AgentUiError("run_unavailable")
+        scenario = migration_scenario_by_id(contract.scenario_id)
+        description = contract.canonical_description
         handle: str | None = None
         try:
             with self._registry_lock:
@@ -973,12 +1142,10 @@ class AgentUiService:
                 run_dir = self._run_dir(handle)
                 if _reserved_handle is not None and run_dir.exists():
                     raise AgentUiError("run_unavailable")
-                scenario = migration_scenario(parsed_platform)
-                description = self._validate_prompt(prompt)
                 lifecycle_event(
                     "ui.run.created",
                     handle=handle,
-                    platform=parsed_platform.value,
+                    platform=contract.platform.value,
                     prompt_chars=len(description),
                 )
                 source = self._source_root(scenario.source_root)
@@ -987,10 +1154,10 @@ class AgentUiService:
                 request = prepare_agent_run_request(
                     self._project_root,
                     request_id=request_id,
-                    platform=parsed_platform,
-                    source_root=scenario.source_root,
-                    description=description,
-                    requested_at=_agent_requested_at(),
+                    launch_contract=contract,
+                    requested_at=(
+                        _agent_requested_at() if _requested_at is None else _requested_at
+                    ),
                 )
                 models = self._local_models(self._ollama_model_id)
                 if _expected_model_revision is not None:
@@ -1000,10 +1167,9 @@ class AgentUiService:
                     run_dir,
                     run_id=run_id,
                     thread_id=thread_id,
-                    source_root=scenario.source_root,
+                    launch_contract=contract,
                     request=request,
                     models=models,
-                    wiki_as_of=scenario.wiki_as_of,
                 )
                 if status.status not in {"awaiting_approval", "decision_required", "failed"}:
                     raise AgentUiError("run_unavailable")
@@ -1030,20 +1196,228 @@ class AgentUiService:
             )
             raise AgentUiError("run_unavailable") from None
 
+    def _recover_incomplete_reserved_start(
+        self,
+        launch_contract: MigrationLaunchContract,
+        *,
+        handle: str,
+        expected_model_revision: str,
+        requested_at: datetime,
+    ) -> AgentRunView:
+        """Recover only the exact unadvanced bootstrap bound by launch intent."""
+
+        contract = require_canonical_launch_contract(launch_contract)
+        scenario = migration_scenario_by_id(contract.scenario_id)
+        with self._registry_lock, self._lock_for(handle):
+            source = self._source_root(scenario.source_root)
+            source_before = snapshot_tree(source)
+            request_id, run_id, thread_id = self._identities(handle)
+            request = prepare_agent_run_request(
+                self._project_root,
+                request_id=request_id,
+                launch_contract=contract,
+                requested_at=requested_at,
+            )
+            models = self._local_models(self._ollama_model_id)
+            models.bind_recorded_model_revision(expected_model_revision)
+            status = recover_incomplete_agent_run_start(
+                self._project_root,
+                self._run_dir(handle),
+                run_id=run_id,
+                thread_id=thread_id,
+                launch_contract=contract,
+                request=request,
+                models=models,
+            )
+            if status.status not in {"awaiting_approval", "decision_required", "failed"}:
+                raise AgentUiError("run_unavailable")
+            if status.status == "awaiting_approval" and status.interrupt is None:
+                raise AgentUiError("run_unavailable")
+            if snapshot_tree(source) != source_before:
+                raise AgentUiError("run_unavailable")
+            reloaded = self._load_status(handle)
+            if reloaded != status:
+                raise AgentUiError("run_unavailable")
+            view = self._project_view(handle, reloaded)
+            _log_ui_run_status(handle, reloaded)
+            return view
+
     def get(self, handle: str) -> AgentRunView:
         """Reload the canonical run and project only verified durable evidence."""
 
-        self._require_known_handle(handle)
         try:
-            with self._lock_for(handle):
-                return self._project_view(handle, self._load_status(handle))
-        except AgentUiError:
+            return self._get_verified_view(handle)
+        except AgentUiError as error:
+            if error.code == "run_unavailable":
+                lifecycle_event(
+                    "ui.service.failed",
+                    level=logging.ERROR,
+                    action="get",
+                    handle=handle,
+                    public_code="run_unavailable",
+                    error_type=type(error).__name__,
+                )
             raise
         except Exception as error:
             lifecycle_event(
                 "ui.service.failed",
                 level=logging.ERROR,
                 action="get",
+                handle=handle,
+                public_code="run_unavailable",
+                error_type=type(error).__name__,
+            )
+            raise AgentUiError("run_unavailable") from None
+
+    def request_final_review(
+        self,
+        handle: str,
+        *,
+        requester: str,
+        designated_reviewer: str,
+        requested_at: datetime,
+        expires_at: datetime,
+    ) -> AgentRunView:
+        """Bind one completed candidate to two distinct declarative human identities."""
+
+        normalized_requester = _validate_final_review_actor(requester)
+        normalized_reviewer = _validate_final_review_actor(designated_reviewer)
+        if normalized_requester == normalized_reviewer:
+            raise AgentUiError("invalid_reviewer")
+        if not _valid_final_review_window(requested_at, expires_at):
+            raise AgentUiError("final_review_unavailable")
+        self._require_known_handle(handle)
+        try:
+            with self._lock_for(handle):
+                status = self._load_status(handle)
+                current = self._project_view(handle, status)
+                if current.final_review.status != "not_requested":
+                    raise AgentUiError("final_review_already_requested")
+                if not current.final_review.can_request:
+                    raise AgentUiError("final_review_unavailable")
+                persist_final_review_request(
+                    self._project_root,
+                    self._run_dir(handle),
+                    run_id=status.run_id,
+                    thread_id=status.thread_id,
+                    requester=normalized_requester,
+                    designated_reviewer=normalized_reviewer,
+                    requested_at=requested_at,
+                    expires_at=expires_at,
+                )
+                reloaded = self._load_status(handle)
+                if reloaded != status:
+                    raise AgentUiError("run_unavailable")
+                view = self._project_view(handle, reloaded)
+                if (
+                    view.final_review.status != "awaiting_final_review"
+                    or view.final_review.requester != normalized_requester
+                    or view.final_review.designated_reviewer != normalized_reviewer
+                    or view.final_review.authority_granted
+                    or view.final_review.external_actions_authorized
+                ):
+                    raise AgentUiError("run_unavailable")
+                lifecycle_event(
+                    "ui.final_review.requested",
+                    handle=handle,
+                    authority_granted=False,
+                )
+                return view
+        except AgentUiError:
+            raise
+        except PolicyViolation:
+            raise AgentUiError("final_review_unavailable") from None
+        except Exception as error:
+            lifecycle_event(
+                "ui.service.failed",
+                level=logging.ERROR,
+                action="final_review_request",
+                handle=handle,
+                public_code="run_unavailable",
+                error_type=type(error).__name__,
+            )
+            raise AgentUiError("run_unavailable") from None
+
+    def decide_final_review(
+        self,
+        handle: str,
+        *,
+        selection: str,
+        reviewer: str,
+        comment: str,
+        decided_at: datetime,
+    ) -> AgentRunView:
+        """Consume one pending review without granting any external action authority."""
+
+        if selection not in {"accept", "reject", "request_changes"}:
+            raise AgentUiError("invalid_decision")
+        normalized_reviewer = _validate_final_review_actor(reviewer)
+        if not isinstance(comment, str) or len(comment) > 2000 or "\x00" in comment:
+            raise AgentUiError("invalid_reviewer")
+        if SecretRedactor().redact(comment).changed:
+            raise AgentUiError("secret_material")
+        if not _is_utc_timestamp(decided_at):
+            raise AgentUiError("final_review_unavailable")
+        self._require_known_handle(handle)
+        try:
+            with self._lock_for(handle):
+                status = self._load_status(handle)
+                current = self._project_view(handle, status)
+                if current.final_review.status == "not_requested":
+                    raise AgentUiError("final_review_unavailable")
+                if current.final_review.status != "awaiting_final_review":
+                    raise AgentUiError("final_review_already_decided")
+                if not current.final_review.can_decide:
+                    raise AgentUiError("final_review_unavailable")
+                if current.final_review.designated_reviewer != normalized_reviewer:
+                    raise AgentUiError("invalid_reviewer")
+                persisted = persist_final_review_decision(
+                    self._project_root,
+                    self._run_dir(handle),
+                    run_id=status.run_id,
+                    thread_id=status.thread_id,
+                    reviewer=normalized_reviewer,
+                    selection=cast(
+                        Literal["accept", "reject", "request_changes"],
+                        selection,
+                    ),
+                    decided_at=decided_at,
+                    comment=comment,
+                )
+                if (
+                    persisted.external_actions_authorized
+                    or persisted.source_mutated
+                    or persisted.deployment_performed
+                    or persisted.publication_performed
+                ):
+                    raise AgentUiError("run_unavailable")
+                reloaded = self._load_status(handle)
+                if reloaded != status:
+                    raise AgentUiError("run_unavailable")
+                view = self._project_view(handle, reloaded)
+                if (
+                    view.final_review.status != persisted.outcome
+                    or view.final_review.reviewer != normalized_reviewer
+                    or view.final_review.authority_granted
+                    or view.final_review.external_actions_authorized
+                ):
+                    raise AgentUiError("run_unavailable")
+                lifecycle_event(
+                    "ui.final_review.decided",
+                    handle=handle,
+                    selection=selection,
+                    authority_granted=False,
+                )
+                return view
+        except AgentUiError:
+            raise
+        except PolicyViolation:
+            raise AgentUiError("final_review_unavailable") from None
+        except Exception as error:
+            lifecycle_event(
+                "ui.service.failed",
+                level=logging.ERROR,
+                action="final_review_decision",
                 handle=handle,
                 public_code="run_unavailable",
                 error_type=type(error).__name__,
@@ -1076,12 +1450,23 @@ class AgentUiService:
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
                 continue
             candidates.append((metadata.st_mtime_ns, child.name))
+        recovered: AgentRunView | None = None
+        incompatible_run_count = 0
         for _, handle in sorted(candidates, reverse=True):
             try:
-                return self.get(handle)
-            except AgentUiError:
+                recovered = self._get_verified_view(handle)
+            except (AgentUiError, FileNotFoundError, PolicyViolation, ValueError):
+                incompatible_run_count += 1
                 continue
-        return None
+            break
+        if incompatible_run_count:
+            lifecycle_event(
+                "ui.latest.scan.completed",
+                candidate_count=len(candidates),
+                incompatible_run_count=incompatible_run_count,
+                recovered=recovered is not None,
+            )
+        return recovered
 
     def decide(
         self,
@@ -1095,7 +1480,11 @@ class AgentUiService:
 
         if not isinstance(selection, str) or selection not in {"approve", "reject"}:
             raise AgentUiError("invalid_decision")
-        if not isinstance(reviewer, str) or not isinstance(comment, str):
+        if (
+            not isinstance(reviewer, str)
+            or _REVIEWER_PATTERN.fullmatch(reviewer) is None
+            or not isinstance(comment, str)
+        ):
             raise AgentUiError("invalid_reviewer")
         self._require_known_handle(handle)
         try:
@@ -1201,18 +1590,27 @@ class AgentUiService:
         try:
             with self._lock_for(handle):
                 status = self._load_status(handle)
-                if status.execution_attempt != 1:
+                authorized_continuation = _is_authorized_retry_continuation_status(status)
+                if status.execution_attempt != 1 and not authorized_continuation:
                     raise AgentUiError("retry_already_recorded")
-                if (
+                if not authorized_continuation and (
                     status.status != "completed"
                     or status.terminal_disposition != "recoverable_failure"
                 ):
                     raise AgentUiError("retry_unavailable")
 
                 store = ArtifactStore(self._run_dir(handle) / "evidence")
-                correction = _verified_retry_request(store, status)
+                correction = (
+                    _verified_authorized_retry_continuation(store, status)[0]
+                    if authorized_continuation
+                    else _verified_retry_request(store, status)
+                )
                 if correction_id != correction.correction_id:
-                    raise AgentUiError("invalid_correction")
+                    raise AgentUiError(
+                        "retry_already_recorded"
+                        if authorized_continuation
+                        else "invalid_correction"
+                    )
                 try:
                     reconstructed_approval = CorrectionController.approve_retry(
                         correction,
@@ -1225,6 +1623,8 @@ class AgentUiService:
                 try:
                     persisted_payload = store.read_json(_CORRECTION_APPROVAL_ATTEMPT_TWO_PATH)
                 except FileNotFoundError:
+                    if authorized_continuation:
+                        raise AgentUiError("run_unavailable") from None
                     approval = reconstructed_approval
                 else:
                     persisted_approval = CorrectionApproval.model_validate(persisted_payload)
@@ -1235,7 +1635,11 @@ class AgentUiService:
                 lifecycle_event(
                     "ui.correction.retry.authorized",
                     handle=handle,
-                    attempt=2,
+                    correction_id=correction.correction_id,
+                    action=correction.action.value,
+                    completed_attempt=correction.completed_attempt,
+                    authorized_attempt=approval.authorized_attempt,
+                    failed_signals=",".join(correction.failed_check_ids),
                 )
 
                 scenario = migration_scenario(status.platform)
@@ -1384,6 +1788,9 @@ class AgentUiService:
     def _project_view(self, handle: str, status: AgentRunStatus) -> AgentRunView:
         scenario = migration_scenario(status.platform)
         store = ArtifactStore(self._run_dir(handle) / "evidence")
+        run_context = AgentRunContext.model_validate(store.read_json("run-context.json"))
+        if run_context.slice_id != scenario.scenario_id:
+            raise AgentUiError("run_unavailable")
         request = MigrationRequest.model_validate(store.read_json("request.json"))
         if request.request_id != status.request_id or request.platform is not status.platform:
             raise AgentUiError("run_unavailable")
@@ -1395,6 +1802,7 @@ class AgentUiService:
             return self._project_pre_manifest_terminal(
                 handle,
                 status,
+                scenario_id=scenario.scenario_id,
                 scenario_title=scenario.title,
                 request=request,
                 store=store,
@@ -1417,7 +1825,7 @@ class AgentUiService:
             manifest,
             status,
         )
-        correction = _correction_view(store, status)
+        correction = _correction_view(store, status, model_root=model_root)
         attempt_history = _attempt_history(store, model_root, manifest, status)
         prior_calls = _prior_attempt_model_calls(store, model_root, manifest, status)
         model_calls = (
@@ -1430,6 +1838,7 @@ class AgentUiService:
         return AgentRunView(
             handle=handle,
             platform=status.platform.value,
+            scenario_id=scenario.scenario_id,
             scenario_title=scenario.title,
             prompt=request.target.description,
             status=status.status,
@@ -1475,6 +1884,12 @@ class AgentUiService:
             human_decision=human_decision,
             correction=correction,
             attempt_history=attempt_history,
+            final_review=_final_review_view(
+                self._project_root,
+                self._run_dir(handle),
+                status,
+                store,
+            ),
             failure=_failure_view(status),
         )
 
@@ -1491,6 +1906,39 @@ class AgentUiService:
         AgentInterventionView | None,
     ]:
         attempt = status.execution_attempt
+        if _is_authorized_retry_continuation_status(status):
+            engineer = EngineerRun.model_validate(
+                store.read_json(f"{model_root}/engineer-attempt-1.json")
+            )
+            report = ValidationReport.model_validate(
+                store.read_json(f"{model_root}/report-attempt-1.json")
+            )
+            assessment = ValidatorAssessment.model_validate(
+                store.read_json(f"{model_root}/validator-attempt-1.json")
+            )
+            change_set = engineer.change_set
+            if (
+                change_set is None
+                or report.attempt != 1
+                or report.disposition is not ValidationDisposition.RECOVERABLE_FAILURE
+                or assessment.authoritative_disposition is not report.disposition
+                or assessment.advisory.manifest_digest != artifact_digest(manifest)
+                or assessment.advisory.change_set_digest != artifact_digest(change_set)
+                or assessment.advisory.report_digest != artifact_digest(report)
+            ):
+                raise AgentUiError("run_unavailable")
+            validate_report(report, manifest, change_set)
+            return (
+                _candidate_view(
+                    engineer,
+                    manifest,
+                    attempt=1,
+                    download_available=False,
+                ),
+                _validation_view(report, engineer, manifest, assessment=assessment),
+                (),
+                None,
+            )
         if status.status == "decision_required":
             if manifest.status.value == "decision_required":
                 try:
@@ -1590,7 +2038,11 @@ class AgentUiService:
                 download_available=True,
             ),
             _validation_view(report, engineer, manifest, assessment=assessment),
-            (engineer.model_call, assessment.model_call),
+            (
+                (engineer.model_call,)
+                if assessment.model_call is None
+                else (engineer.model_call, assessment.model_call)
+            ),
             None,
         )
 
@@ -1618,6 +2070,7 @@ class AgentUiService:
         handle: str,
         status: AgentRunStatus,
         *,
+        scenario_id: str,
         scenario_title: str,
         request: MigrationRequest,
         store: ArtifactStore,
@@ -1661,6 +2114,7 @@ class AgentUiService:
         return AgentRunView(
             handle=handle,
             platform=status.platform.value,
+            scenario_id=scenario_id,
             scenario_title=scenario_title,
             prompt=request.target.description,
             status=status.status,
@@ -1685,6 +2139,12 @@ class AgentUiService:
             candidate=None,
             validation=None,
             intervention=intervention,
+            final_review=_final_review_view(
+                self._project_root,
+                self._run_dir(handle),
+                status,
+                store,
+            ),
             failure=_failure_view(status),
         )
 
@@ -1743,6 +2203,7 @@ class AgentUiService:
                     "implementation_contract_invalid",
                     "required_approval_missing",
                     "transformation_scope_invalid",
+                    "unresolved_question_risk_missing",
                     "policy_rejected",
                 }
             )
@@ -1776,11 +2237,12 @@ class AgentUiService:
             )
         raise AgentUiError("run_unavailable")
 
-    def _validate_prompt(self, prompt: str) -> str:
-        normalized = prompt.strip()
-        if not 10 <= len(normalized) <= 1000 or "\x00" in normalized:
-            raise AgentUiError("invalid_prompt")
-        return normalized
+    @staticmethod
+    def _validate_request_secret_boundary(value: str) -> None:
+        try:
+            assert_agent_request_secret_free(value)
+        except PolicyViolation:
+            raise AgentUiError("secret_material") from None
 
     def _verify_conversation_snapshot(
         self,
@@ -1800,8 +2262,30 @@ class AgentUiService:
                 header=snapshot.header,
                 exchanges=tuple(prior_exchanges),
             )
+            launch_contract = None
+            if exchange.scenario_id is not None:
+                try:
+                    launch_contract = migration_launch_contract(exchange.scenario_id)
+                except KeyError:
+                    raise AgentUiError("conversation_unavailable") from None
+                if launch_contract.platform is not exchange.selected_platform:
+                    raise AgentUiError("conversation_unavailable")
+            scenario = (
+                None
+                if launch_contract is None
+                else migration_scenario_by_id(launch_contract.scenario_id)
+            )
             context = ArchitectConversationContext(
                 selected_platform=exchange.selected_platform,
+                scenario_id=(None if launch_contract is None else launch_contract.scenario_id),
+                source_artifacts=(() if scenario is None else scenario.display_source_artifacts),
+                target_summary=(
+                    None if launch_contract is None else launch_contract.target_summary
+                ),
+                canonical_request=(
+                    None if launch_contract is None else launch_contract.canonical_description
+                ),
+                launch_contract_digest=exchange.launch_contract_digest,
                 history=conversation_history(partial, exchange.user_message),
             )
             call = exchange.architect_run.model_call
@@ -1826,27 +2310,38 @@ class AgentUiService:
         *,
         expected_model_revision: str,
     ) -> None:
-        """Require exact selected-platform and refined-request launch provenance."""
+        """Require exact scenario-contract and model-revision launch provenance."""
 
+        revision_bound = run.boundaries.model_revision == expected_model_revision
         if (
             conversation.readiness.platform is None
-            or conversation.readiness.refined_request is None
+            or conversation.readiness.scenario_id is None
+            or conversation.readiness.canonical_request is None
+            or conversation.readiness.launch_contract_digest is None
             or run.platform != conversation.readiness.platform.value
-            or run.prompt != conversation.readiness.refined_request
-            or run.boundaries.model_revision != expected_model_revision
+            or run.scenario_id != conversation.readiness.scenario_id
+            or run.prompt != conversation.readiness.canonical_request
+            or artifact_digest(migration_launch_contract(conversation.readiness.scenario_id))
+            != conversation.readiness.launch_contract_digest
+            or (
+                not revision_bound
+                and not _is_verified_pre_manifest_terminal_without_model_record(run)
+            )
             or (conversation.launch_handle is not None and run.handle != conversation.launch_handle)
         ):
             raise AgentUiError("conversation_unavailable")
 
     @staticmethod
-    def _validate_conversation_platform(value: str | None) -> Platform | None:
-        if value is None:
+    def _conversation_launch_contract(
+        scenario_id: str | None,
+    ) -> MigrationLaunchContract | None:
+        if scenario_id is None:
             return None
-        if not isinstance(value, str):
+        if not isinstance(scenario_id, str):
             raise AgentUiError("invalid_platform")
         try:
-            return Platform(value)
-        except ValueError:
+            return migration_launch_contract(scenario_id)
+        except KeyError:
             raise AgentUiError("invalid_platform") from None
 
     @staticmethod
@@ -1868,7 +2363,8 @@ class AgentUiService:
             )
         ):
             raise AgentUiError("invalid_message")
-        return SecretRedactor().redact(normalized).text
+        AgentUiService._validate_request_secret_boundary(normalized)
+        return normalized
 
     def _models_for_resume(
         self,
@@ -1900,6 +2396,13 @@ class AgentUiService:
             run_id=run_id,
             thread_id=thread_id,
         )
+
+    def _get_verified_view(self, handle: str) -> AgentRunView:
+        """Project one exact run without choosing a public logging policy."""
+
+        self._require_known_handle(handle)
+        with self._lock_for(handle):
+            return self._project_view(handle, self._load_status(handle))
 
     def _engineer_artifact_exists(self, status: AgentRunStatus) -> bool:
         path = (
@@ -1987,8 +2490,7 @@ class AgentUiService:
             raise AgentUiError("unknown_run")
 
     def _lock_for(self, handle: str) -> threading.RLock:
-        with self._locks_lock:
-            return self._run_locks.setdefault(handle, threading.RLock())
+        return _shared_service_lock(self._run_root, handle)
 
     def _run_dir(self, handle: str) -> Path:
         return self._run_root / handle
@@ -2010,6 +2512,202 @@ class AgentUiService:
     def _run_thread_ids(handle: str) -> tuple[str, str]:
         _, run_id, thread_id = AgentUiService._identities(handle)
         return run_id, thread_id
+
+
+def _is_verified_pre_manifest_terminal_without_model_record(run: AgentRunView) -> bool:
+    """Allow an exact reserved launch to publish its controlled terminal run.
+
+    The UI binds the intake revision on the Ollama client before calling the
+    run starter. A run directory can therefore exist at the reserved handle
+    only after that revision check succeeded. When Architect generation or
+    policy validation then fails before a ``ModelCallRecord`` is accepted,
+    there is deliberately no model revision in the public run projection.
+    The exact contract, scenario, prompt, and reserved handle remain checked
+    separately by ``_verify_conversation_launch_binding``.
+    """
+
+    if (
+        run.execution_attempt != 1
+        or run.manifest is not None
+        or run.candidate is not None
+        or run.validation is not None
+        or run.model_calls
+        or run.boundaries.model_call_record_persisted
+        or run.boundaries.model_revision is not None
+        or run.boundaries.execution_boundary != "local_loopback"
+        or run.boundaries.mode != "local_ollama"
+    ):
+        return False
+    if run.status == "decision_required":
+        return (
+            run.terminal_disposition == "decision_required"
+            and run.intervention is not None
+            and run.failure is None
+        )
+    return (
+        run.status == "failed"
+        and run.terminal_disposition == "controlled_failure"
+        and run.intervention is None
+        and run.failure is not None
+        and run.failure.seam == "architect"
+        and run.failure.attempt == 1
+    )
+
+
+def _validate_final_review_actor(value: object) -> str:
+    if not isinstance(value, str) or _FINAL_REVIEW_ACTOR_PATTERN.fullmatch(value) is None:
+        raise AgentUiError("invalid_reviewer")
+    if SecretRedactor().redact(value).changed:
+        raise AgentUiError("secret_material")
+    return value
+
+
+def _is_utc_timestamp(value: object) -> bool:
+    return bool(
+        isinstance(value, datetime)
+        and value.tzinfo is not None
+        and value.utcoffset() == timedelta(0)
+    )
+
+
+def _valid_final_review_window(requested_at: object, expires_at: object) -> bool:
+    if not _is_utc_timestamp(requested_at) or not _is_utc_timestamp(expires_at):
+        return False
+    assert isinstance(requested_at, datetime)
+    assert isinstance(expires_at, datetime)
+    return requested_at < expires_at <= requested_at + _MAX_FINAL_REVIEW_WINDOW
+
+
+def _final_review_eligible(status: AgentRunStatus) -> bool:
+    return bool(
+        status.status == "completed"
+        and status.terminal_disposition == ValidationDisposition.READY_FOR_HUMAN_REVIEW.value
+        and status.failure is None
+        and not status.pending_nodes
+    )
+
+
+def _final_review_view(
+    project_root: Path,
+    run_dir: Path,
+    run_status: AgentRunStatus,
+    store: ArtifactStore,
+) -> AgentFinalReviewView:
+    """Verify and project final-review evidence without treating it as authority."""
+
+    eligible = _final_review_eligible(run_status)
+    try:
+        request_payload = store.read_json(FINAL_REVIEW_REQUEST_PATH)
+    except FileNotFoundError:
+        # A lifecycle index or later artifact without its request is corruption, not a
+        # fresh review opportunity.
+        for path in (
+            "indexes/final-review-requested.json",
+            "indexes/final-review-decided.json",
+            FINAL_REVIEW_DECISION_PATH,
+            FINAL_REVIEW_RECORD_PATH,
+        ):
+            try:
+                store.read_json(path)
+            except FileNotFoundError:
+                continue
+            raise AgentUiError("run_unavailable") from None
+        return AgentFinalReviewView(
+            status="not_requested",
+            eligible=eligible,
+            can_request=eligible,
+            can_decide=False,
+        )
+
+    request = FinalReviewRequest.model_validate(request_payload)
+    status = get_final_review_status_for_run(
+        project_root,
+        run_dir,
+        run_id=run_status.run_id,
+        thread_id=run_status.thread_id,
+    )
+    if (
+        request.run_id != run_status.run_id
+        or request.thread_id != run_status.thread_id
+        or request.request_id != run_status.request_id
+        or request.review_id != status.review_id
+        or artifact_digest(request) != status.request_digest
+        or request.authority_granted
+        or status.external_actions_authorized
+    ):
+        raise AgentUiError("run_unavailable")
+
+    if status.status == "awaiting_final_review":
+        for path in (FINAL_REVIEW_DECISION_PATH, FINAL_REVIEW_RECORD_PATH):
+            try:
+                store.read_json(path)
+            except FileNotFoundError:
+                continue
+            raise AgentUiError("run_unavailable") from None
+        return AgentFinalReviewView(
+            status=status.status,
+            eligible=eligible,
+            can_request=False,
+            can_decide=eligible and datetime.now(UTC) <= request.expires_at,
+            review_id=request.review_id,
+            requester=request.requester,
+            designated_reviewer=request.designated_reviewer,
+            requested_at=request.requested_at,
+            expires_at=request.expires_at,
+        )
+
+    decision = FinalReviewDecision.model_validate(store.read_json(FINAL_REVIEW_DECISION_PATH))
+    record = FinalReviewRecord.model_validate(store.read_json(FINAL_REVIEW_RECORD_PATH))
+    expected_outcome = {
+        "accept": "accepted",
+        "reject": "rejected",
+        "request_changes": "changes_requested",
+    }[decision.selection]
+    if (
+        decision.review_id != request.review_id
+        or decision.review_request_digest != artifact_digest(request)
+        or decision.reviewer != request.designated_reviewer
+        or decision.authority_granted
+        or artifact_digest(decision) != status.decision_digest
+        or record.review_id != request.review_id
+        or record.review_request_digest != artifact_digest(request)
+        or record.decision_id != decision.decision_id
+        or record.decision_digest != artifact_digest(decision)
+        or record.outcome != expected_outcome
+        or record.outcome != status.status
+        or record.candidate_accepted != status.candidate_accepted
+        or record.run_id != request.run_id
+        or record.thread_id != request.thread_id
+        or record.request_id != request.request_id
+        or record.manifest_digest != request.manifest_digest
+        or record.change_set_digest != request.change_set_digest
+        or record.validation_report_digest != request.validation_report_digest
+        or record.source_revision != request.source_revision
+        or record.reviewer != decision.reviewer
+        or record.decided_at != decision.decided_at
+        or record.external_actions_authorized
+        or record.source_mutated
+        or record.deployment_performed
+        or record.publication_performed
+    ):
+        raise AgentUiError("run_unavailable")
+    return AgentFinalReviewView(
+        status=status.status,
+        eligible=eligible,
+        can_request=False,
+        can_decide=False,
+        review_id=request.review_id,
+        requester=request.requester,
+        designated_reviewer=request.designated_reviewer,
+        requested_at=request.requested_at,
+        expires_at=request.expires_at,
+        selection=decision.selection,
+        reviewer=decision.reviewer,
+        decided_at=decision.decided_at,
+        comment=decision.comment,
+        candidate_accepted=record.candidate_accepted,
+        next_action=record.next_action,
+    )
 
 
 def _log_ui_run_status(handle: str, status: AgentRunStatus) -> None:
@@ -2085,6 +2783,13 @@ def _agent_requested_at() -> datetime:
     return datetime.now(UTC)
 
 
+def _shared_service_lock(run_root: Path, key: str) -> threading.RLock:
+    """Serialize one run or conversation across service instances in this process."""
+
+    with _SERVICE_LOCKS_GUARD:
+        return _SERVICE_LOCKS.setdefault((run_root, key), threading.RLock())
+
+
 def _manifest_view(architect: ArchitectRun) -> AgentManifestView:
     manifest = architect.proposal.manifest
     return AgentManifestView(
@@ -2093,11 +2798,13 @@ def _manifest_view(architect: ArchitectRun) -> AgentManifestView:
         manifest_digest=artifact_digest(manifest),
         status=manifest.status.value,
         approved_paths=manifest.approved_paths,
-        public_decisions=architect.proposal.public_decisions,
+        public_decisions=tuple(
+            decision.summary for decision in architect.agent_output.semantic_decisions
+        ),
         implementation_contract=manifest.implementation_contract,
-        cited_graph_nodes=architect.proposal.cited_graph_nodes,
-        cited_wiki_pages=architect.proposal.cited_wiki_pages,
-        unresolved_questions=architect.proposal.unresolved_questions,
+        cited_graph_nodes=architect.agent_output.cited_graph_nodes,
+        cited_wiki_pages=architect.agent_output.cited_wiki_pages,
+        unresolved_questions=architect.agent_output.unresolved_questions,
         transformations=tuple(
             AgentTransformationView(
                 step_id=item.step_id,
@@ -2196,19 +2903,28 @@ def _validation_view(
     if change_set is None:
         raise AgentUiError("run_unavailable")
     validate_report(report, manifest, change_set)
-    if assessment is None:
+    advisory_assessment: Literal["supports_report", "raises_concern", "escalate"] | None
+    if assessment is None or assessment.model_call is None:
         summary = (
-            "Controller-owned deterministic checks completed and remain authoritative. "
-            "The Validator model advisory did not complete."
+            assessment.advisory.summary
+            if assessment is not None
+            else (
+                "Controller-owned deterministic checks completed and remain authoritative. "
+                "The Validator model advisory did not complete."
+            )
         )
         advisory_assessment = None
         concerns: tuple[str, ...] = ()
         validator_completed = False
     else:
         summary = assessment.advisory.summary
-        advisory_assessment = assessment.advisory.assessment
+        raw_advisory_assessment = assessment.advisory.assessment
+        if raw_advisory_assessment == "unavailable":
+            raise AgentUiError("run_unavailable")
+        advisory_assessment = raw_advisory_assessment
         concerns = assessment.advisory.concerns
         validator_completed = True
+    dependencies = validation_failure_dependencies(report)
     return AgentValidationView(
         attempt=report.attempt,
         disposition=report.disposition.value,
@@ -2218,6 +2934,7 @@ def _validation_view(
                 status=result.status.value,
                 summary=result.summary,
                 diagnostic_ids=result.diagnostic_ids,
+                dependent_on=dependencies.get(result.check_id),
             )
             for result in report.results
         ),
@@ -2225,6 +2942,7 @@ def _validation_view(
         advisory_assessment=advisory_assessment,
         validator_completed=validator_completed,
         concerns=concerns,
+        final_review_enabled=(report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW),
     )
 
 
@@ -2265,9 +2983,64 @@ def _verified_retry_request(
     return correction
 
 
+def _is_authorized_retry_continuation_status(status: AgentRunStatus) -> bool:
+    """Recognize only the verified attempt-two Engineer recovery checkpoint."""
+
+    return (
+        status.execution_attempt == 2
+        and status.status == "implementing"
+        and status.terminal_disposition == "recoverable_failure"
+        and status.pending_nodes == ("engineer",)
+        and status.task_failed
+        and status.interrupt is None
+        and status.failure is None
+        and status.correction is not None
+        and status.correction.completed_attempt == 1
+        and status.correction.authorized_attempt == 2
+        and status.correction.action is CorrectionAction.RETRY_IMPLEMENTATION
+    )
+
+
+def _verified_authorized_retry_continuation(
+    store: ArtifactStore,
+    status: AgentRunStatus,
+) -> tuple[CorrectionRequest, CorrectionApproval]:
+    """Load the immutable correction and approval for the one resumable checkpoint."""
+
+    if not _is_authorized_retry_continuation_status(status):
+        raise AgentUiError("retry_already_recorded")
+    correction = CorrectionRequest.model_validate(
+        store.read_json(_CORRECTION_REQUEST_ATTEMPT_ONE_PATH)
+    )
+    if (
+        correction.completed_attempt != 1
+        or correction.next_attempt != 2
+        or correction.maximum_attempts != 2
+        or correction.action is not CorrectionAction.RETRY_IMPLEMENTATION
+        or correction.requires_new_manifest_approval
+        or correction.requires_new_manifest_digest
+        or not _status_correction_matches(status, correction)
+    ):
+        raise AgentUiError("run_unavailable")
+    approval = CorrectionApproval.model_validate(
+        store.read_json(_CORRECTION_APPROVAL_ATTEMPT_TWO_PATH)
+    )
+    expected = CorrectionController.approve_retry(
+        correction,
+        presented_correction_id=approval.correction_id,
+        reviewer=approval.reviewer,
+        comment=approval.comment,
+    )
+    if approval != expected:
+        raise AgentUiError("run_unavailable")
+    return correction, approval
+
+
 def _correction_view(
     store: ArtifactStore,
     status: AgentRunStatus,
+    *,
+    model_root: str,
 ) -> AgentCorrectionView | None:
     """Project the latest typed correction while retaining attempt-two approval evidence."""
 
@@ -2297,7 +3070,9 @@ def _correction_view(
             # a ValidationReport and therefore before a terminal correction exists.
             # In that case the attempt-one authorization remains the latest typed
             # correction evidence, but it can never become available for a third run.
-            if status.status not in {"failed", "decision_required"}:
+            if status.status not in {"failed", "decision_required"} and not (
+                _is_authorized_retry_continuation_status(status)
+            ):
                 raise AgentUiError("run_unavailable") from None
         else:
             correction = CorrectionRequest.model_validate(attempt_two_payload)
@@ -2317,11 +3092,18 @@ def _correction_view(
     elif not (
         status.execution_attempt == 2
         and correction.completed_attempt == 1
-        and status.status in {"failed", "decision_required"}
+        and (
+            status.status in {"failed", "decision_required"}
+            or _is_authorized_retry_continuation_status(status)
+        )
         and (
             (status.status == "failed" and status.correction is None)
             or (
                 status.status == "decision_required"
+                and _status_correction_matches(status, correction)
+            )
+            or (
+                _is_authorized_retry_continuation_status(status)
                 and _status_correction_matches(status, correction)
             )
         )
@@ -2353,18 +3135,34 @@ def _correction_view(
         and status.status == "completed"
         and status.terminal_disposition == "recoverable_failure"
         and correction.action is CorrectionAction.RETRY_IMPLEMENTATION
-    )
-    if retry_available:
+    ) or _is_authorized_retry_continuation_status(status)
+    if retry_available and status.execution_attempt == 1:
         verified = _verified_retry_request(store, status)
         if verified != attempt_one:
             raise AgentUiError("run_unavailable")
+    elif retry_available:
+        verified, verified_approval = _verified_authorized_retry_continuation(store, status)
+        if verified != attempt_one or verified_approval != approval:
+            raise AgentUiError("run_unavailable")
+
+    try:
+        report = ValidationReport.model_validate(
+            store.read_json(f"{model_root}/report-attempt-{correction.completed_attempt}.json")
+        )
+    except FileNotFoundError:
+        raise AgentUiError("run_unavailable") from None
+    if correction.report_digest != artifact_digest(report):
+        raise AgentUiError("run_unavailable")
+    projected_failure_ids = correction_failure_ids(report)
+    if not set(projected_failure_ids).issubset(correction.failed_check_ids):
+        raise AgentUiError("run_unavailable")
 
     return AgentCorrectionView(
         correction_id=correction.correction_id,
         completed_attempt=correction.completed_attempt,
         authorized_attempt=correction.next_attempt,
         action=correction.action,
-        failed_check_ids=correction.failed_check_ids,
+        failed_check_ids=projected_failure_ids,
         reason=correction.reason,
         retry_available=retry_available,
         approval=(
@@ -2423,15 +3221,12 @@ def _attempt_history(
         if change_set is None or report.attempt != attempt:
             raise AgentUiError("run_unavailable")
         validate_report(report, manifest, change_set)
+        projected_failure_ids = correction_failure_ids(report)
         correction_path = f"control/correction-request-attempt-{attempt}.json"
         try:
             correction_payload = store.read_json(correction_path)
         except FileNotFoundError:
-            failed_check_ids = tuple(
-                result.check_id
-                for result in report.results
-                if result.required and result.status.value != "passed"
-            )
+            failed_check_ids = projected_failure_ids
         else:
             correction = CorrectionRequest.model_validate(correction_payload)
             if (
@@ -2445,12 +3240,15 @@ def _attempt_history(
                 or correction.manifest_digest != artifact_digest(manifest)
             ):
                 raise AgentUiError("run_unavailable")
-            failed_check_ids = correction.failed_check_ids
+            if not set(projected_failure_ids).issubset(correction.failed_check_ids):
+                raise AgentUiError("run_unavailable")
+            failed_check_ids = projected_failure_ids
+        dependent_check_ids = validation_failure_dependencies(report).keys()
         diagnostic_ids = tuple(
             dict.fromkeys(
                 diagnostic_id
                 for result in report.results
-                if result.status.value != "passed"
+                if (result.status.value != "passed" and result.check_id not in dependent_check_ids)
                 for diagnostic_id in result.diagnostic_ids
             )
         )
@@ -2500,6 +3298,8 @@ def _prior_attempt_model_calls(
         or assessment.authoritative_disposition is not report.disposition
     ):
         raise AgentUiError("run_unavailable")
+    if assessment.model_call is None:
+        return ((engineer.model_call, 1),)
     return ((engineer.model_call, 1), (assessment.model_call, 1))
 
 
@@ -2568,11 +3368,12 @@ def _architect_planning_decision(
     return AgentPlanningDecisionView(
         manifest_id=manifest.manifest_id,
         manifest_digest=artifact_digest(manifest),
-        unresolved_questions=architect.proposal.unresolved_questions,
+        unresolved_questions=architect.agent_output.unresolved_questions,
         required_approvals=tuple(item.value for item in manifest.required_approvals),
         summary=(
-            "The Architect produced a valid decision-required plan. The manifest approval gate "
-            "did not open, and Engineer and Validator were not invoked."
+            "The Architect returned an evidence-bound semantic recommendation with a material "
+            "human-decision risk. The Controller expanded it into a valid decision-required "
+            "manifest; the approval gate did not open, and Engineer and Validator were not invoked."
         ),
     )
 
@@ -2652,7 +3453,7 @@ def _pre_manifest_terminal_stages(
     return (
         AgentStageView(
             key="architect",
-            label="Architect",
+            label="Controller → Architect",
             state="blocked",
             detail=architect_detail,
         ),
@@ -2686,11 +3487,14 @@ def _stages(
 ) -> tuple[AgentStageView, ...]:
     architecture = AgentStageView(
         key="architect",
-        label="Architect",
+        label="Controller → Architect",
         state="complete",
         detail=(
-            f"Analyzed {len(graph.nodes)} dependency nodes, {len(graph.edges)} edges, and "
-            f"retrieved {len(wiki_trace.hits)} Wiki page(s)."
+            "Controller bound the exact source inputs, "
+            f"built {len(graph.nodes)} dependency nodes and {len(graph.edges)} edges, then "
+            f"retrieved {len(wiki_trace.hits)} curated Wiki page(s). Architect selected "
+            "bounded graph/Wiki IDs and returned a semantic recommendation; Controller expanded "
+            "it into the exact manifest."
         ),
     )
     if status.status == "awaiting_approval":
@@ -2742,11 +3546,11 @@ def _stages(
             return (
                 AgentStageView(
                     key="architect",
-                    label="Architect",
+                    label="Controller → Architect",
                     state="complete",
                     detail=(
-                        "Produced a digest-bound plan that requires a separate human planning "
-                        "decision."
+                        "Architect returned a semantic recommendation with a material risk; "
+                        "Controller expanded it into a digest-bound decision-required manifest."
                     ),
                 ),
                 AgentStageView(
@@ -2855,12 +3659,12 @@ def _stages(
             ),
             AgentStageView(
                 key="validator",
-                label="Validator",
+                label="Checks + Validator advisory",
                 state="complete",
                 detail=(
-                    f"The controller-owned local validator completed attempt "
-                    f"{status.execution_attempt}; external platform validation remains outside "
-                    "this UI's authority."
+                    f"Controller-owned local checks completed attempt {status.execution_attempt}; "
+                    "the Validator advisory cannot change their disposition, and external "
+                    "platform validation remains outside this UI's authority."
                 ),
             ),
         )

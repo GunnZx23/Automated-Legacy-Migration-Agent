@@ -10,6 +10,7 @@ import socket
 import time
 import webbrowser
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +27,7 @@ from legacy_migration_agent.core.observability import (
 from legacy_migration_agent.ui.service import AgentUiError, AgentUiService
 
 _MAX_REQUEST_BYTES = 16 * 1024
+_FINAL_REVIEW_WINDOW = timedelta(days=14)
 _STATIC_ROOT = Path(__file__).resolve().parent / "static"
 _SESSION_PREFIX = "/api/sessions/"
 _CONVERSATION_PREFIX = "/api/conversations/"
@@ -138,7 +140,11 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
                     status=(
                         HTTPStatus.CREATED.value
                         if action
-                        in {"session.create", "conversation.create", "conversation.launch"}
+                        in {
+                            "conversation.create",
+                            "conversation.launch",
+                            "final_review.request",
+                        }
                         else 200
                     ),
                     elapsed_ms=_elapsed_milliseconds(started_ns),
@@ -264,26 +270,14 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
         self._require_csrf()
         if path == "/api/conversations":
             body = self._read_json_object()
-            _require_exact_fields(body, {"platform"})
-            platform = body["platform"]
-            if platform is not None and not isinstance(platform, str):
+            _require_exact_fields(body, {"scenario_id"})
+            scenario_id = body["scenario_id"]
+            if scenario_id is not None and not isinstance(scenario_id, str):
                 raise _RequestError(HTTPStatus.BAD_REQUEST, "bad_request")
-            conversation_view = self._ui_server.ui_service.create_conversation(platform=platform)
-            self._respond_json(HTTPStatus.CREATED, _json_value(conversation_view))
-            return
-
-        if path == "/api/sessions":
-            body = self._read_json_object()
-            _require_exact_fields(body, {"platform", "prompt"})
-            platform = body["platform"]
-            prompt = body["prompt"]
-            if not isinstance(platform, str) or not isinstance(prompt, str):
-                raise _RequestError(HTTPStatus.BAD_REQUEST, "bad_request")
-            run_view = self._ui_server.ui_service.start(
-                platform,
-                prompt=prompt,
+            conversation_view = self._ui_server.ui_service.create_conversation(
+                scenario_id=scenario_id
             )
-            self._respond_json(HTTPStatus.CREATED, _json_value(run_view))
+            self._respond_json(HTTPStatus.CREATED, _json_value(conversation_view))
             return
 
         conversation_route = self._parse_conversation_route(path)
@@ -291,17 +285,17 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
             conversation_id, suffix = conversation_route
             if suffix == "/messages":
                 body = self._read_json_object()
-                _require_exact_fields(body, {"message", "platform"})
+                _require_exact_fields(body, {"message", "scenario_id"})
                 message = body["message"]
-                platform = body["platform"]
+                scenario_id = body["scenario_id"]
                 if not isinstance(message, str) or (
-                    platform is not None and not isinstance(platform, str)
+                    scenario_id is not None and not isinstance(scenario_id, str)
                 ):
                     raise _RequestError(HTTPStatus.BAD_REQUEST, "bad_request")
                 conversation_view = self._ui_server.ui_service.send_conversation_message(
                     conversation_id,
                     message=message,
-                    platform=platform,
+                    scenario_id=scenario_id,
                 )
                 self._respond_json(HTTPStatus.OK, _json_value(conversation_view))
                 return
@@ -329,6 +323,44 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
         if session_route is None:
             raise _RequestError(HTTPStatus.NOT_FOUND, "not_found")
         handle, suffix = session_route
+        if suffix == "/final-review/request":
+            body = self._read_json_object()
+            _require_exact_fields(body, {"requester", "designated_reviewer"})
+            requester = body["requester"]
+            designated_reviewer = body["designated_reviewer"]
+            if not isinstance(requester, str) or not isinstance(designated_reviewer, str):
+                raise _RequestError(HTTPStatus.BAD_REQUEST, "bad_request")
+            requested_at = datetime.now(UTC)
+            run_view = self._ui_server.ui_service.request_final_review(
+                handle,
+                requester=requester,
+                designated_reviewer=designated_reviewer,
+                requested_at=requested_at,
+                expires_at=requested_at + _FINAL_REVIEW_WINDOW,
+            )
+            self._respond_json(HTTPStatus.CREATED, _json_value(run_view))
+            return
+        if suffix == "/final-review/decision":
+            body = self._read_json_object()
+            _require_exact_fields(body, {"selection", "reviewer", "comment"})
+            selection = body["selection"]
+            reviewer = body["reviewer"]
+            comment = body["comment"]
+            if (
+                not isinstance(selection, str)
+                or not isinstance(reviewer, str)
+                or not isinstance(comment, str)
+            ):
+                raise _RequestError(HTTPStatus.BAD_REQUEST, "bad_request")
+            run_view = self._ui_server.ui_service.decide_final_review(
+                handle,
+                selection=selection,
+                reviewer=reviewer,
+                comment=comment,
+                decided_at=datetime.now(UTC),
+            )
+            self._respond_json(HTTPStatus.OK, _json_value(run_view))
+            return
         if suffix == "/export":
             body = self._read_json_object()
             _require_exact_fields(body, set())
@@ -616,8 +648,10 @@ def _normalized_http_action(method: str, raw_path: str) -> str:
             return "conversation.message"
         if path.startswith(_CONVERSATION_PREFIX) and path.endswith("/launch"):
             return "conversation.launch"
-        if path == "/api/sessions":
-            return "session.create"
+        if path.startswith(_SESSION_PREFIX) and path.endswith("/final-review/request"):
+            return "final_review.request"
+        if path.startswith(_SESSION_PREFIX) and path.endswith("/final-review/decision"):
+            return "final_review.decision"
         if path.startswith(_SESSION_PREFIX) and path.endswith("/decision"):
             return "manifest.decision"
         if path.startswith(_SESSION_PREFIX) and path.endswith("/export"):

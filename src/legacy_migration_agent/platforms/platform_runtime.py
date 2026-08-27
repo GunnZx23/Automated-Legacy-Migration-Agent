@@ -9,6 +9,7 @@ it never invokes a model and never reads migration answer or oracle trees.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import os
 import re
@@ -24,7 +25,14 @@ from pydantic import field_validator
 from legacy_migration_agent.agent_runtime.agent_definitions import AgentRegistry, AgentRole
 from legacy_migration_agent.agent_runtime.checkpointing import durable_migration_workflow
 from legacy_migration_agent.agent_runtime.correction import CorrectionApproval
-from legacy_migration_agent.agent_runtime.model_agents import ArchitectContext
+from legacy_migration_agent.agent_runtime.model_agents import (
+    MAX_CONTEXT_FILES,
+    MAX_SOURCE_CONTEXT_CHARS,
+    MAX_SOURCE_FILE_CHARS,
+    ArchitectContext,
+    ArchitectModelContext,
+    SourceFileEvidence,
+)
 from legacy_migration_agent.agent_runtime.model_workflow import ModelAgentWorkflowRoles
 from legacy_migration_agent.contracts import (
     ApprovalAction,
@@ -54,10 +62,25 @@ from legacy_migration_agent.knowledge.wiki import MAX_RETRIEVAL_PAGES, LlmWiki, 
 from legacy_migration_agent.workflow import Architect, Engineer, ManifestApproval, Validator
 
 _ANALYZER_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,159}$")
+_CORRECTION_DIAGNOSTIC_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*[_.][a-z0-9_.-]*$")
 _ORACLE_SEGMENTS = frozenset({"expected", "golden", "oracle"})
 _MODEL_ARCHITECT_CALLBACK = ModelAgentWorkflowRoles.architect
 _MODEL_ENGINEER_CALLBACK = ModelAgentWorkflowRoles.engineer
 _MODEL_VALIDATOR_CALLBACK = ModelAgentWorkflowRoles.validator
+
+
+def _exact_diagnostic_ids(query: str) -> tuple[str, ...]:
+    """Return exact Wiki anchors declared verbatim by a controller query."""
+
+    return tuple(
+        sorted(
+            {
+                token
+                for token in query.split()
+                if _CORRECTION_DIAGNOSTIC_ID.fullmatch(token) is not None
+            }
+        )
+    )
 
 
 class _SessionGraphBinding(StrictModel):
@@ -317,13 +340,20 @@ class RevisionBoundArchitectContextFactory:
         if graph.has_unresolved:
             return _unresolved_graph_intervention(request, graph)
 
+        source_files = _architect_source_file_evidence(
+            source_snapshot,
+            self.platform_adapter.scope_policy.required_source_input_paths,
+        )
         wiki_trace = self._retrieve_wiki(request)
         return ArchitectContext(
-            request=request,
-            dependency_graph=graph,
-            dependency_graph_digest=artifact_digest(graph),
-            wiki_trace=wiki_trace,
-            wiki_trace_digest=artifact_digest(wiki_trace),
+            model_context=ArchitectModelContext(
+                request=request,
+                dependency_graph=graph,
+                dependency_graph_digest=artifact_digest(graph),
+                source_files=source_files,
+                wiki_trace=wiki_trace,
+                wiki_trace_digest=artifact_digest(wiki_trace),
+            ),
             platform_adapter=self.platform_adapter,
         )
 
@@ -572,11 +602,49 @@ class RevisionBoundArchitectContextFactory:
         _reject_graph_oracle_paths(graph)
 
     def _retrieve_wiki(self, request: MigrationRequest) -> RetrievalTrace:
+        return self._retrieve_wiki_query(
+            request,
+            self.wiki_query,
+            no_evidence_message="version-filtered Wiki retrieval returned no Architect evidence",
+            required_exact_ids=_exact_diagnostic_ids(self.wiki_query),
+        )
+
+    def retrieve_correction_wiki(
+        self,
+        request: MigrationRequest,
+        query: str,
+    ) -> RetrievalTrace:
+        """Retrieve targeted, version-bound evidence for an exact repair query."""
+
+        self._validate_session_binding(request)
+        self._validate_request(request)
+        normalized_query = query.strip()
+        if not normalized_query:
+            raise PolicyViolation("correction Wiki query cannot be blank")
+        exact_ids = _exact_diagnostic_ids(normalized_query)
+        if not exact_ids:
+            raise PolicyViolation(
+                "correction Wiki query must contain at least one exact diagnostic ID"
+            )
+        return self._retrieve_wiki_query(
+            request,
+            normalized_query,
+            required_exact_ids=exact_ids,
+        )
+
+    def _retrieve_wiki_query(
+        self,
+        request: MigrationRequest,
+        query: str,
+        *,
+        no_evidence_message: str = "version-filtered Wiki retrieval returned no relevant evidence",
+        required_exact_ids: tuple[str, ...] = (),
+    ) -> RetrievalTrace:
         wiki = LlmWiki.load(self.wiki_root)
         for page in wiki.catalog.pages:
             _reject_relative_oracle_path(page.path, role="Wiki page")
         trace = wiki.search(
-            self.wiki_query,
+            query,
             platform=request.platform,
             source_version=request.target.source_version,
             target_version=request.target.target_version,
@@ -584,9 +652,10 @@ class RevisionBoundArchitectContextFactory:
             expand_links=self.wiki_expand_links,
             as_of=self.wiki_as_of,
             max_age_days=self.wiki_max_age_days,
+            required_exact_ids=required_exact_ids,
         )
         if not trace.hits:
-            raise PolicyViolation("version-filtered Wiki retrieval returned no Architect evidence")
+            raise PolicyViolation(no_evidence_message)
         for hit in trace.hits:
             _reject_relative_oracle_path(hit.path, role="selected Wiki page")
             if hit.source_version != request.target.source_version:
@@ -594,6 +663,52 @@ class RevisionBoundArchitectContextFactory:
             if hit.target_version != request.target.target_version:
                 raise PolicyViolation("selected Wiki evidence has the wrong target version")
         return trace
+
+
+def _architect_source_file_evidence(
+    snapshot: TreeSnapshot,
+    required_paths: tuple[str, ...],
+) -> tuple[SourceFileEvidence, ...]:
+    """Build exact UTF-8 Architect evidence from the already-frozen snapshot."""
+
+    if not required_paths:
+        raise PolicyViolation("Architect source evidence requires at least one input file")
+    if len(required_paths) > MAX_CONTEXT_FILES:
+        raise PolicyViolation("Architect source evidence contains too many input files")
+    if len(required_paths) != len(set(required_paths)):
+        raise PolicyViolation("Architect source evidence paths must be unique")
+
+    entries = snapshot.by_path()
+    missing = tuple(path for path in required_paths if path not in entries)
+    if missing:
+        raise PolicyViolation(
+            "Architect source evidence is missing controller-required inputs: " + ", ".join(missing)
+        )
+
+    total_characters = 0
+    evidence: list[SourceFileEvidence] = []
+    for path in required_paths:
+        entry = entries[path]
+        try:
+            content = entry.content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise PolicyViolation(f"Architect source input is not UTF-8: {path}") from exc
+        if "\x00" in content:
+            raise PolicyViolation(f"Architect source input is binary: {path}")
+        if len(content) > MAX_SOURCE_FILE_CHARS:
+            raise PolicyViolation(f"Architect source input exceeds the prompt bound: {path}")
+        total_characters += len(content)
+        evidence.append(
+            SourceFileEvidence(
+                path=path,
+                sha256=f"sha256:{hashlib.sha256(entry.content).hexdigest()}",
+                content=content,
+            )
+        )
+
+    if total_characters > MAX_SOURCE_CONTEXT_CHARS:
+        raise PolicyViolation("Architect source evidence exceeds the total prompt bound")
+    return tuple(evidence)
 
 
 @dataclass(frozen=True)

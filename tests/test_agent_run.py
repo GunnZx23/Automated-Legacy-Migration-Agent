@@ -5,14 +5,18 @@ import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 
 import pytest
+from mulesoft_candidate_factory import mulesoft_target_outputs
 from pydantic import BaseModel
+from salesforce_candidate_factory import salesforce_candidate_text_outputs
 
 import legacy_migration_agent.application.agent_run as agent_run_module
+import legacy_migration_agent.application.migration_scenarios as migration_scenarios_module
 import legacy_migration_agent.core.run_session as run_session_module
 from legacy_migration_agent.agent_runtime.checkpointing import (
     durable_migration_workflow,
@@ -24,15 +28,22 @@ from legacy_migration_agent.agent_runtime.correction import (
     CorrectionRequest,
 )
 from legacy_migration_agent.agent_runtime.model_agents import (
-    ArchitectContext,
     ArchitectManifestProposal,
+    ArchitectModelContext,
+    ArchitectSemanticDecision,
     EngineerFilePlan,
+    EngineerFilePlanOutcome,
     EngineerFileUpdate,
     EngineerInterventionOutcome,
     EngineerModelOutcome,
     EngineerWorkspaceContext,
-    ValidatorAdvisory,
+    ValidatorAssessment,
     ValidatorEvidenceContext,
+    ValidatorModelAdvisory,
+)
+from legacy_migration_agent.agent_runtime.model_workflow import (
+    ModelAgentWorkflowRoles,
+    ModelWorkflowIntegrationError,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
     LiveModelApproval,
@@ -48,6 +59,7 @@ from legacy_migration_agent.application.agent_run import (
     build_local_ollama_model_clients,
     get_agent_run_status,
     prepare_agent_run_request,
+    recover_incomplete_agent_run_start,
     resume_agent_run,
     retry_agent_run,
     start_agent_run,
@@ -56,6 +68,11 @@ from legacy_migration_agent.application.final_review import (
     decide_final_review_for_run,
     get_final_review_status_for_run,
     request_final_review_for_run,
+)
+from legacy_migration_agent.application.migration_scenarios import (
+    MigrationLaunchContract,
+    migration_launch_contract,
+    migration_scenario,
 )
 from legacy_migration_agent.contracts import (
     ApprovalAction,
@@ -81,6 +98,7 @@ from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.workspace import content_revision, snapshot_tree
 from legacy_migration_agent.knowledge.wiki import RetrievalTrace
 from legacy_migration_agent.platforms.local_checks import (
+    APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     SALESFORCE_AGENT_OUTPUT_PATHS,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
 )
@@ -105,29 +123,24 @@ from legacy_migration_agent.platforms.salesforce_runtime import (
 )
 from legacy_migration_agent.workflow import (
     ManifestApproval,
+    MigrationWorkflow,
     manifest_decision_request,
     manifest_digest,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AS_OF = date(2026, 8, 26)
+AS_OF = date(2026, 8, 27)
+MODEL_ID = "test-model:latest"
 LOCAL_MODEL_REVISION_A = "sha256:" + "a" * 64
 LOCAL_MODEL_REVISION_B = "sha256:" + "b" * 64
 
-# These evaluator-owned target bytes are deliberately frozen before any
-# oracle-free project/run is constructed.  Product code receives only model
-# output and never a path to either evaluator tree.
-SF_FROZEN_OUTPUTS = {
-    path: (PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/expected" / path).read_text(
-        encoding="utf-8"
-    )
-    for path in SALESFORCE_AGENT_OUTPUT_PATHS
-}
+# These test-owned target bytes are frozen before any project/run is
+# constructed. Product code receives only model output and never a test-data
+# path.
+SF_FROZEN_OUTPUTS = salesforce_candidate_text_outputs()
 MULE_FROZEN_OUTPUTS = {
-    path: (PROJECT_ROOT / "fixtures/mulesoft/customer-status-api/expected" / path).read_text(
-        encoding="utf-8"
-    )
-    for path in TARGET_FILES
+    relative_path: content.decode("utf-8")
+    for relative_path, content in mulesoft_target_outputs().items()
 }
 SENSITIVE_FAILURE = "sk-provider-error-secret-123456789 /private/tmp/oracle"
 
@@ -153,30 +166,48 @@ class PresetStructuredModel:
         assert system_prompt
         self.calls.append(output_type.__name__)
         if output_type is ArchitectManifestProposal:
-            context = ArchitectContext.model_validate(input_value)
-            manifest = _manifest(context.request)
+            context = ArchitectModelContext.model_validate(input_value)
             return ArchitectManifestProposal(
-                manifest=manifest,
-                scope_policy_digest=context.platform_adapter.scope_policy_digest,
-                public_decisions=(
-                    "Use the exact shipped additive scope and controller-owned checks.",
+                semantic_decisions=(
+                    ArchitectSemanticDecision(
+                        decision_id="shipped-additive-scope",
+                        category="target_architecture",
+                        summary=(
+                            "Use the exact shipped additive scope and controller-owned checks."
+                        ),
+                        evidence_ids=(
+                            context.dependency_graph.nodes[0].node_id,
+                            context.wiki_trace.hits[0].page_id,
+                        ),
+                    ),
                 ),
                 cited_graph_nodes=(context.dependency_graph.nodes[0].node_id,),
                 cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
             )
-        if output_type is EngineerModelOutcome:
-            return EngineerModelOutcome.for_file_plan(
-                EngineerFilePlan(
-                    updates=tuple(
-                        EngineerFileUpdate(path=path, content=self.outputs[path])
-                        for path in sorted(self.outputs)
-                    ),
-                    assumptions=("Only the manifest-approved additive files are changed.",),
+        if output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}:
+            context = EngineerWorkspaceContext.model_validate(input_value)
+            if context.correction is None:
+                updates = tuple(
+                    EngineerFileUpdate(path=path, content=self.outputs[path])
+                    for path in sorted(self.outputs)
                 )
+            else:
+                prior = {
+                    update.path: update.content
+                    for update in context.correction.prior_file_plan.updates
+                }
+                path = context.correction.allowed_correction_paths[0]
+                updates = (EngineerFileUpdate(path=path, content=prior[path] + "\n"),)
+            file_plan = EngineerFilePlan(
+                updates=updates,
+                assumptions=("Only the manifest-approved additive files are changed.",),
             )
-        if output_type is ValidatorAdvisory:
+            if output_type is EngineerFilePlanOutcome:
+                return EngineerFilePlanOutcome(kind="file_plan", file_plan=file_plan)
+            return EngineerModelOutcome.for_file_plan(file_plan)
+        if output_type is ValidatorModelAdvisory:
             context = ValidatorEvidenceContext.model_validate(input_value)
-            return ValidatorAdvisory(
+            return ValidatorModelAdvisory(
                 manifest_digest=context.manifest_digest,
                 change_set_digest=context.evidence.change_set_digest,
                 report_digest=context.evidence.report_digest,
@@ -304,7 +335,10 @@ class InterruptOnceStructuredModel(PresetStructuredModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type is self.interrupt_output_type:
+        matches_role = output_type is self.interrupt_output_type
+        if self.interrupt_output_type is EngineerModelOutcome:
+            matches_role = output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}
+        if matches_role:
             self.role_occurrences += 1
             if self.role_occurrences == self.interrupt_on_occurrence:
                 self.calls.append(output_type.__name__)
@@ -357,8 +391,8 @@ class SemanticallyInvalidStructuredModel(PresetStructuredModel):
                     assumptions=("Return an intentionally incomplete but schema-valid plan.",),
                 )
             )
-        if output_type is ValidatorAdvisory:
-            valid = ValidatorAdvisory.model_validate(
+        if output_type is ValidatorModelAdvisory:
+            valid = ValidatorModelAdvisory.model_validate(
                 super().parse(
                     system_prompt=system_prompt,
                     input_value=input_value,
@@ -379,12 +413,13 @@ def _models(model: PresetStructuredModel) -> AgentRunModelClients:
 
 def _project(tmp_path: Path, platform: Platform) -> tuple[Path, MigrationRequest]:
     project = tmp_path / f"project-{platform.value}"
+    contract = migration_scenario(platform).launch_contract
     fixture = (
         PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input"
         if platform is Platform.SALESFORCE
         else PROJECT_ROOT / "fixtures/mulesoft/customer-status-api/input"
     )
-    shutil.copytree(fixture, project / "source")
+    shutil.copytree(fixture, project / contract.source_root)
     shutil.copytree(PROJECT_ROOT / "agents", project / "agents")
     shutil.copytree(PROJECT_ROOT / "knowledge/wiki", project / "knowledge/wiki")
     if platform is Platform.SALESFORCE:
@@ -393,7 +428,7 @@ def _project(tmp_path: Path, platform: Platform) -> tuple[Path, MigrationRequest
             target_runtime=SALESFORCE_TARGET_RUNTIME,
             source_version=SALESFORCE_API_RUNTIME,
             target_version=SALESFORCE_API_RUNTIME,
-            description="Migrate the bounded Visualforce explorer to additive LWC and Apex.",
+            description=contract.canonical_description,
         )
     else:
         target = MigrationTarget(
@@ -401,18 +436,99 @@ def _project(tmp_path: Path, platform: Platform) -> tuple[Path, MigrationRequest
             target_runtime=MULESOFT_TARGET_RUNTIME,
             source_version=MULESOFT_SOURCE_VERSION,
             target_version=MULESOFT_TARGET_VERSION,
-            description="Migrate the bounded Mule 3 customer API to Mule 4.",
+            description=contract.canonical_description,
         )
     request = MigrationRequest(
         request_id=f"request-{platform.value}-agent-run",
         platform=platform,
-        repository="source",
-        base_revision=content_revision(project / "source"),
+        repository=contract.source_root,
+        base_revision=content_revision(project / contract.source_root),
         target=target,
         allowed_environment=EnvironmentKind.LOCAL,
         requested_at=datetime(2026, 8, 24, tzinfo=UTC),
     )
     return project, request
+
+
+def _tampered_launch_contract(contract, mutation: str):
+    required = contract.required_source_input_paths
+    outputs = contract.approved_output_paths
+    updates: dict[str, object] = {
+        "entry_path": "unapproved/source.file",
+        "target_runtime": "Rust 1.89",
+        "source_version": "Salesforce API 66.0",
+        "target_version": "Salesforce API 68.0",
+        "analyzer_version": "unapproved-analyzer-v1",
+        "adapter_id": "unapproved-adapter-v1",
+        "wiki_query": "unapproved retrieval authority",
+        "wiki_max_primary_hits": 2,
+        "required_added": (*required, "unapproved/extra.source"),
+        "required_missing": required[:-1],
+        "required_reordered": tuple(reversed(required)),
+        "output_added": (*outputs, "unapproved/extra.output"),
+        "output_missing": outputs[:-1],
+        "output_reordered": tuple(reversed(outputs)),
+        "scope_policy_digest": "sha256:" + "0" * 64,
+    }
+    field = mutation.split("_", 1)[0] if mutation.startswith(("required_", "output_")) else mutation
+    if mutation.startswith("required_"):
+        field = "required_source_input_paths"
+    elif mutation.startswith("output_"):
+        field = "approved_output_paths"
+    return contract.model_copy(update={field: updates[mutation]})
+
+
+def _tampered_preset(preset, mutation: str):
+    direct_updates: dict[str, object] = {
+        "preset_id": "salesforce-drifted-preset",
+        "entry_path": "unapproved/source.file",
+        "target_runtime": "Rust 1.89",
+        "source_version": "Salesforce API 66.0",
+        "target_version": "Salesforce API 68.0",
+        "wiki_query": "unapproved retrieval authority",
+        "wiki_max_primary_hits": 2,
+    }
+    if mutation in direct_updates:
+        return replace(preset, **{mutation: direct_updates[mutation]})
+    if mutation == "analyzer_version":
+        return replace(
+            preset,
+            runtime=replace(preset.runtime, analyzer_version="unapproved-analyzer-v1"),
+        )
+    if mutation == "adapter_id":
+        return replace(
+            preset,
+            adapter=preset.adapter.model_copy(update={"adapter_id": "unapproved-adapter-v1"}),
+        )
+    if mutation == "scope_policy_digest":
+        return replace(
+            preset,
+            adapter=preset.adapter.model_copy(update={"scope_policy_digest": "sha256:" + "0" * 64}),
+        )
+    policy = preset.adapter.scope_policy
+    required = policy.required_source_input_paths
+    outputs = policy.approved_output_paths
+    inventory_updates = {
+        "required_added": (*required, "unapproved/extra.source"),
+        "required_missing": required[:-1],
+        "required_reordered": tuple(reversed(required)),
+        "output_added": (*outputs, "unapproved/extra.output"),
+        "output_missing": outputs[:-1],
+        "output_reordered": tuple(reversed(outputs)),
+    }
+    field = (
+        "required_source_input_paths"
+        if mutation.startswith("required_")
+        else "approved_output_paths"
+    )
+    drifted_policy = policy.model_copy(update={field: inventory_updates[mutation]})
+    drifted_adapter = preset.adapter.model_copy(
+        update={
+            "scope_policy": drifted_policy,
+            "scope_policy_digest": artifact_digest(drifted_policy),
+        }
+    )
+    return replace(preset, adapter=drifted_adapter)
 
 
 @pytest.mark.parametrize("platform", (Platform.SALESFORCE, Platform.MULESOFT))
@@ -425,14 +541,13 @@ def test_prepare_request_binds_current_source_and_exact_platform_preset(
     prepared = prepare_agent_run_request(
         project,
         request_id=f"prepared-{platform.value}",
-        platform=platform,
-        source_root="source",
-        description="Prepare an exact local request without invoking a provider.",
+        launch_contract=migration_scenario(platform).launch_contract,
         requested_at=datetime(2026, 8, 24, tzinfo=UTC),
     )
 
-    assert prepared.repository == "source"
-    assert prepared.base_revision == content_revision(project / "source")
+    contract = migration_scenario(platform).launch_contract
+    assert prepared.repository == contract.source_root
+    assert prepared.base_revision == content_revision(project / contract.source_root)
     assert prepared.target.model_copy(update={"description": expected.target.description}) == (
         expected.target
     )
@@ -440,65 +555,554 @@ def test_prepare_request_binds_current_source_and_exact_platform_preset(
 
 
 def test_prepare_mulesoft_request_accepts_the_shipped_nested_input_path() -> None:
-    source_root = "fixtures/mulesoft/customer-status-api/input"
+    contract = migration_scenario(Platform.MULESOFT).launch_contract
 
     prepared = prepare_agent_run_request(
         PROJECT_ROOT,
         request_id="prepared-mulesoft-shipped-fixture",
-        platform=Platform.MULESOFT,
-        source_root=source_root,
-        description="Prepare the shipped Mule 3-to-Mule 4 migration request.",
+        launch_contract=contract,
         requested_at=datetime(2026, 8, 24, tzinfo=UTC),
     )
 
-    assert prepared.repository == source_root
-    assert prepared.base_revision == content_revision(PROJECT_ROOT / source_root)
+    assert prepared.repository == contract.source_root
+    assert prepared.base_revision == content_revision(PROJECT_ROOT / contract.source_root)
     assert prepared.target.entry_path == MULE3_APP
 
 
-def test_request_preparation_rejects_oracle_source_paths() -> None:
-    with pytest.raises(PolicyViolation, match="expected, golden, or oracle"):
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("scenario_id", "unknown-scenario"),
+        ("platform", Platform.MULESOFT),
+        ("canonical_description", "Target a Rust service instead."),
+        ("source_root", "fixtures/salesforce/unapproved/input"),
+        ("wiki_as_of", date(2026, 8, 25)),
+        ("entry_path", "EvilOpportunity.trigger"),
+        ("target_runtime", "Rust 1.89"),
+        ("source_version", "Salesforce API 66.0"),
+        ("target_version", "Salesforce API 68.0"),
+        ("analyzer_version", "unapproved-analyzer-v1"),
+        ("adapter_id", "unapproved-adapter-v1"),
+        ("wiki_query", "unapproved retrieval authority"),
+        ("wiki_max_primary_hits", 2),
+        ("required_source_input_paths", ("EvilOpportunity.trigger",)),
+        ("approved_output_paths", ("generated/evil.rs",)),
+        ("scope_policy_digest", "sha256:" + "0" * 64),
+        ("target_summary", "Generate Go code instead."),
+    ),
+)
+def test_prepare_request_rejects_tampered_contract_without_filesystem_writes(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    project, _ = _project(tmp_path, Platform.SALESFORCE)
+    before = snapshot_tree(project)
+    canonical = migration_scenario(Platform.SALESFORCE).launch_contract
+    tampered = canonical.model_copy(update={field: value})
+
+    with pytest.raises(PolicyViolation, match="launch contract is not canonical"):
         prepare_agent_run_request(
-            PROJECT_ROOT,
-            request_id="prepared-forbidden-oracle",
-            platform=Platform.MULESOFT,
-            source_root="fixtures/mulesoft/customer-status-api/expected",
-            description="An oracle must never become agent input.",
+            project,
+            request_id="prepared-salesforce-tampered-contract",
+            launch_contract=tampered,
             requested_at=datetime(2026, 8, 24, tzinfo=UTC),
         )
 
+    assert snapshot_tree(project) == before
 
-def test_mulesoft_agent_run_starts_from_a_nested_repository_relative_source(
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "Target a Rust service instead.",
+        "Also migrate EvilOpportunity.trigger.",
+        "Generate Go code, not LWC.",
+        "Migrate the same fixture, but target an Aura component.",
+    ),
+)
+def test_low_level_start_rejects_any_noncanonical_description_before_side_effects(
     tmp_path: Path,
+    description: str,
 ) -> None:
-    project, _ = _project(tmp_path, Platform.MULESOFT)
-    nested_source = project / "fixtures/mulesoft/customer-status-api/input"
-    nested_source.parent.mkdir(parents=True)
-    (project / "source").rename(nested_source)
-    source_root = nested_source.relative_to(project).as_posix()
-    request = prepare_agent_run_request(
-        project,
-        request_id="request-mulesoft-nested-run",
-        platform=Platform.MULESOFT,
-        source_root=source_root,
-        description="Run the shipped nested Mule source through Architect.",
-        requested_at=datetime(2026, 8, 24, tzinfo=UTC),
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    request = request.model_copy(
+        update={"target": request.target.model_copy(update={"description": description})}
+    )
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/direct-description-bypass"
+
+    with pytest.raises(PolicyViolation, match="description differs from the launch contract"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-direct-description-bypass",
+            thread_id="thread-direct-description-bypass",
+            launch_contract=migration_scenario(Platform.SALESFORCE).launch_contract,
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "secret",
+    (
+        "Authorization: Bearer secret-value-123456",
+        'password="response.password"',
+        "password=hunter2",
+        "token=generic-token-value-123456",
+    ),
+)
+def test_low_level_start_rejects_secret_before_run_or_checkpoint_creation(
+    tmp_path: Path,
+    secret: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    request = request.model_copy(
+        update={
+            "target": request.target.model_copy(
+                update={
+                    "description": (
+                        migration_scenario(Platform.SALESFORCE).canonical_description + f" {secret}"
+                    )
+                }
+            )
+        }
+    )
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/direct-secret-rejected"
+    before = snapshot_tree(project)
+
+    with pytest.raises(PolicyViolation, match="secret-shaped material"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-direct-secret-rejected",
+            thread_id="thread-direct-secret-rejected",
+            launch_contract=migration_scenario(Platform.SALESFORCE).launch_contract,
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+    assert snapshot_tree(project) == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "entry_path",
+        "target_runtime",
+        "source_version",
+        "target_version",
+        "analyzer_version",
+        "adapter_id",
+        "wiki_query",
+        "wiki_max_primary_hits",
+        "required_added",
+        "required_missing",
+        "required_reordered",
+        "output_added",
+        "output_missing",
+        "output_reordered",
+        "scope_policy_digest",
+    ),
+)
+def test_low_level_start_rejects_complete_contract_drift_without_side_effects(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    tampered = _tampered_launch_contract(contract, mutation)
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/tampered-launch-contract"
+    before = snapshot_tree(project)
+
+    with pytest.raises(PolicyViolation, match="launch contract is not canonical"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-tampered-launch-contract",
+            thread_id="thread-tampered-launch-contract",
+            launch_contract=tampered,
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+    assert snapshot_tree(project) == before
+
+
+def test_low_level_start_requires_typed_contract_without_side_effects(tmp_path: Path) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/untyped-launch-contract"
+    before = snapshot_tree(project)
+
+    with pytest.raises(PolicyViolation, match="exact typed contract"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-untyped-launch-contract",
+            thread_id="thread-untyped-launch-contract",
+            launch_contract=contract.model_dump(mode="python"),  # type: ignore[arg-type]
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+    assert snapshot_tree(project) == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "preset_id",
+        "entry_path",
+        "target_runtime",
+        "source_version",
+        "target_version",
+        "analyzer_version",
+        "adapter_id",
+        "wiki_query",
+        "wiki_max_primary_hits",
+        "required_added",
+        "required_missing",
+        "required_reordered",
+        "output_added",
+        "output_missing",
+        "output_reordered",
+        "scope_policy_digest",
+    ),
+)
+def test_low_level_start_rejects_contract_preset_drift_without_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/preset-drift"
+    before = snapshot_tree(project)
+    canonical_preset = agent_run_module._preset_for(Platform.SALESFORCE)
+    drifted_preset = _tampered_preset(canonical_preset, mutation)
+    monkeypatch.setattr(
+        agent_run_module,
+        "_preset_for",
+        lambda _platform: drifted_preset,
+    )
+
+    with pytest.raises(
+        PolicyViolation,
+        match=(
+            "migration (?:scenario and platform preset configuration drifted|"
+            "launch contract and platform preset differ)"
+        ),
+    ):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-preset-drift",
+            thread_id="thread-preset-drift",
+            launch_contract=contract,
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+    assert snapshot_tree(project) == before
+
+
+@pytest.mark.parametrize("platform", (Platform.SALESFORCE, Platform.MULESOFT))
+def test_canonical_launch_contract_starts_supported_migration(
+    tmp_path: Path,
+    platform: Platform,
+) -> None:
+    project, request = _project(tmp_path, platform)
+    model = PresetStructuredModel(
+        SF_FROZEN_OUTPUTS if platform is Platform.SALESFORCE else MULE_FROZEN_OUTPUTS
     )
 
     started = start_agent_run(
         project,
-        project / ".runs/nested-mulesoft",
-        run_id="run-mulesoft-nested",
-        thread_id="thread-mulesoft-nested",
-        source_root=source_root,
+        project / ".runs/canonical-launch",
+        run_id=f"run-canonical-{platform.value}",
+        thread_id=f"thread-canonical-{platform.value}",
+        launch_contract=migration_scenario(platform).launch_contract,
         request=request,
-        models=_models(PresetStructuredModel(MULE_FROZEN_OUTPUTS)),
-        wiki_as_of=AS_OF,
+        models=_models(model),
     )
 
     assert started.status == "awaiting_approval"
-    assert started.platform is Platform.MULESOFT
-    assert started.interrupt is not None
+    assert model.calls == ["ArchitectManifestProposal"]
+
+
+@pytest.mark.parametrize(
+    "interrupted_after",
+    ("session", "request", "config", "contract", "index", "anchor"),
+)
+def test_incomplete_start_bootstrap_recovers_the_exact_reserved_run_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupted_after: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    run_dir = project / ".runs/incomplete-bootstrap"
+    interrupted_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    original_write = agent_run_module._write_run_evidence
+
+    def interrupt_after_initialize(session, parsed_request, config, launch_contract) -> None:
+        if interrupted_after == "anchor":
+            original_write(session, parsed_request, config, launch_contract)
+        if interrupted_after in {"request", "config", "contract", "index"}:
+            session.store.write_json(agent_run_module.AGENT_RUN_REQUEST_PATH, parsed_request)
+        if interrupted_after in {"config", "contract", "index"}:
+            session.store.write_json(agent_run_module.AGENT_RUN_CONFIG_PATH, config)
+        if interrupted_after in {"contract", "index"}:
+            session.store.write_json(
+                agent_run_module.AGENT_RUN_LAUNCH_CONTRACT_PATH,
+                launch_contract,
+            )
+        if interrupted_after == "index":
+            session.write_index(
+                agent_run_module.AGENT_RUN_EVIDENCE_KIND,
+                (
+                    "run-context.json",
+                    agent_run_module.AGENT_RUN_REQUEST_PATH,
+                    agent_run_module.AGENT_RUN_CONFIG_PATH,
+                    agent_run_module.AGENT_RUN_LAUNCH_CONTRACT_PATH,
+                ),
+            )
+        raise OSError("simulated interruption after run-session initialization")
+
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", interrupt_after_initialize)
+    with pytest.raises(OSError, match="simulated interruption"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-incomplete-bootstrap",
+            thread_id="thread-incomplete-bootstrap",
+            launch_contract=contract,
+            request=request,
+            models=_models(interrupted_model),
+        )
+
+    assert run_dir.is_dir()
+    assert interrupted_model.calls == []
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", original_write)
+    recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+
+    recovered = recover_incomplete_agent_run_start(
+        project,
+        run_dir,
+        run_id="run-incomplete-bootstrap",
+        thread_id="thread-incomplete-bootstrap",
+        launch_contract=contract,
+        request=request,
+        models=_models(recovery_model),
+    )
+
+    assert recovered.status == "awaiting_approval"
+    assert recovery_model.calls == ["ArchitectManifestProposal"]
+    assert (
+        get_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-incomplete-bootstrap",
+            thread_id="thread-incomplete-bootstrap",
+        )
+        == recovered
+    )
+
+
+@pytest.mark.parametrize("tamper", ("portable_artifact", "checkpoint", "binding"))
+def test_incomplete_start_bootstrap_recovery_rejects_tamper_before_model_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    run_dir = project / ".runs/tampered-bootstrap"
+    original_write = agent_run_module._write_run_evidence
+
+    def interrupt_after_initialize(*_args, **_kwargs) -> None:
+        raise OSError("simulated interruption after run-session initialization")
+
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", interrupt_after_initialize)
+    with pytest.raises(OSError, match="simulated interruption"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-tampered-bootstrap",
+            thread_id="thread-tampered-bootstrap",
+            launch_contract=contract,
+            request=request,
+            models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
+        )
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", original_write)
+
+    recovery_run_id = "run-tampered-bootstrap"
+    if tamper == "portable_artifact":
+        (run_dir / "evidence/unexpected.json").write_text("{}\n", encoding="utf-8")
+    elif tamper == "checkpoint":
+        (run_dir / "state/checkpoints.sqlite3").write_bytes(b"advanced")
+    else:
+        recovery_run_id = "run-foreign-bootstrap"
+    recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+
+    with pytest.raises(PolicyViolation, match="incomplete run bootstrap"):
+        recover_incomplete_agent_run_start(
+            project,
+            run_dir,
+            run_id=recovery_run_id,
+            thread_id="thread-tampered-bootstrap",
+            launch_contract=contract,
+            request=request,
+            models=_models(recovery_model),
+        )
+
+    assert recovery_model.calls == []
+
+
+def test_incomplete_start_bootstrap_recovery_rejects_a_completed_run(
+    tmp_path: Path,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    run_dir = project / ".runs/completed-bootstrap"
+    started_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id="run-completed-bootstrap",
+        thread_id="thread-completed-bootstrap",
+        launch_contract=contract,
+        request=request,
+        models=_models(started_model),
+    )
+    recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+
+    with pytest.raises(PolicyViolation, match="incomplete run bootstrap"):
+        recover_incomplete_agent_run_start(
+            project,
+            run_dir,
+            run_id="run-completed-bootstrap",
+            thread_id="thread-completed-bootstrap",
+            launch_contract=contract,
+            request=request,
+            models=_models(recovery_model),
+        )
+
+    assert started.status == "awaiting_approval"
+    assert started_model.calls == ["ArchitectManifestProposal"]
+    assert recovery_model.calls == []
+
+
+def test_resume_rejects_stale_persisted_launch_contract_before_authorization_or_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    run_dir = project / ".runs/stale-launch-contract"
+    initial_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id="run-stale-launch-contract",
+        thread_id="thread-stale-launch-contract",
+        launch_contract=migration_scenario(Platform.SALESFORCE).launch_contract,
+        request=request,
+        models=_models(initial_model),
+    )
+    stored_contract = MigrationLaunchContract.model_validate_json(
+        (run_dir / "evidence/launch-contract.json").read_text(encoding="utf-8")
+    )
+    assert stored_contract == migration_scenario(Platform.SALESFORCE).launch_contract
+
+    current_scenario = migration_scenario(Platform.SALESFORCE)
+    monkeypatch.setitem(
+        migration_scenarios_module._SCENARIOS,
+        Platform.SALESFORCE,
+        current_scenario.model_copy(update={"analyzer_version": "salesforce-apex-v999"}),
+    )
+    resume_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+
+    with pytest.raises(PolicyViolation, match="launch contract is not canonical"):
+        resume_agent_run(
+            project,
+            run_dir,
+            run_id="run-stale-launch-contract",
+            thread_id="thread-stale-launch-contract",
+            approval=_approval(started),
+            models=_models(resume_model),
+        )
+
+    assert resume_model.calls == []
+    assert not (run_dir / "evidence/control/manifest-approval.json").exists()
+
+
+def test_start_rejects_request_and_contract_for_different_scenarios_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/scenario-mismatch"
+    before = snapshot_tree(project)
+
+    with pytest.raises(PolicyViolation, match="platform differs from the launch contract"):
+        start_agent_run(
+            project,
+            run_dir,
+            run_id="run-scenario-mismatch",
+            thread_id="thread-scenario-mismatch",
+            launch_contract=migration_scenario(Platform.MULESOFT).launch_contract,
+            request=request,
+            models=_models(model),
+        )
+
+    assert model.calls == []
+    assert not run_dir.exists()
+    assert snapshot_tree(project) == before
+
+
+def test_request_preparation_rejects_caller_constructed_oracle_source_contract() -> None:
+    canonical = migration_scenario(Platform.MULESOFT).launch_contract
+    tampered = canonical.model_copy(
+        update={"source_root": "fixtures/mulesoft/customer-status-api/oracle"}
+    )
+
+    with pytest.raises(PolicyViolation, match="launch contract is not canonical"):
+        prepare_agent_run_request(
+            PROJECT_ROOT,
+            request_id="prepared-forbidden-oracle",
+            launch_contract=tampered,
+            requested_at=datetime(2026, 8, 24, tzinfo=UTC),
+        )
+
+
+def test_prepare_request_uses_canonical_description_only() -> None:
+    contract = migration_launch_contract("mulesoft-mule3-to-mule4")
+    request = prepare_agent_run_request(
+        PROJECT_ROOT,
+        request_id="request-mulesoft-canonical-description",
+        launch_contract=contract,
+        requested_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+
+    assert request.target.description == contract.canonical_description
+    assert request.repository == contract.source_root
 
 
 def _manifest(request: MigrationRequest) -> MigrationManifest:
@@ -693,10 +1297,9 @@ def test_planned_lifecycle_anchors_the_exact_pending_manifest_request(
         run_dir,
         run_id="run-pending-request",
         thread_id="thread-pending-request",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-        wiki_as_of=AS_OF,
     )
 
     assert started.interrupt is not None
@@ -704,7 +1307,12 @@ def test_planned_lifecycle_anchors_the_exact_pending_manifest_request(
         run_dir / "evidence/control" / f"decision-request-{started.interrupt.decision_id}.json"
     )
     persisted = DecisionRequest.model_validate_json(decision_path.read_text(encoding="utf-8"))
-    manifest = _manifest(request)
+    architect = json.loads(
+        (run_dir / f"evidence/model-runs/{request.request_id}/architect.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = MigrationManifest.model_validate(architect["proposal"]["manifest"])
     assert persisted == manifest_decision_request(
         request,
         manifest,
@@ -753,10 +1361,9 @@ def test_planned_lifecycle_rejects_request_only_checkpoint_rewrite_before_engine
         run_dir,
         run_id="run-planned-request-rewrite",
         thread_id="thread-planned-request-rewrite",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
 
     _rewrite_latest_checkpoint_request_description(
@@ -797,10 +1404,9 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
         run_dir,
         run_id="run-1",
         thread_id="thread-1",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(architect_model),
-        wiki_as_of=AS_OF,
     )
 
     assert started.status == "awaiting_approval"
@@ -817,28 +1423,29 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
     assert wiki_trace.source_version == preset.source_version == request.target.source_version
     assert wiki_trace.target_version == preset.target_version == request.target.target_version
     assert wiki_trace.max_primary_hits == preset.wiki_max_primary_hits == 1
-    assert wiki_trace.expand_links is True
     primary = wiki_trace.hits[0]
     assert primary.expanded_from is None
     assert "linked-page" not in primary.matched_fields
     if platform is Platform.SALESFORCE:
+        assert wiki_trace.expand_links is False
         assert tuple(hit.page_id for hit in wiki_trace.hits) == (
             "salesforce-visualforce-to-lwc",
             "salesforce-apex-security",
             "salesforce-validation",
         )
-        linked = wiki_trace.hits[1:]
-        assert all(hit.expanded_from == "salesforce-visualforce-to-lwc" for hit in linked)
+        assert all(hit.expanded_from is None for hit in wiki_trace.hits)
+        assert all("exact-diagnostic-id" in hit.matched_fields for hit in wiki_trace.hits)
     else:
+        assert wiki_trace.expand_links is True
         assert primary.page_id == "mulesoft-mule3-to-mule4"
         toolchain = next(
             hit for hit in wiki_trace.hits if hit.page_id == "mulesoft-toolchain-validation"
         )
         assert toolchain.expanded_from == "mulesoft-mule3-to-mule4"
         linked = tuple(hit for hit in wiki_trace.hits if hit.expanded_from is not None)
-    assert linked
-    assert all(hit.matched_fields == ("linked-page",) for hit in linked)
-    assert all(hit.score == 0.25 for hit in linked)
+        assert linked
+        assert all(hit.matched_fields == ("linked-page",) for hit in linked)
+        assert all(hit.score == 0.25 for hit in linked)
 
     # Simulate a process restart with new client objects but the same immutable
     # public provider/model binding and the same SQLite database.
@@ -855,7 +1462,7 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
     assert completed.terminal_disposition == "environment_unavailable"
     assert completed.correction is not None
     assert completed.correction.action is CorrectionAction.STOP_ENVIRONMENT
-    assert resumed_model.calls == ["EngineerModelOutcome", "ValidatorAdvisory"]
+    assert resumed_model.calls == ["EngineerModelOutcome", "ValidatorModelAdvisory"]
     control_root = run_dir / "evidence/control"
     persisted_manifest_approval = json.loads(
         (control_root / "manifest-approval.json").read_text(encoding="utf-8")
@@ -908,7 +1515,7 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
     (
         ("architect", ArchitectManifestProposal, "start"),
         ("engineer", EngineerModelOutcome, "resume"),
-        ("validator", ValidatorAdvisory, "resume"),
+        ("validator", ValidatorModelAdvisory, "resume"),
     ),
 )
 def test_model_failures_are_sanitized_terminal_and_reloadable(
@@ -926,10 +1533,9 @@ def test_model_failures_are_sanitized_terminal_and_reloadable(
             run_dir,
             run_id="run-provider-failure",
             thread_id="thread-provider-failure",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(exploding),
-            wiki_as_of=AS_OF,
         )
     else:
         architect = PresetStructuredModel(SF_FROZEN_OUTPUTS)
@@ -938,10 +1544,9 @@ def test_model_failures_are_sanitized_terminal_and_reloadable(
             run_dir,
             run_id="run-provider-failure",
             thread_id="thread-provider-failure",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(architect),
-            wiki_as_of=AS_OF,
         )
         failed = resume_agent_run(
             project,
@@ -951,6 +1556,21 @@ def test_model_failures_are_sanitized_terminal_and_reloadable(
             approval=_approval(started),
             models=_models(exploding),
         )
+
+    if role == "validator":
+        assert failed.status == "completed"
+        assert failed.task_failed is False
+        assert failed.failure is None
+        assessment = ValidatorAssessment.model_validate_json(
+            (
+                run_dir / f"evidence/model-runs/{request.request_id}/validator-attempt-1.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert assessment.advisory.assessment == "unavailable"
+        assert assessment.model_call is None
+        assert assessment.unavailable_receipt is not None
+        assert assessment.unavailable_receipt.reason_code == "model_call_failed"
+        return
 
     assert failed.status == "failed"
     assert failed.terminal_disposition == "controlled_failure"
@@ -1012,20 +1632,16 @@ def test_model_failures_are_sanitized_terminal_and_reloadable(
             run_dir,
             run_id="run-provider-failure",
             thread_id="thread-provider-failure",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-            wiki_as_of=AS_OF,
         )
     _assert_failure_tree_is_sanitized(run_dir)
 
 
 @pytest.mark.parametrize(
     ("role", "output_type"),
-    (
-        ("engineer", EngineerModelOutcome),
-        ("validator", ValidatorAdvisory),
-    ),
+    (("engineer", EngineerModelOutcome),),
 )
 @pytest.mark.parametrize("attempt", (1, 2))
 def test_interrupted_role_invocation_is_not_redispatched_after_reload(
@@ -1051,10 +1667,9 @@ def test_interrupted_role_invocation_is_not_redispatched_after_reload(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=trusted_validator,
     )
     manifest_approval = _approval(started)
@@ -1102,8 +1717,12 @@ def test_interrupted_role_invocation_is_not_redispatched_after_reload(
     with pytest.raises(KeyboardInterrupt, match="process interruption after lease"):
         operation()
 
-    role_output = output_type.__name__
-    assert model.calls.count(role_output) == attempt
+    role_outputs = (
+        {EngineerModelOutcome.__name__, EngineerFilePlanOutcome.__name__}
+        if role == "engineer"
+        else {output_type.__name__}
+    )
+    assert sum(model.calls.count(name) for name in role_outputs) == attempt
     lease_relative = (
         f"model-runs/{request.request_id}/{role}-invocation-lease-attempt-{attempt}.json"
     )
@@ -1118,7 +1737,7 @@ def test_interrupted_role_invocation_is_not_redispatched_after_reload(
 
     failed = operation()
 
-    assert model.calls.count(role_output) == attempt
+    assert sum(model.calls.count(name) for name in role_outputs) == attempt
     assert failed.status == "failed"
     assert failed.terminal_disposition == "controlled_failure"
     assert failed.failure is not None
@@ -1144,11 +1763,85 @@ def test_interrupted_role_invocation_is_not_redispatched_after_reload(
     )
 
 
+def test_interrupted_validator_advisory_is_not_redispatched_and_cannot_block_candidate(
+    tmp_path: Path,
+) -> None:
+    run_id = "run-interrupted-validator-attempt-2"
+    thread_id = "thread-interrupted-validator-attempt-2"
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    run_dir = project / f".runs/{run_id}"
+    model = InterruptOnceStructuredModel(
+        SF_FROZEN_OUTPUTS,
+        ValidatorModelAdvisory,
+        interrupt_on_occurrence=1,
+    )
+    models = _models(model)
+    trusted_validator = _recoverable_validator(run_id)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+    attempt_one = resume_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=_approval(started),
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+    correction_approval = _correction_approval(
+        attempt_one,
+        reviewer="interrupted-validator-reviewer",
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="process interruption after lease"):
+        retry_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            approval=correction_approval,
+            models=models,
+            trusted_validator=trusted_validator,
+        )
+    assert model.calls.count("ValidatorModelAdvisory") == 1
+
+    completed = retry_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=correction_approval,
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+
+    assert completed.status == "completed"
+    assert completed.task_failed is False
+    assert model.calls.count("ValidatorModelAdvisory") == 1
+    assessment = ValidatorAssessment.model_validate_json(
+        (run_dir / f"evidence/model-runs/{request.request_id}/validator-attempt-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert assessment.advisory.assessment == "unavailable"
+    assert assessment.unavailable_receipt is not None
+    assert assessment.unavailable_receipt.reason_code == "invocation_incomplete"
+    assert assessment.unavailable_receipt.attempted is True
+
+
 @pytest.mark.parametrize(
     ("role", "artifact_name", "role_output"),
     (
         ("engineer", "engineer-attempt-1.json", "EngineerModelOutcome"),
-        ("validator", "validator-attempt-1.json", "ValidatorAdvisory"),
+        ("validator", "validator-attempt-1.json", "ValidatorModelAdvisory"),
     ),
 )
 def test_persisted_role_artifact_replays_after_pre_lifecycle_interruption(
@@ -1170,10 +1863,9 @@ def test_persisted_role_artifact_replays_after_pre_lifecycle_interruption(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=trusted_validator,
     )
     approval = _approval(started)
@@ -1205,7 +1897,7 @@ def test_persisted_role_artifact_replays_after_pre_lifecycle_interruption(
         )
 
     calls_before_reload = model.calls.count(role_output)
-    assert calls_before_reload == 1
+    assert calls_before_reload == (0 if role == "validator" else 1)
     completed = resume_agent_run(
         project,
         run_dir,
@@ -1248,10 +1940,9 @@ def test_terminal_checkpoint_recovers_without_role_redispatch(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=validator,
     )
     manifest_approval = _approval(started)
@@ -1328,8 +2019,14 @@ def test_terminal_checkpoint_recovers_without_role_redispatch(
     with pytest.raises(KeyboardInterrupt, match="terminal crash"):
         operation()
     calls_before_recovery = list(model.calls)
-    assert calls_before_recovery.count("EngineerModelOutcome") == attempt
-    assert calls_before_recovery.count("ValidatorAdvisory") == attempt
+    assert (
+        sum(
+            calls_before_recovery.count(name)
+            for name in ("EngineerModelOutcome", "EngineerFilePlanOutcome")
+        )
+        == attempt
+    )
+    assert calls_before_recovery.count("ValidatorModelAdvisory") == (0 if attempt == 1 else 1)
 
     completed = operation()
 
@@ -1344,12 +2041,13 @@ def test_terminal_checkpoint_recovers_without_role_redispatch(
         f"{model_root}/engineer-invocation-lease-attempt-{attempt}.json",
         f"{model_root}/engineer-attempt-{attempt}.json",
         f"{model_root}/report-attempt-{attempt}.json",
-        f"{model_root}/validator-invocation-lease-attempt-{attempt}.json",
         f"{model_root}/validator-attempt-{attempt}.json",
         f"control/correction-request-attempt-{attempt}.json",
     }
     if attempt == 2:
+        required.add(f"{model_root}/validator-invocation-lease-attempt-2.json")
         required.add(f"{model_root}/engineer-correction-attempt-2.json")
+        required.add(f"{model_root}/correction-wiki-attempt-2.json")
     index = json.loads(
         (run_dir / f"evidence/indexes/{success_kind}.json").read_text(encoding="utf-8")
     )
@@ -1358,7 +2056,7 @@ def test_terminal_checkpoint_recovers_without_role_redispatch(
 
 
 @pytest.mark.parametrize("crash_point", ("before_control", "after_control"))
-@pytest.mark.parametrize("attempt", (1, 2))
+@pytest.mark.parametrize("attempt", (1,))
 def test_terminal_engineer_intervention_recovers_without_redispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1378,10 +2076,9 @@ def test_terminal_engineer_intervention_recovers_without_redispatch(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=validator,
     )
     manifest_approval = _approval(started)
@@ -1471,10 +2168,9 @@ def test_validation_terminal_rejects_injected_decision_request(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=validator,
     )
     approval = _approval(started)
@@ -1532,10 +2228,9 @@ def test_completed_run_retains_exact_inventory_with_runtime_replay_copies(
         run_dir,
         run_id="run-completed-extra-evidence",
         thread_id="thread-completed-extra-evidence",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-completed-extra-evidence"),
     )
     resume_agent_run(
@@ -1574,10 +2269,9 @@ def test_concurrent_exact_resumes_dispatch_once_and_keep_one_terminal_lifecycle(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=validator,
     )
     approval = _approval(started)
@@ -1619,7 +2313,7 @@ def test_concurrent_exact_resumes_dispatch_once_and_keep_one_terminal_lifecycle(
     assert isinstance(errors[0], PolicyViolation)
     assert str(errors[0]) == "agent run operation is already in progress at the engineer seam"
     assert model.calls.count("EngineerModelOutcome") == 1
-    assert model.calls.count("ValidatorAdvisory") == 1
+    assert model.calls.count("ValidatorModelAdvisory") == 0
     assert not (run_dir / "evidence/indexes/agent-run-failed.json").exists()
     assert (
         get_agent_run_status(
@@ -1652,10 +2346,9 @@ def test_interrupted_role_invocation_rejects_tampered_runtime_lease(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator(run_id),
     )
     approval = _approval(started)
@@ -1721,7 +2414,7 @@ def test_interrupted_role_invocation_rejects_tampered_runtime_lease(
     (
         ("architect", ArchitectManifestProposal, "start"),
         ("engineer", EngineerModelOutcome, "resume"),
-        ("validator", ValidatorAdvisory, "resume"),
+        ("validator", ValidatorModelAdvisory, "resume"),
     ),
 )
 def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
@@ -1739,10 +2432,9 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
             run_dir,
             run_id="run-semantic-failure",
             thread_id="thread-semantic-failure",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(invalid),
-            wiki_as_of=AS_OF,
         )
     else:
         started = start_agent_run(
@@ -1750,10 +2442,9 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
             run_dir,
             run_id="run-semantic-failure",
             thread_id="thread-semantic-failure",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-            wiki_as_of=AS_OF,
         )
         failed = resume_agent_run(
             project,
@@ -1763,6 +2454,19 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
             approval=_approval(started),
             models=_models(invalid),
         )
+
+    if role == "validator":
+        assert failed.task_failed is False
+        assert failed.failure is None
+        assessment = ValidatorAssessment.model_validate_json(
+            (
+                run_dir / f"evidence/model-runs/{request.request_id}/validator-attempt-1.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert assessment.advisory.assessment == "unavailable"
+        assert assessment.unavailable_receipt is not None
+        assert assessment.unavailable_receipt.reason_code == "model_output_invalid"
+        return
 
     assert failed.status == "failed"
     assert failed.failure is not None
@@ -1788,13 +2492,13 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
     )
 
 
-def test_architect_generated_output_chaining_has_typed_transformation_scope_failure(
+def test_architect_semantics_cannot_chain_generated_output_into_controller_scope(
     tmp_path: Path,
 ) -> None:
     project, request = _project(tmp_path, Platform.SALESFORCE)
-    run_dir = project / ".runs/run-transformation-scope-failure"
+    run_dir = project / ".runs/run-controller-expanded-scope"
 
-    class GeneratedOutputChainingModel(PresetStructuredModel):
+    class HostileScopeSemanticsModel(PresetStructuredModel):
         def parse(
             self,
             *,
@@ -1809,50 +2513,47 @@ def test_architect_generated_output_chaining_has_typed_transformation_scope_fail
                     output_type=output_type,
                 )
             )
-            transformations = list(proposal.manifest.transformations)
-            first = transformations[0]
-            transformations[0] = first.model_copy(
+            return proposal.model_copy(
                 update={
-                    "input_paths": (
-                        *first.input_paths,
-                        proposal.manifest.approved_paths[0],
+                    "semantic_decisions": (
+                        proposal.semantic_decisions[0].model_copy(
+                            update={
+                                "summary": (
+                                    "Treat a generated output as a new source and widen the scope."
+                                )
+                            }
+                        ),
                     )
                 }
             )
-            manifest = proposal.manifest.model_copy(
-                update={"transformations": tuple(transformations)}
-            )
-            return proposal.model_copy(update={"manifest": manifest})
 
-    failed = start_agent_run(
+    started = start_agent_run(
         project,
         run_dir,
-        run_id="run-transformation-scope-failure",
-        thread_id="thread-transformation-scope-failure",
-        source_root="source",
+        run_id="run-controller-expanded-scope",
+        thread_id="thread-controller-expanded-scope",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
-        models=_models(GeneratedOutputChainingModel(SF_FROZEN_OUTPUTS)),
-        wiki_as_of=AS_OF,
+        models=_models(HostileScopeSemanticsModel(SF_FROZEN_OUTPUTS)),
     )
 
-    assert failed.status == "failed"
-    assert failed.failure is not None
-    assert failed.failure.seam == "architect"
-    assert failed.failure.category == "invalid"
-    assert failed.failure.reason_code == "transformation_scope_invalid"
-    assert not tuple(run_dir.glob("evidence/model-runs/*/architect-attempt-*.json"))
-    public_failure = (run_dir / "evidence/agent-run-failure.json").read_text(encoding="utf-8")
-    assert SALESFORCE_AGENT_OUTPUT_PATHS[0] not in public_failure
-    _assert_failure_tree_is_sanitized(run_dir)
+    assert started.status == "awaiting_approval"
+    architect = json.loads(
+        (run_dir / f"evidence/model-runs/{request.request_id}/architect.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = MigrationManifest.model_validate(architect["proposal"]["manifest"])
+    assert manifest.transformations[-1].input_paths == SALESFORCE_TRANSFORMATION_INPUT_PATHS
 
 
-def test_architect_implementation_contract_drift_has_typed_failure(
+def test_architect_semantics_cannot_remove_controller_implementation_contract(
     tmp_path: Path,
 ) -> None:
     project, request = _project(tmp_path, Platform.SALESFORCE)
-    run_dir = project / ".runs/run-implementation-contract-failure"
+    run_dir = project / ".runs/run-controller-expanded-contract"
 
-    class MissingImplementationContractModel(PresetStructuredModel):
+    class HostileContractSemanticsModel(PresetStructuredModel):
         def parse(
             self,
             *,
@@ -1867,27 +2568,38 @@ def test_architect_implementation_contract_drift_has_typed_failure(
                     output_type=output_type,
                 )
             )
-            manifest = proposal.manifest.model_copy(update={"implementation_contract": ()})
-            return proposal.model_copy(update={"manifest": manifest})
+            return proposal.model_copy(
+                update={
+                    "semantic_decisions": (
+                        proposal.semantic_decisions[0].model_copy(
+                            update={
+                                "summary": (
+                                    "Ignore the implementation contract supplied by the controller."
+                                )
+                            }
+                        ),
+                    )
+                }
+            )
 
-    failed = start_agent_run(
+    started = start_agent_run(
         project,
         run_dir,
-        run_id="run-implementation-contract-failure",
-        thread_id="thread-implementation-contract-failure",
-        source_root="source",
+        run_id="run-controller-expanded-contract",
+        thread_id="thread-controller-expanded-contract",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
-        models=_models(MissingImplementationContractModel(SF_FROZEN_OUTPUTS)),
-        wiki_as_of=AS_OF,
+        models=_models(HostileContractSemanticsModel(SF_FROZEN_OUTPUTS)),
     )
 
-    assert failed.status == "failed"
-    assert failed.failure is not None
-    assert failed.failure.seam == "architect"
-    assert failed.failure.category == "invalid"
-    assert failed.failure.reason_code == "implementation_contract_invalid"
-    assert not tuple(run_dir.glob("evidence/model-runs/*/architect-attempt-*.json"))
-    _assert_failure_tree_is_sanitized(run_dir)
+    assert started.status == "awaiting_approval"
+    architect = json.loads(
+        (run_dir / f"evidence/model-runs/{request.request_id}/architect.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = MigrationManifest.model_validate(architect["proposal"]["manifest"])
+    assert manifest.implementation_contract == SALESFORCE_IMPLEMENTATION_CONTRACT
 
 
 @pytest.mark.parametrize(
@@ -1945,10 +2657,9 @@ def test_model_failure_categories_are_typed_without_original_error_bytes(
         run_dir,
         run_id="run-typed-failure",
         thread_id="thread-typed-failure",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     assert failed.failure is not None
     assert failed.failure.category == category
@@ -1965,10 +2676,9 @@ def test_deterministic_validator_failure_is_sanitized_and_terminal(tmp_path: Pat
         run_dir,
         run_id="run-validator-failure",
         thread_id="thread-validator-failure",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(architect),
-        wiki_as_of=AS_OF,
     )
 
     def exploding_validator(*args: object, **kwargs: object) -> ValidationReport:
@@ -2009,7 +2719,7 @@ def test_deterministic_validator_failure_is_sanitized_and_terminal(tmp_path: Pat
     (
         ("architect", ArchitectManifestProposal),
         ("engineer", EngineerModelOutcome),
-        ("validator", ValidatorAdvisory),
+        ("validator", ValidatorModelAdvisory),
         ("deterministic_validator", None),
     ),
 )
@@ -2029,10 +2739,9 @@ def test_each_controlled_failure_rejects_request_only_checkpoint_rewrite(
             run_dir,
             run_id=run_id,
             thread_id=thread_id,
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(ExplodingStructuredModel(SF_FROZEN_OUTPUTS, failure_output)),
-            wiki_as_of=AS_OF,
         )
     else:
         started = start_agent_run(
@@ -2040,10 +2749,9 @@ def test_each_controlled_failure_rejects_request_only_checkpoint_rewrite(
             run_dir,
             run_id=run_id,
             thread_id=thread_id,
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-            wiki_as_of=AS_OF,
         )
         if seam == "deterministic_validator":
 
@@ -2070,8 +2778,12 @@ def test_each_controlled_failure_rejects_request_only_checkpoint_rewrite(
                 approval=_approval(started),
                 models=_models(ExplodingStructuredModel(SF_FROZEN_OUTPUTS, failure_output)),
             )
-    assert failed.failure is not None
-    assert failed.failure.seam == seam
+    if seam == "validator":
+        assert failed.failure is None
+        assert failed.task_failed is False
+    else:
+        assert failed.failure is not None
+        assert failed.failure.seam == seam
 
     _rewrite_latest_checkpoint_request_description(
         run_dir / "state/checkpoints.sqlite3",
@@ -2097,10 +2809,9 @@ def test_reject_and_modify_do_not_need_or_call_engineer_or_validator(tmp_path: P
             project / ".runs/run-1",
             run_id="run-1",
             thread_id="thread-1",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(model),
-            wiki_as_of=AS_OF,
         )
         terminal = resume_agent_run(
             project,
@@ -2127,10 +2838,9 @@ def test_nonportable_manifest_approval_is_rejected_before_checkpoint_mutation(
         run_dir,
         run_id="run-unsafe-approval",
         thread_id="thread-unsafe-approval",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     unsafe = _approval(started).model_copy(update={"comment": "sk-approval-secret-123456789"})
     checkpoint = run_dir / "state/checkpoints.sqlite3"
@@ -2174,10 +2884,9 @@ def test_manifest_authorization_recovers_after_pre_execution_interruption(
         run_dir,
         run_id="run-manifest-authorization",
         thread_id="thread-manifest-authorization",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     exact = _approval(started)
     interrupted = False
@@ -2253,7 +2962,7 @@ def test_manifest_authorization_recovers_after_pre_execution_interruption(
     assert model.calls == [
         "ArchitectManifestProposal",
         "EngineerModelOutcome",
-        "ValidatorAdvisory",
+        "ValidatorModelAdvisory",
     ]
 
 
@@ -2276,10 +2985,9 @@ def test_manifest_authorization_recovers_from_each_partial_freeze_prefix(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     exact = _approval(started)
     interrupted = False
@@ -2343,7 +3051,7 @@ def test_manifest_authorization_recovers_from_each_partial_freeze_prefix(
     assert model.calls == [
         "ArchitectManifestProposal",
         "EngineerModelOutcome",
-        "ValidatorAdvisory",
+        "ValidatorModelAdvisory",
     ]
 
 
@@ -2361,10 +3069,9 @@ def test_manifest_authorization_intent_survives_crash_before_portable_approval(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     exact = _approval(started)
     interrupted = False
@@ -2442,10 +3149,9 @@ def test_manifest_authorization_rejects_replaced_approval_after_crash(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     exact = _approval(started)
     interrupted = False
@@ -2503,10 +3209,9 @@ def test_engineer_decision_required_stops_before_validator(tmp_path: Path) -> No
         run_dir,
         run_id="run-stop",
         thread_id="thread-stop",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     stopped = resume_agent_run(
         project,
@@ -2526,7 +3231,9 @@ def test_engineer_decision_required_stops_before_validator(tmp_path: Path) -> No
 def test_unresolved_graph_stops_before_any_model_call(tmp_path: Path) -> None:
     project, request = _project(tmp_path, Platform.SALESFORCE)
     controller = (
-        project / "source/force-app/main/default/classes/LegacyAccountContactExplorerController.cls"
+        project
+        / request.repository
+        / "force-app/main/default/classes/LegacyAccountContactExplorerController.cls"
     )
     source = controller.read_text(encoding="utf-8")
     prefix, closing = source.rsplit("}", 1)
@@ -2538,7 +3245,9 @@ def test_unresolved_graph_stops_before_any_model_call(tmp_path: Path) -> None:
         + closing,
         encoding="utf-8",
     )
-    request = request.model_copy(update={"base_revision": content_revision(project / "source")})
+    request = request.model_copy(
+        update={"base_revision": content_revision(project / request.repository)}
+    )
     model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
     run_dir = project / ".runs/run-unresolved"
     stopped = start_agent_run(
@@ -2546,10 +3255,9 @@ def test_unresolved_graph_stops_before_any_model_call(tmp_path: Path) -> None:
         run_dir,
         run_id="run-unresolved",
         thread_id="thread-unresolved",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
 
     assert stopped.status == "decision_required"
@@ -2569,10 +3277,9 @@ def test_start_and_reload_reject_wrong_binding_before_checkpoint_use(tmp_path: P
         run_dir,
         run_id="run-1",
         thread_id="thread-1",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     with pytest.raises(PolicyViolation, match="run_id"):
         get_agent_run_status(project, run_dir, run_id="wrong", thread_id="thread-1")
@@ -2607,10 +3314,9 @@ def test_start_and_reload_reject_wrong_binding_before_checkpoint_use(tmp_path: P
             run_dir,
             run_id="run-2",
             thread_id="thread-2",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(model),
-            wiki_as_of=AS_OF,
         )
 
     wrong_approval = _approval(started, "reject").model_copy(
@@ -2635,7 +3341,7 @@ def test_start_and_reload_reject_wrong_binding_before_checkpoint_use(tmp_path: P
         == "awaiting_approval"
     )
 
-    source_file = project / "source/sfdx-project.json"
+    source_file = project / request.repository / "sfdx-project.json"
     original_source = source_file.read_bytes()
     source_file.write_bytes(original_source + b"\n")
     with pytest.raises(PolicyViolation, match="source content revision changed"):
@@ -2663,10 +3369,9 @@ def test_invalid_preset_and_secret_identity_fail_before_run_creation(tmp_path: P
             run_dir,
             run_id="run-invalid",
             thread_id="thread-invalid",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=invalid,
             models=_models(model),
-            wiki_as_of=AS_OF,
         )
     assert not run_dir.exists()
 
@@ -2681,10 +3386,9 @@ def test_invalid_preset_and_secret_identity_fail_before_run_creation(tmp_path: P
             project / "agents/run-state",
             run_id="run-overlap",
             thread_id="thread-overlap",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-            wiki_as_of=AS_OF,
         )
     assert not (project / "agents/run-state").exists()
 
@@ -2694,10 +3398,9 @@ def test_invalid_preset_and_secret_identity_fail_before_run_creation(tmp_path: P
             project / ".runs/oracle/run-state",
             run_id="run-oracle",
             thread_id="thread-oracle",
-            source_root="source",
+            launch_contract=migration_scenario(request.platform).launch_contract,
             request=request,
             models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-            wiki_as_of=AS_OF,
         )
     assert not (project / ".runs/oracle/run-state").exists()
 
@@ -2711,10 +3414,9 @@ def test_status_rejects_fully_recomputed_portable_evidence_chain(tmp_path: Path)
         run_dir,
         run_id="run-tamper",
         thread_id="thread-tamper",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     architect_relative = f"model-runs/{request.request_id}/architect.json"
     architect_path = run_dir / "evidence" / architect_relative
@@ -2756,10 +3458,9 @@ def test_status_rejects_sqlite_only_terminal_projection_tampering(tmp_path: Path
         run_dir,
         run_id="run-state-tamper",
         thread_id="thread-state-tamper",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(model),
-        wiki_as_of=AS_OF,
     )
     completed = resume_agent_run(
         project,
@@ -2813,10 +3514,9 @@ def test_failed_status_rejects_sqlite_only_workflow_projection_tampering(
         run_dir,
         run_id="run-failed-state-tamper",
         thread_id="thread-failed-state-tamper",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
-        wiki_as_of=AS_OF,
     )
     failed = resume_agent_run(
         project,
@@ -2891,6 +3591,15 @@ def _recoverable_validator(run_id: str):
                     status=status,
                     receipt=receipt,
                     summary="Bounded deterministic test result.",
+                    diagnostic_ids=(
+                        (
+                            APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID
+                            if request.platform is Platform.SALESFORCE
+                            else "mulesoft"
+                        ),
+                    )
+                    if status is CheckStatus.FAILED
+                    else (),
                 )
             )
         return ValidationReport(
@@ -2921,10 +3630,9 @@ def test_exact_correction_approval_runs_attempt_two_once(tmp_path: Path) -> None
         run_dir,
         run_id="run-retry",
         thread_id="thread-retry",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-retry"),
     )
     failed = resume_agent_run(
@@ -3002,10 +3710,9 @@ def test_correction_authorization_recovers_after_pre_execution_interruption(
         run_dir,
         run_id="run-correction-authorization",
         thread_id="thread-correction-authorization",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-correction-authorization"),
     )
     attempt_one = resume_agent_run(
@@ -3095,7 +3802,162 @@ def test_correction_authorization_recovers_after_pre_execution_interruption(
         trusted_validator=_recoverable_validator("run-correction-authorization"),
     )
     assert completed.terminal_disposition == "ready_for_human_review"
-    assert model.calls == [*calls_before, "EngineerModelOutcome", "ValidatorAdvisory"]
+    assert model.calls == [
+        *calls_before,
+        "EngineerFilePlanOutcome",
+        "ValidatorModelAdvisory",
+    ]
+
+
+def test_correction_authorized_controller_failure_resumes_exact_engineer_task_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    models = _models(model)
+    run_id = "run-correction-controller-recovery"
+    thread_id = "thread-correction-controller-recovery"
+    run_dir = project / f".runs/{run_id}"
+    validator = _recoverable_validator(run_id)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+        trusted_validator=validator,
+    )
+    attempt_one = resume_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=_approval(started),
+        models=models,
+        trusted_validator=validator,
+    )
+    correction = attempt_one.correction
+    assert correction is not None
+    exact = CorrectionApproval(
+        correction_id=correction.correction_id,
+        request_id=correction.request_id,
+        manifest_id=correction.manifest_id,
+        manifest_digest=correction.manifest_digest,
+        report_id=correction.report_id,
+        report_digest=correction.report_digest,
+        change_set_digest=correction.change_set_digest,
+        base_revision=correction.base_revision,
+        completed_attempt=correction.completed_attempt,
+        authorized_attempt=2,
+        action=correction.action,
+        reviewer="controller-recovery-reviewer",
+    )
+    calls_before = list(model.calls)
+    original_prepare = ModelAgentWorkflowRoles._prepare_engineer_correction
+
+    def fail_before_provider(*_args: object, **_kwargs: object) -> object:
+        raise ModelWorkflowIntegrationError("controlled pre-provider integration failure")
+
+    monkeypatch.setattr(
+        ModelAgentWorkflowRoles,
+        "_prepare_engineer_correction",
+        fail_before_provider,
+    )
+    with pytest.raises(ModelWorkflowIntegrationError, match="pre-provider"):
+        retry_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            approval=exact,
+            models=models,
+            trusted_validator=validator,
+        )
+    assert model.calls == calls_before
+    attempt_two_root = run_dir / "evidence/model-runs" / request.request_id
+    for name in (
+        "correction-wiki-attempt-2.json",
+        "engineer-correction-attempt-2.json",
+        "engineer-invocation-lease-attempt-2.json",
+        "engineer-attempt-2.json",
+    ):
+        assert not (attempt_two_root / name).exists()
+
+    stalled = get_agent_run_status(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+    )
+    assert stalled.status == "implementing"
+    assert stalled.terminal_disposition == "recoverable_failure"
+    assert stalled.execution_attempt == 2
+    assert stalled.pending_nodes == ("engineer",)
+    assert stalled.task_failed is True
+    assert stalled.correction == correction
+    assert stalled.failure is None
+
+    unexpected = attempt_two_root / "unexpected-attempt-2.json"
+    unexpected.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(PolicyViolation):
+        get_agent_run_status(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+        )
+    unexpected.unlink()
+
+    with pytest.raises(PolicyViolation, match="approval differs"):
+        retry_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            approval=exact.model_copy(update={"reviewer": "replacement-reviewer"}),
+            models=models,
+            trusted_validator=validator,
+        )
+    assert model.calls == calls_before
+
+    monkeypatch.setattr(
+        ModelAgentWorkflowRoles,
+        "_prepare_engineer_correction",
+        original_prepare,
+    )
+    continue_calls = 0
+    original_continue = MigrationWorkflow.continue_local_failure
+
+    def count_continue(self: MigrationWorkflow, *, thread_id: str):
+        nonlocal continue_calls
+        continue_calls += 1
+        return original_continue(self, thread_id=thread_id)
+
+    def forbid_retry(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("authorized failed task must use continue_local_failure")
+
+    monkeypatch.setattr(MigrationWorkflow, "continue_local_failure", count_continue)
+    monkeypatch.setattr(MigrationWorkflow, "retry_recoverable", forbid_retry)
+    completed = retry_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=exact,
+        models=models,
+        trusted_validator=validator,
+    )
+
+    assert completed.terminal_disposition == "ready_for_human_review"
+    assert continue_calls == 1
+    assert model.calls == [
+        *calls_before,
+        "EngineerFilePlanOutcome",
+        "ValidatorModelAdvisory",
+    ]
 
 
 def test_correction_authorization_rejects_reviewer_and_comment_replacement(
@@ -3113,10 +3975,9 @@ def test_correction_authorization_rejects_reviewer_and_comment_replacement(
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator(run_id),
     )
     attempt_one = resume_agent_run(
@@ -3207,10 +4068,9 @@ def test_correction_authorization_intent_survives_crash_before_portable_approval
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator(run_id),
     )
     attempt_one = resume_agent_run(
@@ -3298,7 +4158,11 @@ def test_correction_authorization_intent_survives_crash_before_portable_approval
         trusted_validator=_recoverable_validator(run_id),
     )
     assert completed.terminal_disposition == "ready_for_human_review"
-    assert model.calls == [*calls_before, "EngineerModelOutcome", "ValidatorAdvisory"]
+    assert model.calls == [
+        *calls_before,
+        "EngineerFilePlanOutcome",
+        "ValidatorModelAdvisory",
+    ]
 
 
 def test_correction_authorization_recovers_from_partial_index_freeze(
@@ -3314,10 +4178,9 @@ def test_correction_authorization_recovers_from_partial_index_freeze(
         run_dir,
         run_id="run-partial-correction-index",
         thread_id="thread-partial-correction-index",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-partial-correction-index"),
     )
     attempt_one = resume_agent_run(
@@ -3411,10 +4274,9 @@ def test_provider_free_agent_status_survives_governed_final_review(tmp_path: Pat
         run_dir,
         run_id="run-final-review-status",
         thread_id="thread-final-review-status",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-final-review-status"),
     )
     attempt_one = resume_agent_run(
@@ -3520,10 +4382,9 @@ def test_retry_model_failure_freezes_terminal_attempt_two_status(tmp_path: Path)
         run_dir,
         run_id="run-retry-failure",
         thread_id="thread-retry-failure",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=_models(initial_model),
-        wiki_as_of=AS_OF,
         trusted_validator=_recoverable_validator("run-retry-failure"),
     )
     attempt_one = resume_agent_run(
@@ -3551,7 +4412,7 @@ def test_retry_model_failure_freezes_terminal_attempt_two_status(tmp_path: Path)
         action=correction.action,
         reviewer="retry-failure-reviewer",
     )
-    exploding = ExplodingStructuredModel(SF_FROZEN_OUTPUTS, EngineerModelOutcome)
+    exploding = ExplodingStructuredModel(SF_FROZEN_OUTPUTS, EngineerFilePlanOutcome)
     failed = retry_agent_run(
         project,
         run_dir,
@@ -3629,13 +4490,13 @@ def test_local_ollama_builder_is_approved_shared_and_loopback_bound(
     )
 
     models = build_local_ollama_model_clients(
-        model_id="qwen3.6:latest",
+        model_id=MODEL_ID,
         approval=exact_approval,
         timeout_seconds=90,
     )
 
     assert models.provider_id == "ollama"
-    assert models.model_id == "qwen3.6:latest"
+    assert models.model_id == MODEL_ID
     assert models.execution_boundary == "local_loopback"
     assert models.live_invocation is False
     assert models.live_approval == exact_approval
@@ -3702,7 +4563,9 @@ def test_live_environment_secret_is_never_persisted_when_preflight_stops(
     )
     project, request = _project(tmp_path, Platform.SALESFORCE)
     controller = (
-        project / "source/force-app/main/default/classes/LegacyAccountContactExplorerController.cls"
+        project
+        / request.repository
+        / "force-app/main/default/classes/LegacyAccountContactExplorerController.cls"
     )
     original = controller.read_text(encoding="utf-8")
     prefix, suffix = original.rsplit("}", 1)
@@ -3710,7 +4573,9 @@ def test_live_environment_secret_is_never_persisted_when_preflight_stops(
         prefix + "\nDatabase.query('SELECT Id FROM Account');\n}\n" + suffix,
         encoding="utf-8",
     )
-    request = request.model_copy(update={"base_revision": content_revision(project / "source")})
+    request = request.model_copy(
+        update={"base_revision": content_revision(project / request.repository)}
+    )
     run_dir = project / ".runs/run-live-preflight"
 
     stopped = start_agent_run(
@@ -3718,10 +4583,9 @@ def test_live_environment_secret_is_never_persisted_when_preflight_stops(
         run_dir,
         run_id="run-live-preflight",
         thread_id="thread-live-preflight",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
     )
 
     assert stopped.status == "decision_required"
@@ -3801,10 +4665,9 @@ def test_live_agent_run_preserves_sanitized_usage_through_the_wrapper(
         run_dir,
         run_id="run-live-telemetry",
         thread_id="thread-live-telemetry",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
     )
 
     assert started.status == "awaiting_approval"
@@ -3897,7 +4760,7 @@ def test_local_ollama_run_records_loopback_boundary_without_remote_storage_claim
         MeasuredLocalOllamaClient,
     )
     models = build_local_ollama_model_clients(
-        model_id="qwen3.6:latest",
+        model_id=MODEL_ID,
         approval=LiveModelApproval(
             allow_live_api=True,
             allow_prompt_data_sharing=True,
@@ -3913,10 +4776,9 @@ def test_local_ollama_run_records_loopback_boundary_without_remote_storage_claim
         run_dir,
         run_id="run-local-ollama-evidence",
         thread_id="thread-local-ollama-evidence",
-        source_root="source",
+        launch_contract=migration_scenario(request.platform).launch_contract,
         request=request,
         models=models,
-        wiki_as_of=AS_OF,
     )
 
     assert started.status == "awaiting_approval"
@@ -3926,7 +4788,7 @@ def test_local_ollama_run_records_loopback_boundary_without_remote_storage_claim
         )
     )
     assert architect["model_call"]["provider"] == "ollama"
-    assert architect["model_call"]["model_id"] == "qwen3.6:latest"
+    assert architect["model_call"]["model_id"] == MODEL_ID
     assert architect["model_call"]["execution_boundary"] == "local_loopback"
     assert architect["model_call"]["model_revision"] == LOCAL_MODEL_REVISION_A
     assert architect["model_call"]["live_invocation"] is False
@@ -3942,7 +4804,7 @@ def test_local_ollama_run_records_loopback_boundary_without_remote_storage_claim
 
     class OfflineOllamaImpostor(PresetStructuredModel):
         provider = "ollama"
-        model_id = "qwen3.6:latest"
+        model_id = MODEL_ID
 
     impostor = OfflineOllamaImpostor(SF_FROZEN_OUTPUTS)
     with pytest.raises(PolicyViolation, match="execution boundary differs"):
@@ -3961,7 +4823,7 @@ def test_local_ollama_run_records_loopback_boundary_without_remote_storage_claim
 
     MeasuredLocalOllamaClient.current_revision = LOCAL_MODEL_REVISION_B
     drifted_models = build_local_ollama_model_clients(
-        model_id="qwen3.6:latest",
+        model_id=MODEL_ID,
         approval=LiveModelApproval(
             allow_live_api=True,
             allow_prompt_data_sharing=True,

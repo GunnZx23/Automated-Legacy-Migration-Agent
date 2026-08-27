@@ -1,0 +1,86 @@
+{
+  "additionalProperties": false,
+  "description": "One named human's decision on one exact final-review request.",
+  "properties": {
+    "authority_granted": {
+      "const": false,
+      "default": false,
+      "title": "Authority Granted",
+      "type": "boolean"
+    },
+    "comment": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Comment",
+      "type": "string"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "decision_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "policy_version": {
+      "const": "final-review/1.0",
+      "default": "final-review/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Review Request Digest",
+      "type": "string"
+    },
+    "reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]*$",
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "reviewer_identity_assurance": {
+      "const": "declarative_unverified",
+      "default": "declarative_unverified",
+      "title": "Reviewer Identity Assurance",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selection": {
+      "enum": [
+        "accept",
+        "reject",
+        "request_changes"
+      ],
+      "title": "Selection",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "review_id",
+    "review_request_digest",
+    "selection",
+    "reviewer",
+    "decided_at"
+  ],
+  "title": "FinalReviewDecision",
+  "type": "object"
+}

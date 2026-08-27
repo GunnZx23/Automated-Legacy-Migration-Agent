@@ -36,7 +36,7 @@ from legacy_migration_agent.agent_runtime.correction import (
     CorrectionRequest,
     validate_correction_attempt_evidence,
 )
-from legacy_migration_agent.agent_runtime.model_agents import ArchitectRun
+from legacy_migration_agent.agent_runtime.model_agents import ArchitectRun, ValidatorAssessment
 from legacy_migration_agent.agent_runtime.model_workflow import (
     DeterministicValidator,
     ModelAgentWorkflowRoles,
@@ -61,6 +61,12 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     OutputModel,
     StructuredModelClient,
     model_execution_boundary,
+)
+from legacy_migration_agent.application.migration_scenarios import (
+    MULESOFT_WIKI_QUERY,
+    SALESFORCE_WIKI_QUERY,
+    MigrationLaunchContract,
+    require_canonical_launch_contract,
 )
 from legacy_migration_agent.contracts import (
     ApprovalAction,
@@ -87,12 +93,20 @@ from legacy_migration_agent.core.policies import (
     validate_manifest_for_request,
     validate_report,
 )
-from legacy_migration_agent.core.redaction import SecretRedactor
+from legacy_migration_agent.core.redaction import (
+    SecretRedactor,
+    assert_no_request_secrets,
+)
 from legacy_migration_agent.core.run_session import AgentDefinitionDigests, AgentRunSession
 from legacy_migration_agent.core.scope_policy import PlatformAdapter
-from legacy_migration_agent.core.workspace import IsolatedWorkspace, snapshot_tree
+from legacy_migration_agent.core.workspace import (
+    IsolatedWorkspace,
+    TreeSnapshot,
+    WorkspaceViolation,
+    snapshot_tree,
+)
 from legacy_migration_agent.graphs.graph_store import GraphSnapshotKey, GraphSnapshotStore
-from legacy_migration_agent.knowledge.wiki import LlmWiki
+from legacy_migration_agent.knowledge.wiki import EXACT_DIAGNOSTIC_ID_PATTERN, LlmWiki
 from legacy_migration_agent.platforms.mulesoft_local_checks import MULE3_APP
 from legacy_migration_agent.platforms.mulesoft_runtime import (
     MULESOFT_PLATFORM_ADAPTER,
@@ -124,6 +138,7 @@ from legacy_migration_agent.workflow import (
 AGENT_RUN_EVIDENCE_KIND = "agent-run-initialized"
 AGENT_RUN_REQUEST_PATH = "request.json"
 AGENT_RUN_CONFIG_PATH = "agent-run-config.json"
+AGENT_RUN_LAUNCH_CONTRACT_PATH = "launch-contract.json"
 AGENT_RUN_FAILURE_PATH = "agent-run-failure.json"
 AGENT_RUN_FAILURE_KIND = "agent-run-failed"
 AGENT_RUN_CONTROL_ROOT = "control"
@@ -166,6 +181,7 @@ AgentRunFailureReason = Literal[
     "required_approval_missing",
     "implementation_contract_invalid",
     "transformation_scope_invalid",
+    "unresolved_question_risk_missing",
     "policy_rejected",
     "provider_timeout",
     "provider_unavailable",
@@ -317,6 +333,7 @@ class _OperationSeamTracker:
     """Remember the active trusted role seam without retaining exception text."""
 
     seam: AgentRunFailureSeam | None = None
+    attempt: int | None = None
 
 
 class AgentRunInterruptSummary(StrictModel):
@@ -603,6 +620,7 @@ class _SanitizedModelClient:
             role=self._role,
             provider=self._provider_id,
             output_contract=output_type.__name__,
+            attempt=self._seam_tracker.attempt,
         )
         category: AgentRunFailureCategory | None = None
         reason_code: AgentRunFailureReason | None = None
@@ -624,6 +642,7 @@ class _SanitizedModelClient:
                 role=self._role,
                 category=category,
                 reason_code=reason_code,
+                attempt=self._seam_tracker.attempt,
                 elapsed_ms=_elapsed_milliseconds(started_ns),
             )
             # Raise after leaving the except block so the provider exception
@@ -636,12 +655,14 @@ class _SanitizedModelClient:
                 role=self._role,
                 category="internal",
                 reason_code="internal_failure",
+                attempt=self._seam_tracker.attempt,
                 elapsed_ms=_elapsed_milliseconds(started_ns),
             )
             raise _ControlledOperationError("internal", self._role)
         lifecycle_event(
             "model.call.completed",
             role=self._role,
+            attempt=self._seam_tracker.attempt,
             elapsed_ms=_elapsed_milliseconds(started_ns),
         )
         return parsed
@@ -693,14 +714,57 @@ class _SanitizedDeterministicValidator:
                 elapsed_ms=_elapsed_milliseconds(started_ns),
             )
             raise _ControlledOperationError("internal", "deterministic_validator")
+        known_validation_ids = {
+            identifier
+            for result in report.results
+            for identifier in (result.check_id, result.command_id)
+        }
         for result in report.results:
+            diagnostic_ids = ",".join(result.diagnostic_ids) or "none"
+            failure_code = _validation_failure_code(result.summary)
+            blocked_by = _validation_prerequisite_ids(
+                result.summary,
+                known_validation_ids,
+            )
             lifecycle_event(
                 "validation.check.completed",
                 attempt=attempt,
                 check_id=result.check_id,
+                command_id=result.command_id,
                 required=result.required,
                 status=result.status.value,
+                exit_code=(result.receipt.exit_code if result.receipt is not None else None),
+                duration_ms=_validation_receipt_milliseconds(result),
+                failure_code=failure_code,
+                diagnostic_ids=diagnostic_ids,
+                blocked_by=",".join(blocked_by) or "none",
             )
+            for diagnostic_id in result.diagnostic_ids:
+                lifecycle_event(
+                    "validation.check.diagnostic",
+                    attempt=attempt,
+                    check_id=result.check_id,
+                    diagnostic_id=diagnostic_id,
+                )
+            for prerequisite_id in blocked_by:
+                lifecycle_event(
+                    "validation.check.prerequisite_blocked",
+                    attempt=attempt,
+                    check_id=result.check_id,
+                    prerequisite_id=prerequisite_id,
+                )
+        required_nonpass = tuple(
+            result.check_id
+            for result in report.results
+            if result.required and result.status.value != "passed"
+        )
+        aggregate_diagnostics = tuple(
+            dict.fromkeys(
+                diagnostic_id
+                for result in report.results
+                for diagnostic_id in result.diagnostic_ids
+            )
+        )
         lifecycle_event(
             "validation.completed",
             attempt=attempt,
@@ -710,6 +774,8 @@ class _SanitizedDeterministicValidator:
             failed=sum(result.status.value == "failed" for result in report.results),
             unavailable=sum(result.status.value == "unavailable" for result in report.results),
             nonterminal=sum(result.status.value == "nonterminal" for result in report.results),
+            required_nonpass=",".join(required_nonpass) or "none",
+            diagnostic_ids=",".join(aggregate_diagnostics) or "none",
             elapsed_ms=_elapsed_milliseconds(started_ns),
         )
         return report
@@ -888,10 +954,9 @@ def start_agent_run(
     *,
     run_id: str,
     thread_id: str,
-    source_root: str,
+    launch_contract: MigrationLaunchContract,
     request: MigrationRequest | Mapping[str, Any],
     models: AgentRunModelClients,
-    wiki_as_of: date,
     trusted_validator: DeterministicValidator | None = None,
 ) -> AgentRunStatus:
     """Initialize one run and stop at its first terminal state or interrupt.
@@ -900,45 +965,93 @@ def start_agent_run(
     exposed by the CLI, persisted as authority, or selected by model output.
     """
 
-    parsed_request = _parse_request(request)
-    root = _safe_project_root(project_root)
-    normalized_source = validate_relative_path(source_root)
-    preset = _preset_for(parsed_request.platform)
-    _validate_preset_request(parsed_request, normalized_source, preset)
-    _validate_run_location(root, run_dir, normalized_source)
-    registry = load_agent_registry(root / "agents")
-    definition_digests = _definition_digests(registry)
-    source = _safe_source_root(root, normalized_source)
-    if snapshot_tree(source).revision != parsed_request.base_revision:
-        raise PolicyViolation("migration request revision does not match current source bytes")
-    _preflight_wiki(root, parsed_request, preset, wiki_as_of)
-
-    # Accessing bundle properties validates provider/model identity before the
-    # first filesystem mutation performed by AgentRunSession.initialize.
-    provider_id = models.provider_id
-    model_id = models.model_id
+    prepared = _prepare_agent_run_start(
+        project_root,
+        run_dir,
+        launch_contract=launch_contract,
+        request=request,
+        models=models,
+    )
     session = AgentRunSession.initialize(
-        root,
+        prepared.root,
         run_dir,
         run_id=run_id,
         thread_id=thread_id,
-        slice_id=preset.preset_id,
-        source_root=normalized_source,
-        request_digest=artifact_digest(parsed_request),
-        agent_definition_digests=definition_digests,
-        provider_id=provider_id,
-        model_id=model_id,
+        slice_id=prepared.contract.scenario_id,
+        source_root=prepared.contract.source_root,
+        request_digest=artifact_digest(prepared.request),
+        agent_definition_digests=prepared.definition_digests,
+        provider_id=prepared.provider_id,
+        model_id=prepared.model_id,
     )
-    config = AgentRunConfig(
-        preset_id=preset.preset_id,
-        wiki_as_of=wiki_as_of,
+    return _complete_agent_run_start(
+        session,
+        prepared,
+        models=models,
+        trusted_validator=trusted_validator,
     )
-    _write_run_evidence(session, parsed_request, config)
+
+
+def recover_incomplete_agent_run_start(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id: str,
+    thread_id: str,
+    launch_contract: MigrationLaunchContract,
+    request: MigrationRequest | Mapping[str, Any],
+    models: AgentRunModelClients,
+    trusted_validator: DeterministicValidator | None = None,
+) -> AgentRunStatus:
+    """Finish one exact run bootstrap that stopped before workflow dispatch.
+
+    This recovery path is deliberately narrower than ``start_agent_run``.  It
+    accepts only a fully initialized session whose immutable identity matches
+    the caller and whose durable trees contain an exact prefix of the
+    controller-owned bootstrap writes.  Any checkpoint advance, model artifact,
+    operation lifecycle, unexpected file, or foreign binding fails closed.
+    """
+
+    prepared = _prepare_agent_run_start(
+        project_root,
+        run_dir,
+        launch_contract=launch_contract,
+        request=request,
+        models=models,
+    )
+    session = AgentRunSession.load(prepared.root, run_dir)
+    _verify_incomplete_start_session(
+        session,
+        prepared,
+        run_id=run_id,
+        thread_id=thread_id,
+    )
+    return _complete_agent_run_start(
+        session,
+        prepared,
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+
+
+def _complete_agent_run_start(
+    session: AgentRunSession,
+    prepared: _AgentRunStart,
+    *,
+    models: AgentRunModelClients,
+    trusted_validator: DeterministicValidator | None,
+) -> AgentRunStatus:
+    _write_run_evidence(
+        session,
+        prepared.request,
+        prepared.config,
+        prepared.contract,
+    )
     components = _compose(
         session,
-        parsed_request,
-        config,
-        registry,
+        prepared.request,
+        prepared.config,
+        prepared.registry,
         models,
         trusted_validator=trusted_validator,
     )
@@ -946,9 +1059,12 @@ def start_agent_run(
         components,
         operation="start",
         attempt=1,
-        operation_input_digest=artifact_digest(parsed_request),
+        operation_input_digest=artifact_digest(prepared.request),
         success_kind="agent-run-planned",
-        invoke=lambda: components.workflow.start(parsed_request, thread_id=thread_id),
+        invoke=lambda: components.workflow.start(
+            prepared.request,
+            thread_id=session.context.thread_id,
+        ),
     )
 
 
@@ -956,9 +1072,7 @@ def prepare_agent_run_request(
     project_root: Path,
     *,
     request_id: str,
-    platform: Platform,
-    source_root: str,
-    description: str,
+    launch_contract: MigrationLaunchContract,
     requested_at: datetime,
 ) -> MigrationRequest:
     """Create the exact preset request for the current source-tree bytes.
@@ -968,27 +1082,38 @@ def prepare_agent_run_request(
     subject to the same immutable revision and preset checks at run start.
     """
 
+    contract = _canonical_launch_contract(launch_contract)
+    assert_agent_request_secret_free({"request_id": request_id})
     root = _safe_project_root(project_root)
-    normalized_source = validate_relative_path(source_root)
-    preset = _preset_for(platform)
-    source = _safe_source_root(root, normalized_source)
+    preset = _preset_for(contract.platform)
+    source = _safe_source_root(root, contract.source_root)
     request = MigrationRequest(
         request_id=request_id,
-        platform=platform,
-        repository=normalized_source,
+        platform=contract.platform,
+        repository=contract.source_root,
         base_revision=snapshot_tree(source).revision,
         target=MigrationTarget(
-            entry_path=preset.entry_path,
-            target_runtime=preset.target_runtime,
-            source_version=preset.source_version,
-            target_version=preset.target_version,
-            description=description,
+            entry_path=contract.entry_path,
+            target_runtime=contract.target_runtime,
+            source_version=contract.source_version,
+            target_version=contract.target_version,
+            description=contract.canonical_description,
         ),
         allowed_environment=EnvironmentKind.LOCAL,
         requested_at=requested_at,
     )
-    _validate_preset_request(request, normalized_source, preset)
+    _validate_preset_request(request, contract, preset)
     return request
+
+
+def assert_agent_request_secret_free(value: object) -> None:
+    """Reject secret-shaped request input before request or run persistence.
+
+    Kept as the application-facing name while classification remains shared
+    with the UI and append-only conversation persistence boundaries.
+    """
+
+    assert_no_request_secrets(value, boundary="migration request")
 
 
 def resume_agent_run(
@@ -1125,6 +1250,160 @@ class _PlatformPreset:
 
 
 @dataclass(frozen=True)
+class _AgentRunStart:
+    """Validated controller inputs shared by fresh and recovery start paths."""
+
+    root: Path
+    contract: MigrationLaunchContract
+    request: MigrationRequest
+    preset: _PlatformPreset
+    registry: AgentRegistry
+    definition_digests: AgentDefinitionDigests
+    provider_id: str
+    model_id: str
+    config: AgentRunConfig
+
+
+def _prepare_agent_run_start(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    launch_contract: MigrationLaunchContract,
+    request: MigrationRequest | Mapping[str, Any],
+    models: AgentRunModelClients,
+) -> _AgentRunStart:
+    """Validate every external binding before creating or recovering a run."""
+
+    contract = _canonical_launch_contract(launch_contract)
+    assert_agent_request_secret_free(request)
+    parsed_request = _parse_request(request)
+    preset = _preset_for(contract.platform)
+    _validate_preset_request(parsed_request, contract, preset)
+    root = _safe_project_root(project_root)
+    _validate_run_location(root, run_dir, contract.source_root)
+    registry = load_agent_registry(root / "agents")
+    definition_digests = _definition_digests(registry)
+    source = _safe_source_root(root, contract.source_root)
+    if snapshot_tree(source).revision != parsed_request.base_revision:
+        raise PolicyViolation("migration request revision does not match current source bytes")
+    _preflight_wiki(root, parsed_request, preset, contract.wiki_as_of)
+
+    # Accessing bundle properties validates provider/model identity before the
+    # first fresh-run filesystem mutation or recovery decision.
+    provider_id = models.provider_id
+    model_id = models.model_id
+    return _AgentRunStart(
+        root=root,
+        contract=contract,
+        request=parsed_request,
+        preset=preset,
+        registry=registry,
+        definition_digests=definition_digests,
+        provider_id=provider_id,
+        model_id=model_id,
+        config=AgentRunConfig(
+            preset_id=contract.scenario_id,
+            wiki_as_of=contract.wiki_as_of,
+        ),
+    )
+
+
+def _verify_incomplete_start_session(
+    session: AgentRunSession,
+    prepared: _AgentRunStart,
+    *,
+    run_id: str,
+    thread_id: str,
+) -> None:
+    """Accept only an exact, unadvanced prefix of controller bootstrap writes."""
+
+    expected_binding = (
+        run_id,
+        thread_id,
+        prepared.contract.scenario_id,
+        prepared.contract.source_root,
+        artifact_digest(prepared.request),
+        prepared.definition_digests,
+        prepared.provider_id,
+        prepared.model_id,
+        prepared.request.base_revision,
+    )
+    actual_binding = (
+        session.context.run_id,
+        session.context.thread_id,
+        session.context.slice_id,
+        session.context.source_root,
+        session.context.request_digest,
+        session.context.agent_definition_digests,
+        session.context.provider_id,
+        session.context.model_id,
+        session.context.source_revision,
+    )
+    if actual_binding != expected_binding:
+        raise PolicyViolation("incomplete run bootstrap differs from the requested run binding")
+
+    session.verify_index("initialized", exact=False)
+    session.verify_source_revision()
+    evidence = _start_bootstrap_snapshot(session.evidence_dir, role="portable evidence")
+    portable_paths = frozenset(entry.path for entry in evidence.entries)
+    write_order = (
+        "run-context.json",
+        "indexes/initialized.json",
+        AGENT_RUN_REQUEST_PATH,
+        AGENT_RUN_CONFIG_PATH,
+        AGENT_RUN_LAUNCH_CONTRACT_PATH,
+        f"indexes/{AGENT_RUN_EVIDENCE_KIND}.json",
+    )
+    valid_prefixes = {frozenset(write_order[:length]) for length in range(2, len(write_order) + 1)}
+    if portable_paths not in valid_prefixes:
+        raise PolicyViolation("incomplete run bootstrap has an invalid portable evidence inventory")
+    if frozenset(evidence.directories) not in {
+        frozenset({"indexes"}),
+        frozenset({"graphs", "indexes"}),
+    }:
+        raise PolicyViolation("incomplete run bootstrap has unexpected evidence directories")
+
+    state = _start_bootstrap_snapshot(session.state_dir, role="runtime state")
+    state_files = frozenset(entry.path for entry in state.entries)
+    base_state_files = frozenset({"checkpoints.sqlite3", "runtime.json"})
+    initialized_anchor = f"anchors/{AGENT_RUN_EVIDENCE_KIND}.json"
+    allowed_state_files = {base_state_files, base_state_files | {initialized_anchor}}
+    if state_files not in allowed_state_files or state.directories != ("anchors",):
+        raise PolicyViolation("incomplete run bootstrap has unexpected runtime state")
+    checkpoint = state.by_path()["checkpoints.sqlite3"]
+    if checkpoint.content:
+        raise PolicyViolation("incomplete run bootstrap checkpoint already advanced")
+
+    for root, role in (
+        (session.workspaces_dir, "workspace"),
+        (session.scratch_dir, "scratch"),
+    ):
+        snapshot = _start_bootstrap_snapshot(root, role=role)
+        if snapshot.entries or snapshot.directories:
+            raise PolicyViolation(f"incomplete run bootstrap has unexpected {role} state")
+
+    anchor_present = initialized_anchor in state_files
+    full_portable_inventory = portable_paths == frozenset(write_order)
+    if anchor_present and not full_portable_inventory:
+        raise PolicyViolation("incomplete run bootstrap anchor precedes complete evidence")
+    if anchor_present:
+        stored_request, stored_config, stored_contract = _verify_run_evidence(session)
+        if (
+            stored_request != prepared.request
+            or stored_config != prepared.config
+            or stored_contract != prepared.contract
+        ):
+            raise PolicyViolation("incomplete run bootstrap evidence differs from current inputs")
+
+
+def _start_bootstrap_snapshot(root: Path, *, role: str) -> TreeSnapshot:
+    try:
+        return snapshot_tree(root)
+    except (OSError, WorkspaceViolation) as exc:
+        raise PolicyViolation(f"incomplete run bootstrap {role} is unsafe") from exc
+
+
+@dataclass(frozen=True)
 class _RunComponents:
     session: AgentRunSession
     request: MigrationRequest
@@ -1164,6 +1443,7 @@ class _InFlightModelOperation:
     pending_seam: Literal["engineer", "validator"] | None
     artifact_paths: tuple[str, ...]
     portable_freeze_prefix: tuple[str, ...]
+    controller_failed_before_provider: bool = False
 
 
 def _execute_operation(
@@ -1177,6 +1457,7 @@ def _execute_operation(
     control_evidence: tuple[tuple[str, StrictModel], ...] = (),
 ) -> AgentRunStatus:
     started_ns = time.perf_counter_ns()
+    components.seam_tracker.attempt = attempt
     lifecycle_event(
         "workflow.operation.started",
         operation=operation,
@@ -1306,6 +1587,35 @@ def _execute_operation(
 
 def _elapsed_milliseconds(started_ns: int) -> int:
     return max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
+
+
+def _validation_receipt_milliseconds(result: Any) -> int | None:
+    receipt = result.receipt
+    if receipt is None:
+        return None
+    return max(0, int((receipt.ended_at - receipt.started_at).total_seconds() * 1000))
+
+
+def _validation_failure_code(summary: str) -> str | None:
+    match = re.search(r"\bfailure[-_]code=([a-z][a-z0-9_.:-]{0,159})\b", summary)
+    return match.group(1) if match is not None else None
+
+
+def _validation_prerequisite_ids(
+    summary: str,
+    known_validation_ids: set[str],
+) -> tuple[str, ...]:
+    marker = "required prerequisite checks did not pass:"
+    if marker not in summary:
+        return ()
+    tail = summary.rsplit(marker, 1)[1].split(".", 1)[0]
+    return tuple(
+        dict.fromkeys(
+            identifier.strip()
+            for identifier in tail.split(",")
+            if identifier.strip() in known_validation_ids
+        )
+    )
 
 
 def _persist_authorization_boundary(
@@ -1637,7 +1947,7 @@ def _preset_for(platform: Platform) -> _PlatformPreset:
             target_runtime=SALESFORCE_TARGET_RUNTIME,
             source_version=SALESFORCE_API_RUNTIME,
             target_version=SALESFORCE_API_RUNTIME,
-            wiki_query="Visualforce LWC Apex security Jest migration",
+            wiki_query=SALESFORCE_WIKI_QUERY,
             wiki_max_primary_hits=1,
         )
     if platform is Platform.MULESOFT:
@@ -1649,26 +1959,81 @@ def _preset_for(platform: Platform) -> _PlatformPreset:
             target_runtime=MULESOFT_TARGET_RUNTIME,
             source_version=MULESOFT_SOURCE_VERSION,
             target_version=MULESOFT_TARGET_VERSION,
-            wiki_query="Mule 3 Mule 4 DataWeave HTTP MUnit migration",
+            wiki_query=MULESOFT_WIKI_QUERY,
             wiki_max_primary_hits=1,
         )
     raise PolicyViolation(f"unsupported migration platform: {platform}")
 
 
-def _validate_preset_request(
-    request: MigrationRequest,
-    source_root: str,
+def _canonical_launch_contract(
+    value: MigrationLaunchContract,
+) -> MigrationLaunchContract:
+    """Validate an exact typed contract before any run or request side effect."""
+
+    if not isinstance(value, MigrationLaunchContract):
+        raise PolicyViolation("migration launch contract must be an exact typed contract")
+    assert_agent_request_secret_free(value.model_dump(mode="python"))
+    try:
+        return require_canonical_launch_contract(value)
+    except (KeyError, TypeError, ValueError):
+        raise PolicyViolation("migration launch contract is not canonical") from None
+
+
+def _validate_launch_contract_preset(
+    contract: MigrationLaunchContract,
     preset: _PlatformPreset,
 ) -> None:
-    if request.platform is not preset.runtime.platform:
-        raise PolicyViolation("migration request does not match the selected platform preset")
-    if request.repository != source_root:
-        raise PolicyViolation("migration request repository must equal the selected source root")
+    """Require the canonical launch contract and runtime preset to agree exactly."""
+
+    if contract.scenario_id != preset.preset_id or contract.platform is not preset.runtime.platform:
+        raise PolicyViolation("migration scenario and platform preset configuration drifted")
     expected = (
         preset.entry_path,
         preset.target_runtime,
         preset.source_version,
         preset.target_version,
+        preset.runtime.analyzer_version,
+        preset.adapter.adapter_id,
+        preset.wiki_query,
+        preset.wiki_max_primary_hits,
+        preset.adapter.scope_policy.required_source_input_paths,
+        preset.adapter.scope_policy.approved_output_paths,
+        preset.adapter.scope_policy_digest,
+    )
+    actual = (
+        contract.entry_path,
+        contract.target_runtime,
+        contract.source_version,
+        contract.target_version,
+        contract.analyzer_version,
+        contract.adapter_id,
+        contract.wiki_query,
+        contract.wiki_max_primary_hits,
+        contract.required_source_input_paths,
+        contract.approved_output_paths,
+        contract.scope_policy_digest,
+    )
+    if actual != expected:
+        raise PolicyViolation("migration launch contract and platform preset differ")
+
+
+def _validate_preset_request(
+    request: MigrationRequest,
+    contract: MigrationLaunchContract,
+    preset: _PlatformPreset,
+) -> None:
+    _validate_launch_contract_preset(contract, preset)
+    if request.platform is not contract.platform:
+        raise PolicyViolation("migration request platform differs from the launch contract")
+    if request.platform is not preset.runtime.platform:
+        raise PolicyViolation("migration request does not match the selected platform preset")
+    if request.repository != contract.source_root:
+        raise PolicyViolation("migration request repository must equal the selected source root")
+    expected = (
+        contract.entry_path,
+        contract.target_runtime,
+        contract.source_version,
+        contract.target_version,
     )
     actual = (
         request.target.entry_path,
@@ -1680,6 +2045,8 @@ def _validate_preset_request(
         raise PolicyViolation("migration request target does not match the shipped platform preset")
     if request.allowed_environment.value != "local":
         raise PolicyViolation("agent runs support only the local validation environment")
+    if request.target.description != contract.canonical_description:
+        raise PolicyViolation("migration request description differs from the launch contract")
     preset.adapter.validate_request(request)
 
 
@@ -1727,6 +2094,13 @@ def _preflight_wiki(
         max_primary_hits=preset.wiki_max_primary_hits,
         as_of=as_of,
         max_age_days=365,
+        required_exact_ids=tuple(
+            sorted(
+                token
+                for token in preset.wiki_query.split()
+                if EXACT_DIAGNOSTIC_ID_PATTERN.fullmatch(token) is not None
+            )
+        ),
     )
     if not trace.hits:
         raise PolicyViolation("version-filtered Wiki retrieval returned no Architect evidence")
@@ -1736,13 +2110,16 @@ def _write_run_evidence(
     session: AgentRunSession,
     request: MigrationRequest,
     config: AgentRunConfig,
+    launch_contract: MigrationLaunchContract,
 ) -> None:
     session.store.write_json(AGENT_RUN_REQUEST_PATH, request)
     session.store.write_json(AGENT_RUN_CONFIG_PATH, config)
+    session.store.write_json(AGENT_RUN_LAUNCH_CONTRACT_PATH, launch_contract)
     indexed = (
         "run-context.json",
         AGENT_RUN_REQUEST_PATH,
         AGENT_RUN_CONFIG_PATH,
+        AGENT_RUN_LAUNCH_CONTRACT_PATH,
     )
     session.write_index(AGENT_RUN_EVIDENCE_KIND, indexed)
     index_payload = session.store.read_json(f"indexes/{AGENT_RUN_EVIDENCE_KIND}.json")
@@ -1755,23 +2132,34 @@ def _write_run_evidence(
 
 def _verify_run_evidence(
     session: AgentRunSession,
-) -> tuple[MigrationRequest, AgentRunConfig]:
+) -> tuple[MigrationRequest, AgentRunConfig, MigrationLaunchContract]:
     session.verify_index(AGENT_RUN_EVIDENCE_KIND, exact=False)
     try:
         request = MigrationRequest.model_validate(session.store.read_json(AGENT_RUN_REQUEST_PATH))
         config = AgentRunConfig.model_validate(session.store.read_json(AGENT_RUN_CONFIG_PATH))
-    except (TypeError, ValueError) as exc:
+        launch_contract = MigrationLaunchContract.model_validate(
+            session.store.read_json(AGENT_RUN_LAUNCH_CONTRACT_PATH)
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
         raise PolicyViolation("agent-run portable evidence is malformed") from exc
+    canonical_contract = _canonical_launch_contract(launch_contract)
     if artifact_digest(request) != session.context.request_digest:
         raise PolicyViolation("canonical migration request differs from the run session")
-    if config.preset_id != session.context.slice_id:
+    if (
+        config.preset_id != canonical_contract.scenario_id
+        or session.context.slice_id != canonical_contract.scenario_id
+    ):
         raise PolicyViolation("agent-run preset differs from the run session")
+    if config.wiki_as_of != canonical_contract.wiki_as_of:
+        raise PolicyViolation("agent-run Wiki cutoff differs from the launch contract")
+    if session.context.source_root != canonical_contract.source_root:
+        raise PolicyViolation("agent-run source root differs from the launch contract")
     index_payload = session.store.read_json(f"indexes/{AGENT_RUN_EVIDENCE_KIND}.json")
     session.verify_runtime_anchor(
         AGENT_RUN_EVIDENCE_KIND,
         _evidence_anchor(session, request, config, index_payload),
     )
-    return request, config
+    return request, config, canonical_contract
 
 
 def _evidence_anchor(
@@ -1807,7 +2195,7 @@ def _load_components(
         raise PolicyViolation("run_id does not match the loaded run session")
     if session.context.thread_id != thread_id:
         raise PolicyViolation("thread_id does not match the loaded run session")
-    canonical_request, config = _verify_run_evidence(session)
+    canonical_request, config, contract = _verify_run_evidence(session)
     lifecycle = _verify_latest_operation_evidence(
         session,
         canonical_request,
@@ -1817,7 +2205,7 @@ def _load_components(
     if request is not None and _parse_request(request) != canonical_request:
         raise PolicyViolation("caller request differs from immutable run evidence")
     preset = _preset_for(canonical_request.platform)
-    _validate_preset_request(canonical_request, session.context.source_root, preset)
+    _validate_preset_request(canonical_request, contract, preset)
     if config.preset_id != preset.preset_id:
         raise PolicyViolation("stored run preset does not match the canonical request")
     registry = load_agent_registry(root / "agents")
@@ -1871,18 +2259,45 @@ def _load_components(
     actual_workflow_status = _status_from_components(components, surface_failure=False)
     actual_checkpoint = _checkpoint_projection(components)
     if in_flight_operation is None:
-        if actual_status != lifecycle.status:
-            raise PolicyViolation(
-                "workflow state projection differs from immutable lifecycle evidence"
+        status_mismatch = actual_status != lifecycle.status
+        workflow_mismatch = actual_workflow_status != lifecycle.workflow_status
+        checkpoint_mismatch = actual_checkpoint != lifecycle.checkpoint
+        if status_mismatch or workflow_mismatch or checkpoint_mismatch:
+            recovery = _authorized_controller_failure_recovery(
+                components,
+                lifecycle,
+                actual_status=actual_status,
+                actual_workflow_status=actual_workflow_status,
+                actual_checkpoint=actual_checkpoint,
             )
-        if actual_workflow_status != lifecycle.workflow_status:
-            raise PolicyViolation(
-                "underlying workflow projection differs from immutable lifecycle evidence"
+            if recovery is None:
+                if status_mismatch:
+                    raise PolicyViolation(
+                        "workflow state projection differs from immutable lifecycle evidence"
+                    )
+                if workflow_mismatch:
+                    raise PolicyViolation(
+                        "underlying workflow projection differs from immutable lifecycle evidence"
+                    )
+                raise PolicyViolation(
+                    "complete checkpoint projection differs from immutable lifecycle evidence"
+                )
+            if pending_authorization is not None:
+                _verify_in_flight_resubmission_authority(
+                    session,
+                    recovery,
+                    pending_authorization,
+                )
+            components = replace(components, in_flight_operation=recovery)
+            in_flight_terminal = _verify_in_flight_workflow_projection(
+                components,
+                lifecycle,
+                recovery,
+                actual_status=actual_status,
+                actual_workflow_status=actual_workflow_status,
+                actual_checkpoint=actual_checkpoint,
             )
-        if actual_checkpoint != lifecycle.checkpoint:
-            raise PolicyViolation(
-                "complete checkpoint projection differs from immutable lifecycle evidence"
-            )
+            components = replace(components, in_flight_terminal=in_flight_terminal)
     else:
         in_flight_terminal = _verify_in_flight_workflow_projection(
             components,
@@ -1894,6 +2309,68 @@ def _load_components(
         )
         components = replace(components, in_flight_terminal=in_flight_terminal)
     return components
+
+
+def _authorized_controller_failure_recovery(
+    components: _RunComponents,
+    lifecycle: _VerifiedOperationLifecycle,
+    *,
+    actual_status: AgentRunStatus,
+    actual_workflow_status: AgentRunStatus,
+    actual_checkpoint: AgentRunCheckpointProjection,
+) -> _InFlightModelOperation | None:
+    """Recognize only attempt two's authorized pre-provider controller crash."""
+
+    if lifecycle.kind != AGENT_RUN_CORRECTION_AUTHORIZED_KIND or lifecycle.failure is not None:
+        return None
+    base = lifecycle.status
+    if (
+        base != lifecycle.workflow_status
+        or base.status != "completed"
+        or base.terminal_disposition != ValidationDisposition.RECOVERABLE_FAILURE.value
+        or base.execution_attempt != 1
+        or base.pending_nodes
+        or base.task_failed
+        or base.interrupt is not None
+        or base.correction is None
+        or base.correction.action is not CorrectionAction.RETRY_IMPLEMENTATION
+    ):
+        return None
+    if (
+        actual_status != actual_workflow_status
+        or actual_status.status != "implementing"
+        or actual_status.terminal_disposition != ValidationDisposition.RECOVERABLE_FAILURE.value
+        or actual_status.execution_attempt != 2
+        or actual_status.pending_nodes != ("engineer",)
+        or not actual_status.task_failed
+        or actual_status.interrupt is not None
+        or actual_status.failure is not None
+        or actual_status.correction != base.correction
+    ):
+        return None
+    if (
+        actual_checkpoint.request != components.request
+        or actual_checkpoint.next != ("engineer",)
+        or len(actual_checkpoint.tasks) != 1
+    ):
+        return None
+    task = actual_checkpoint.tasks[0]
+    null_digest = _checkpoint_value_digest(None)
+    if (
+        task.name != "engineer"
+        or task.interrupts
+        or task.error_digest == null_digest
+        or task.state_digest != null_digest
+        or task.result_digest != null_digest
+    ):
+        return None
+    return _InFlightModelOperation(
+        attempt=2,
+        pending_seam=None,
+        artifact_paths=(),
+        portable_freeze_prefix=(),
+        controller_failed_before_provider=True,
+    )
 
 
 def _verify_recorded_execution_boundary(
@@ -2005,6 +2482,7 @@ def _compose(
         engineer_model=engineer_model,
         validator_model=validator_model,
         architect_context_factory=factory,
+        correction_wiki_retriever=factory.retrieve_correction_wiki,
         workspace_factory=filesystem_workspace_factory(
             session.source_root,
             temp_parent=session.workspaces_dir,
@@ -2024,7 +2502,7 @@ def _compose(
         if present.count(True) != expected_outcomes:
             raise PolicyViolation("run has an invalid immutable Architect outcome artifact count")
         # The real Architect role follows its replay branch because existence
-        # was proven above.  This verifies current graph/Wiki input, prompt
+        # was proven above.  This verifies current source/graph/Wiki input, prompt
         # digest, and proposal bytes without invoking any model client.
         if not architect_failed:
             roles.architect(request)
@@ -2281,7 +2759,7 @@ def _verify_in_flight_workflow_projection(
         if (
             actual_status.status != expected_status
             or actual_status.pending_nodes != (node,)
-            or actual_status.task_failed
+            or actual_status.task_failed != operation.controller_failed_before_provider
             or actual_status.interrupt is not None
         ):
             raise PolicyViolation("in-flight workflow status is invalid")
@@ -2324,11 +2802,12 @@ def _verify_in_flight_workflow_projection(
         if (
             task.name != node
             or task.interrupts
-            or task.error_digest != null_digest
             or task.state_digest != null_digest
             or task.result_digest != null_digest
         ):
             raise PolicyViolation("in-flight checkpoint task is invalid")
+        if operation.controller_failed_before_provider is (task.error_digest == null_digest):
+            raise PolicyViolation("in-flight checkpoint task failure evidence is invalid")
 
     values = cast(Mapping[str, object], snapshot.values)
     try:
@@ -2510,8 +2989,24 @@ def _verify_terminal_in_flight_workflow(
         f"{model_root}/validator-invocation-lease-attempt-{operation.attempt}.json",
         f"{model_root}/validator-attempt-{operation.attempt}.json",
     }
+    try:
+        validator_assessment = ValidatorAssessment.model_validate(
+            components.session.store.read_json(
+                f"{model_root}/validator-attempt-{operation.attempt}.json"
+            )
+        )
+    except (FileNotFoundError, TypeError, ValueError) as exc:
+        raise PolicyViolation("terminal Validator advisory evidence is malformed") from exc
+    if (
+        validator_assessment.unavailable_receipt is not None
+        and not validator_assessment.unavailable_receipt.attempted
+    ):
+        expected_paths.remove(
+            f"{model_root}/validator-invocation-lease-attempt-{operation.attempt}.json"
+        )
     if operation.attempt == 2:
         expected_paths.add(f"{model_root}/engineer-correction-attempt-2.json")
+        expected_paths.add(f"{model_root}/correction-wiki-attempt-2.json")
     control_path = _correction_request_path(operation.attempt)
     actual_paths = set(operation.artifact_paths)
     if actual_paths not in (expected_paths, expected_paths | {control_path}):
@@ -2620,6 +3115,7 @@ def _verify_terminal_engineer_intervention(
     }
     if operation.attempt == 2:
         expected_paths.add(f"{model_root}/engineer-correction-attempt-2.json")
+        expected_paths.add(f"{model_root}/correction-wiki-attempt-2.json")
     if set(operation.artifact_paths) != expected_paths:
         raise PolicyViolation("terminal Engineer intervention inventory is invalid")
     try:
@@ -3619,6 +4115,7 @@ __all__ = [
     "build_local_ollama_model_clients",
     "build_live_openai_model_clients",
     "get_agent_run_status",
+    "assert_agent_request_secret_free",
     "prepare_agent_run_request",
     "resume_agent_run",
     "retry_agent_run",

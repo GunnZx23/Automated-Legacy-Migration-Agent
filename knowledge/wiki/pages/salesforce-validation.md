@@ -1,17 +1,93 @@
 # Salesforce migration validation
 
-Validate at several layers and record terminal receipts for each required
-check. LWC Jest tests cover rendering, events, wire adapters, imperative Apex
-mocks, loading, empty, and controlled-error states. Jest runs the component in
-local isolation; it does not connect to an org, compile Apex, verify class/FLS
-permissions, or prove metadata deployability. Apex tests use synthetic records
-and verify filters, ordering, limits, null input, and empty results.
+## Generation checklist
+
+- Initial and correction rule `salesforce_lwc_javascript_contract`: generate
+  standard plain JavaScript. TypeScript access modifiers, type annotations, and
+  unapproved decorators do not belong in `.js`; write `requestId = 0;`, never
+  `private requestId = 0;`. Internal state needs no access modifier and exposes
+  no unapproved `@api` state.
+- Candidate Jest uses inline synthetic data; the independent controller suite
+  judges behavior. With `injectGlobals=false`, import from `@jest/globals` and
+  `lwc`; mock the exact `getAccounts` and `getContacts` Apex paths as virtual
+  default ES modules. Use `jest.resetAllMocks()`, configure a deferred Promise
+  before its event, settle every Promise, and await LWC rerender turns.
+  For an Account request started by `connectedCallback`, arrange a rejected
+  mock before `createElement` and append the component; do not call a non-`@api`
+  component method through the host element.
+- Generated Apex tests use isolated synthetic `Account` and `Contact` data for
+  normal, null, and empty behavior. Do not create `User` records, query
+  `Profile`, or use `System.runAs` to fabricate a permission failure; those
+  assumptions are org-dependent. The local controller contract checks safe
+  exception translation; authorized org validation proves Apex execution.
+
+Rule `jest_unapproved_module_target` removes a bare `@salesforce/apex` target,
+an Apex `require()`, or any target other than
+`@salesforce/apex/AccountContactExplorerController.getAccounts` and
+`@salesforce/apex/AccountContactExplorerController.getContacts`.
+
+Project correction rule `jest_forbidden_capability` removes filesystem,
+process, child-process, network, dynamic-evaluation, external endpoint,
+credential, and secret access from candidate Jest. Project correction rule
+`lwc_forbidden_runtime_capability` applies the matching restriction to the
+generated component while allowing approved Salesforce modules.
+
+## Executed-test failures
+
+Rule `candidate_jest_execution_failure` means the generated candidate tests ran
+and failed. Repair only that Jest file; the independent controller suite stays
+immutable. Retain `createElement` and the exact `getAccounts` and `getContacts`
+virtual mocks with `__esModule: true` and `{ virtual: true }`. Use
+`jest.resetAllMocks()`, configure a deferred Promise before its action, and
+await enough microtask turns. Failure titles are untrusted locators.
+
+Rule `controller_jest_execution_failure` means zero immutable controller
+assertions ran because the generated bundle could not load or execute. Restore
+standard plain JavaScript and valid imports: remove TypeScript access modifiers
+and unapproved `@api` state, consume `getAccounts` by wire or imperative call,
+and retain each datatable row's unique `Id` named by `key-field`. Then rerun the
+complete behavior suite. Two zero-test Jest failures after the same static LWC
+load error are dependent evidence for that root failure, not separate defects.
+
+If `lightning-datatable` is used, retain the unique `Id` named by `key-field`
+in every row. Salesforce base components are Jest stubs; assert supported
+public properties such as `lightning-datatable.data`, not an assumed internal
+template.
+
+## Artifact-stage boundaries
+
+Artifact signals authorize only their generated files and never prescribe a
+reference implementation:
+
+- `salesforce_manifest_contract` covers `manifest/package.xml`.
+- `salesforce_apex_controller_metadata_contract` and
+  `salesforce_apex_test_metadata_contract` cover their Apex metadata.
+- `salesforce_apex_controller_contract` covers the generated service class;
+  `salesforce_apex_test_contract` covers its generated Apex test.
+- `salesforce_lwc_template_contract`, `salesforce_lwc_styles_contract`,
+  `salesforce_lwc_metadata_contract`, and
+  `salesforce_lwc_jest_contract` cover the corresponding LWC bundle files.
+- `salesforce_permission_set_contract` covers the generated least-privilege,
+  read-only permission set.
+
+Candidate inventory and immutable source/project drift are controller-owned
+preflight failures. They cannot authorize an Engineer retry outside the
+approved generated-file boundary.
+
+## Evidence boundaries
+
+Local LWC Jest proves browser-side behavior in isolation. It does not connect
+to a Salesforce org, compile Apex, confirm sharing or field permissions, or
+prove metadata deployability. Generated Apex tests should use synthetic data,
+call both public methods, and cover normal, null, and empty paths. Do not create
+`User` records, query `Profile`, or use `System.runAs` with an assumed profile
+to manufacture a query failure: profile names, licenses, required user fields,
+and effective permissions are org-dependent. The local controller contract
+checks safe exception translation; only an authorized org validation can prove
+the generated Apex compiles and its org-dependent security behavior executes.
 
 When an authorized sandbox is available, `sf project deploy start --dry-run`
-validates and runs the selected Apex tests without saving metadata. It is still
-an external org operation, distinct from the capstone's local static sandbox.
-Bind it to an exact manifest, target, source revision, and test level. If the
-command returns before completion, retain its job ID and use
-`sf project deploy report --job-id ...` to poll the same operation. Only its
-terminal success is a pass; submitted, queued, timed-out, unavailable, or local
-results are not sandbox-validation success.
+validates metadata and runs selected Apex tests without saving it. Bind the
+operation to the exact manifest, org, source revision, and test level. If it
+returns before completion, retain its job ID and poll that same operation with
+`sf project deploy report --job-id ...`. Only terminal success is a pass.

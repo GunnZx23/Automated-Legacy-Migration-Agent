@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "description": "Provider-free status projection for the final-review checkpoint.",
+  "properties": {
+    "candidate_accepted": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidate Accepted"
+    },
+    "decision_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Digest"
+    },
+    "external_actions_authorized": {
+      "default": [],
+      "maxItems": 0,
+      "minItems": 0,
+      "title": "External Actions Authorized",
+      "type": "array"
+    },
+    "request_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "awaiting_final_review",
+        "accepted",
+        "rejected",
+        "changes_requested"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "thread_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Thread Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "review_id",
+    "run_id",
+    "thread_id",
+    "request_id",
+    "status",
+    "request_digest"
+  ],
+  "title": "FinalReviewStatus",
+  "type": "object"
+}

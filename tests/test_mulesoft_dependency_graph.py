@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from mulesoft_candidate_factory import build_mulesoft_candidate
 
 import legacy_migration_agent.graphs.mulesoft_dependency_graph as mulesoft_graph_module
 from legacy_migration_agent.contracts import Platform
@@ -23,7 +24,8 @@ MULE3_ROOT = FIXTURE_ROOT / "input"
 MULE3_APP = "legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml"
 MULE3_PROPERTIES = "legacy-mule3/customer-status-api/src/main/app/mule-app.properties"
 MULE3_TEST = "legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml"
-MULE4_ROOT = FIXTURE_ROOT / "expected/mule4/customer-status-api"
+MULE4_APP = "mule4/customer-status-api/src/main/mule/customer-status-api.xml"
+MULE4_TEST = "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
 
 
 def _build(root: Path, entries: tuple[str, ...]):
@@ -49,6 +51,11 @@ def _write(root: Path, relative_path: str, content: str) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(content, encoding="utf-8")
     return destination
+
+
+def _mule4_root(tmp_path: Path) -> Path:
+    candidate = build_mulesoft_candidate(MULE3_ROOT, tmp_path / "candidate")
+    return candidate / "mule4/customer-status-api"
 
 
 def test_mule3_fixture_graph_is_exact_deterministic_and_revision_bound() -> None:
@@ -184,8 +191,8 @@ def test_labeled_mule3_edges_have_full_recall_and_no_high_impact_miss() -> None:
     assert missing == set()
 
 
-def test_mule4_graph_links_resources_dataweave_variables_and_munit() -> None:
-    graph = _build(MULE4_ROOT, ("src/main/mule/customer-status-api.xml",))
+def test_mule4_graph_links_resources_dataweave_variables_and_munit(tmp_path: Path) -> None:
+    graph = _build(_mule4_root(tmp_path), ("src/main/mule/customer-status-api.xml",))
     edges = _edge_tuples(graph)
 
     assert graph.has_unresolved is False
@@ -219,8 +226,57 @@ def test_mule4_graph_links_resources_dataweave_variables_and_munit() -> None:
     ) in edges
 
 
-def test_pom_graph_indexes_plugins_dependencies_and_property_versions() -> None:
-    graph = _build(MULE4_ROOT, ("pom.xml",))
+def test_combined_snapshot_scopes_same_named_apps_and_http_only_munit_by_target_path(
+    tmp_path: Path,
+) -> None:
+    candidate = build_mulesoft_candidate(MULE3_ROOT, tmp_path / "candidate")
+    (candidate / MULE4_TEST).write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools">
+  <http:request-config name="candidate-loopback-request">
+    <http:request-connection host="127.0.0.1" port="8081"/>
+  </http:request-config>
+  <munit:config name="customer-status-api-munit"/>
+  <munit:test name="build-customer-status-response-test">
+    <munit:enable-flow-sources>
+      <munit:enable-flow-source value="customer-status-api-flow"/>
+    </munit:enable-flow-sources>
+    <munit:execution>
+      <http:request method="GET"
+                    path="/api/customers/HTTP-ONLY/status"
+                    config-ref="candidate-loopback-request"/>
+    </munit:execution>
+    <munit:validation>
+      <munit-tools:assert-that expression="#[payload.status]"
+                               is='#[MunitTools::equalTo("ACTIVE")]'/>
+    </munit:validation>
+  </munit:test>
+</mule>
+""",
+        encoding="utf-8",
+    )
+
+    graph = _build(candidate, (MULE4_APP,))
+    target_tests = tuple(node for node in graph.nodes if node.kind is NodeKind.MUNIT_TEST)
+
+    assert len(target_tests) == 1
+    assert target_tests[0].metadata_paths == (MULE4_TEST,)
+    assert target_tests[0].node_id.startswith("mule:mule4:")
+    assert MULE3_TEST not in {path for node in graph.nodes for path in node.metadata_paths}
+    assert (
+        "build-customer-status-response-test",
+        "munit_flow_reference",
+        "customer-status-api-flow",
+        "customer-status-api-flow",
+        True,
+    ) in _edge_tuples(graph)
+
+
+def test_pom_graph_indexes_plugins_dependencies_and_property_versions(tmp_path: Path) -> None:
+    graph = _build(_mule4_root(tmp_path), ("pom.xml",))
     edges = _edge_tuples(graph)
 
     assert graph.has_unresolved is False

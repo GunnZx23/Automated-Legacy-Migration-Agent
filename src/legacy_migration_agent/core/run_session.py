@@ -32,7 +32,11 @@ from legacy_migration_agent.core.integrity import (
     canonical_json_bytes,
 )
 from legacy_migration_agent.core.policies import PolicyViolation
-from legacy_migration_agent.core.redaction import REDACTED, SecretRedactor
+from legacy_migration_agent.core.redaction import (
+    REDACTED,
+    SecretRedactor,
+    high_confidence_secret_findings,
+)
 from legacy_migration_agent.core.workspace import TreeSnapshot, snapshot_tree
 
 RUN_SESSION_SCHEMA_VERSION: Literal["1.0"] = "1.0"
@@ -70,11 +74,16 @@ _SECRET_KEYS = frozenset(
         "access_token",
         "apikey",
         "api_key",
+        "auth_token",
         "authorization",
+        "bearer_token",
         "client_secret",
+        "credential",
         "password",
         "private_key",
         "refresh_token",
+        "secret",
+        "sfdx_auth_url",
     }
 )
 _RUNTIME_EVIDENCE_ROOTS = frozenset({"scratch", "state", "workspaces"})
@@ -83,6 +92,7 @@ _RUNTIME_MODEL_OPERATION_FILE = re.compile(
     r"engineer-invocation-lease-attempt-[12]|"
     r"engineer-attempt-[12]|"
     r"engineer-correction-attempt-2|"
+    r"correction-wiki-attempt-2|"
     r"report-attempt-[12]|"
     r"validator-invocation-lease-attempt-[12]|"
     r"validator-attempt-[12]"
@@ -834,10 +844,10 @@ def _assert_portable_evidence_value(
         return
     if not isinstance(value, str):
         return
-    if _API_KEY_TOKEN.search(value) is not None:
+    secret_findings = high_confidence_secret_findings(value)
+    if any(finding.kind == "api-key-token" for finding in secret_findings):
         raise PolicyViolation("portable evidence contains an API-key-shaped token")
-    redaction = SecretRedactor().redact(value)
-    if redaction.changed and redaction.text != value.strip():
+    if secret_findings:
         raise PolicyViolation("portable evidence contains an unredacted credential")
     if any(path in value for path in forbidden_absolute_paths):
         raise PolicyViolation("portable evidence contains an absolute project or source path")

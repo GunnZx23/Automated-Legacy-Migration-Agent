@@ -365,6 +365,26 @@ def test_portable_store_rejects_credentials_absolute_paths_and_runtime_state(
 
     with pytest.raises(PolicyViolation, match="credential"):
         session.store.write_json("unsafe-secret.json", {"api_key": "do-not-store-this"})
+    for key in ("secret", "credential", "auth_token", "sfdx_auth_url"):
+        with pytest.raises(PolicyViolation, match="credential"):
+            session.store.write_json(
+                f"unsafe-{key}.json",
+                {key: "do-not-store-this"},
+            )
+    for index, token in enumerate(
+        (
+            "ghp_abcdefghijklmnopqrstuvwxyz1234567890AB",
+            "github_pat_11AA0_this_is_a_long_fine_grained_token_value",
+            "xoxb" + "-123456789012-abcdefghijklmnop",
+            "AKIAIOSFODNN7EXAMPLE",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature_value_12345",
+        )
+    ):
+        with pytest.raises(PolicyViolation, match="credential"):
+            session.store.write_json(
+                f"unsafe-token-shape-{index}.json",
+                {"content": f"pasted value {token}"},
+            )
     with pytest.raises(PolicyViolation, match="absolute project or source path"):
         session.store.write_json("unsafe-path.json", {"source": str(source.resolve())})
     with pytest.raises(PolicyViolation, match="local absolute path"):
@@ -384,12 +404,25 @@ def test_portable_store_rejects_credentials_absolute_paths_and_runtime_state(
             "citation_id": "wiki:salesforce-security-section-2",
         },
     )
+    session.store.write_json(
+        "safe-request-token.json",
+        {
+            "token": "requestGeneration",
+            "content": (
+                "const token = ++this.requestGeneration;\n"
+                "const accessToken = response.accessToken;\n"
+                "Authorization: Bearer ${secure::token}\n"
+                "api_key: ${secure::sk-service-key}\n"
+            ),
+        },
+    )
 
     assert not (session.evidence_dir / "unsafe-secret.json").exists()
     assert not (session.evidence_dir / "unsafe-path.json").exists()
     assert not (session.evidence_dir / "unsafe-posix-path.json").exists()
     assert not (session.evidence_dir / "unsafe-windows-path.json").exists()
     assert (session.evidence_dir / "safe-citations.json").is_file()
+    assert (session.evidence_dir / "safe-request-token.json").is_file()
     assert not (session.evidence_dir / "state").exists()
 
 

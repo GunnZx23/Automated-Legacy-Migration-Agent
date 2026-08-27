@@ -21,7 +21,7 @@ from legacy_migration_agent.agent_runtime.correction import CorrectionApproval, 
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectManifestProposal,
     EngineerModelOutcome,
-    ValidatorAdvisory,
+    ValidatorModelAdvisory,
 )
 from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval, ModelCallRecord
 from legacy_migration_agent.application.agent_run import AgentRunConfig, AgentRunStatus
@@ -30,14 +30,6 @@ from legacy_migration_agent.application.final_review import (
     FinalReviewRecord,
     FinalReviewRequest,
     FinalReviewStatus,
-)
-from legacy_migration_agent.application.knowledge_store import (
-    KnowledgeAuditEvent,
-    KnowledgeInvalidationRecord,
-    KnowledgeLookupResult,
-    KnowledgePromotionDecision,
-    KnowledgePromotionRecord,
-    KnowledgePromotionRequest,
 )
 from legacy_migration_agent.contracts import (
     ChangeSet,
@@ -62,12 +54,6 @@ from legacy_migration_agent.graphs.graph_contracts import DependencyGraph
 from legacy_migration_agent.graphs.graph_evaluation import GraphEvaluationReport, GraphLabelSet
 from legacy_migration_agent.graphs.graph_store import StoredGraphSnapshot
 from legacy_migration_agent.knowledge.wiki import RetrievalTrace, WikiCatalog
-from legacy_migration_agent.knowledge.wiki_governance import (
-    WikiPromotionReceipt,
-    WikiPromotionReport,
-    WikiReviewDecision,
-    WikiReviewRequest,
-)
 from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MuleSoftCandidateValidationSummary,
 )
@@ -81,6 +67,8 @@ from legacy_migration_agent.platforms.salesforce_validation import (
     SalesforceValidationEvidence,
 )
 from legacy_migration_agent.workflow import ManifestApproval
+
+PUBLIC_SCHEMA_RELEASE = "v2.0"
 
 PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     # Human-gated workflow artifacts.
@@ -104,7 +92,7 @@ PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     # The three model-authored handoffs.
     ArchitectManifestProposal,
     EngineerModelOutcome,
-    ValidatorAdvisory,
+    ValidatorModelAdvisory,
     # Dependency graph inputs, storage, labels, and evaluation evidence.
     DependencyGraph,
     StoredGraphSnapshot,
@@ -115,20 +103,9 @@ PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     FinalReviewDecision,
     FinalReviewRecord,
     FinalReviewStatus,
-    # LLM Wiki catalog/retrieval plus review and one-use promotion evidence.
+    # LLM Wiki catalog and retrieval evidence.
     WikiCatalog,
     RetrievalTrace,
-    WikiReviewRequest,
-    WikiReviewDecision,
-    WikiPromotionReport,
-    WikiPromotionReceipt,
-    # Governed cross-run knowledge lifecycle and append-only audit envelope.
-    KnowledgePromotionRequest,
-    KnowledgePromotionDecision,
-    KnowledgePromotionRecord,
-    KnowledgeInvalidationRecord,
-    KnowledgeLookupResult,
-    KnowledgeAuditEvent,
     # Salesforce and MuleSoft normalized validation evidence boundaries.
     SalesforceValidationContext,
     SalesforceValidationEvidence,

@@ -4,7 +4,9 @@
   "runtime_relative_path": "mule4/customer-status-api/src/test/munit/controller-customer-status-behavior-test.xml",
   "suite_name": "controller-customer-status-behavior-test-suite",
   "test_name": "controller-build-customer-status-response-contract",
-  "flow_name": "build-customer-status-response",
+  "flow_name_placeholder": "__CONTROLLER_ENTRY_FLOW__",
+  "request_method": "GET",
+  "request_path": "/api/customers/CTRL-CUST-9001/status",
   "expectations": [
     {
       "expression": "#[payload.customerId]",
@@ -19,5 +21,5 @@
       "matcher": "#[MunitTools::equalTo(\"synthetic-fixture\")]"
     }
   ],
-  "suite_sha256": "sha256:1c7ba92ae284754626d4790f3874cd61970731bb7f6317b0e6d8193d05add8a0"
+  "suite_sha256": "sha256:1a429b0c94c46ccab23eadc229f1a04d52e739f6b93d88174bacac988a5b4dda"
 }

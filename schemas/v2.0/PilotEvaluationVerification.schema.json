@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "agent_run_receipts_verified": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Agent Run Receipts Verified",
+      "type": "integer"
+    },
+    "agent_run_sources_reverified": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Agent Run Sources Reverified",
+      "type": "integer"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "measured_cells": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Measured Cells",
+      "type": "integer"
+    },
+    "not_performed_cells": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Not Performed Cells",
+      "type": "integer"
+    },
+    "planned_cells": {
+      "const": 2,
+      "default": 2,
+      "title": "Planned Cells",
+      "type": "integer"
+    },
+    "portable_agent_receipts_only": {
+      "title": "Portable Agent Receipts Only",
+      "type": "boolean"
+    },
+    "registry_id": {
+      "const": "legacy-migration-pilot-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "verified": {
+      "const": true,
+      "default": true,
+      "title": "Verified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "registry_id",
+    "measured_cells",
+    "not_performed_cells",
+    "agent_run_receipts_verified",
+    "agent_run_sources_reverified",
+    "portable_agent_receipts_only",
+    "complete"
+  ],
+  "title": "PilotEvaluationVerification",
+  "type": "object"
+}

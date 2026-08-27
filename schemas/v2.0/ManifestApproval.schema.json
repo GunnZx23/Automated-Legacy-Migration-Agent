@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "ApprovalAction": {
+      "enum": [
+        "freeze_scope",
+        "approve_manifest",
+        "expand_scope",
+        "accept_high_impact_change",
+        "commit",
+        "push",
+        "open_pull_request",
+        "sandbox_validation",
+        "production_validation",
+        "deploy",
+        "quick_deploy",
+        "destructive_change",
+        "publish"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Human response bound to one decision and one manifest byte model.",
+  "properties": {
+    "comment": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Comment",
+      "type": "string"
+    },
+    "decision_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_action": {
+      "$ref": "#/$defs/ApprovalAction"
+    },
+    "reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "selection": {
+      "pattern": "^(approve|reject|modify)$",
+      "title": "Selection",
+      "type": "string"
+    }
+  },
+  "required": [
+    "decision_id",
+    "request_id",
+    "manifest_id",
+    "manifest_digest",
+    "requested_action",
+    "selection",
+    "reviewer"
+  ],
+  "title": "ManifestApproval",
+  "type": "object"
+}

@@ -24,6 +24,7 @@ from pydantic import Field, field_validator
 from legacy_migration_agent.contracts import Sha256Digest, StrictModel, validate_relative_path
 from legacy_migration_agent.core.integrity import canonical_json_bytes
 from legacy_migration_agent.core.policies import PolicyViolation
+from legacy_migration_agent.core.redaction import assert_no_high_confidence_secrets
 
 _PLATFORM_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _HANDLE_PATTERN = re.compile(r"^[0-9a-f]{24}$")
@@ -251,6 +252,10 @@ def _prepare_files(files: Sequence[tuple[str, str]]) -> tuple[tuple[str, bytes],
         if path in seen:
             raise ValueError(f"candidate file path is duplicated: {path}")
         seen.add(path)
+        assert_no_high_confidence_secrets(
+            content,
+            boundary="candidate content",
+        )
         try:
             payload = content.encode("utf-8", errors="strict")
         except UnicodeEncodeError as exc:

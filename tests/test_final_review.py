@@ -10,14 +10,19 @@ from pydantic import AnyHttpUrl, BaseModel
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectContext,
     ArchitectManifestProposal,
+    ArchitectModelContext,
     ArchitectRun,
+    ArchitectSemanticDecision,
     EngineerFilePlan,
     EngineerFileUpdate,
     EngineerModelOutcome,
     EngineerRun,
+    SourceFileEvidence,
     ValidatorAdvisory,
+    ValidatorAgent,
     ValidatorAssessment,
     ValidatorEvidenceContext,
+    expand_architect_proposal,
 )
 from legacy_migration_agent.agent_runtime.openai_model import ModelCallRecord
 from legacy_migration_agent.application.final_review import (
@@ -33,15 +38,12 @@ from legacy_migration_agent.contracts import (
     ChangeSet,
     CheckResult,
     CheckStatus,
-    DependencyEvidence,
     EnvironmentKind,
     MigrationManifest,
     MigrationRequest,
     MigrationTarget,
     Platform,
     ToolReceipt,
-    TransformationStep,
-    ValidationCommand,
     ValidationDisposition,
     ValidationReport,
 )
@@ -73,9 +75,9 @@ def _model_call(
     output_value: BaseModel | None = None,
 ) -> ModelCallRecord:
     version = {
-        "architect": "architect/v2",
-        "engineer": "engineer/v11",
-        "validator": "validator/v1",
+        "architect": "architect/v4",
+        "engineer": "engineer/v13",
+        "validator": "validator/v3",
     }[role]
     return ModelCallRecord(
         provider="offline-provider",
@@ -94,141 +96,7 @@ def _model_call(
     )
 
 
-def _completed_session(
-    tmp_path: Path,
-) -> tuple[
-    AgentRunSession,
-    MigrationRequest,
-    MigrationManifest,
-    ChangeSet,
-    ValidationReport,
-]:
-    project = tmp_path / "project"
-    source = project / "source"
-    source.mkdir(parents=True)
-    (source / "legacy.txt").write_text("legacy\n", encoding="utf-8")
-    revision = snapshot_tree(source).revision
-    request = MigrationRequest(
-        request_id="request-final-review",
-        platform=Platform.SALESFORCE,
-        repository="source",
-        base_revision=revision,
-        target=MigrationTarget(
-            entry_path="legacy.txt",
-            target_runtime="Salesforce API 67.0",
-            source_version="Salesforce API 67.0",
-            target_version="Salesforce API 67.0",
-            description="Create one additive synthetic target.",
-        ),
-        requested_at=datetime(2026, 8, 24, tzinfo=UTC),
-    )
-    session = AgentRunSession.initialize(
-        project,
-        project / "runs" / "final-review",
-        run_id="run-final-review",
-        thread_id="thread-final-review",
-        slice_id="salesforce-vf-to-lwc",
-        source_root="source",
-        request_digest=artifact_digest(request),
-        agent_definition_digests=DIGESTS,
-        provider_id="offline-provider",
-        model_id="offline-model",
-    )
-    manifest = MigrationManifest(
-        manifest_id="manifest-final-review",
-        request_id=request.request_id,
-        platform=request.platform,
-        base_revision=revision,
-        approved_paths=("target.txt",),
-        dependencies=(
-            DependencyEvidence(
-                path="legacy.txt",
-                relation="source",
-                source="dependency-graph",
-            ),
-        ),
-        transformations=(
-            TransformationStep(
-                step_id="step-create-target",
-                description="Create the additive target.",
-                input_paths=("legacy.txt",),
-                output_paths=("target.txt",),
-            ),
-        ),
-        validation_plan=(
-            ValidationCommand(
-                check_id="check-local",
-                command_id="local-contract",
-                purpose="Validate the synthetic target.",
-            ),
-        ),
-        required_approvals=(ApprovalAction.APPROVE_MANIFEST,),
-    )
-    change_set = ChangeSet(
-        change_set_id="changes-final-review",
-        request_id=request.request_id,
-        manifest_id=manifest.manifest_id,
-        base_revision=revision,
-        changed_paths=("target.txt",),
-        unified_diff=(
-            "diff --git a/target.txt b/target.txt\n"
-            "new file mode 100644\n"
-            "--- /dev/null\n"
-            "+++ b/target.txt\n"
-            "@@ -0,0 +1 @@\n"
-            "+target\n"
-        ),
-    )
-    completed = datetime(2026, 8, 24, 12, tzinfo=UTC)
-    receipt = ToolReceipt(
-        receipt_id="receipt-local-contract",
-        tool_id="local-contract",
-        request_id=request.request_id,
-        run_id=session.context.run_id,
-        attempt=1,
-        base_revision=revision,
-        environment=EnvironmentKind.LOCAL,
-        input_artifact_digest=artifact_digest(change_set),
-        operation="controller-local-contract",
-        working_directory="source",
-        started_at=completed,
-        ended_at=completed,
-        exit_code=0,
-        terminal=True,
-    )
-    report = ValidationReport(
-        report_id="report-final-review",
-        request_id=request.request_id,
-        manifest_id=manifest.manifest_id,
-        change_set_id=change_set.change_set_id,
-        base_revision=revision,
-        results=(
-            CheckResult(
-                check_id="check-local",
-                command_id="local-contract",
-                required=True,
-                status=CheckStatus.PASSED,
-                receipt=receipt,
-                summary="The exact local contract passed.",
-            ),
-        ),
-        disposition=ValidationDisposition.READY_FOR_HUMAN_REVIEW,
-        attempt=1,
-        completed_at=completed,
-    )
-    _write_role_evidence(session, request, manifest, change_set, report)
-    _freeze_completed_lifecycle(session)
-    return session, request, manifest, change_set, report
-
-
-def _write_role_evidence(
-    session: AgentRunSession,
-    request: MigrationRequest,
-    manifest: MigrationManifest,
-    change_set: ChangeSet,
-    report: ValidationReport,
-) -> None:
-    root = f"model-runs/{request.request_id}"
+def _architect_context(request: MigrationRequest) -> ArchitectContext:
     graph = DependencyGraph(
         base_revision=request.base_revision,
         entry_paths=(request.target.entry_path,),
@@ -312,31 +180,176 @@ def _write_role_evidence(
         max_changed_files=1,
         required_approval_actions=(ApprovalAction.APPROVE_MANIFEST,),
     )
-    context = ArchitectContext(
-        request=request,
-        dependency_graph=graph,
-        dependency_graph_digest=artifact_digest(graph),
-        wiki_trace=wiki,
-        wiki_trace_digest=artifact_digest(wiki),
+    return ArchitectContext(
+        model_context=ArchitectModelContext(
+            request=request,
+            dependency_graph=graph,
+            dependency_graph_digest=artifact_digest(graph),
+            source_files=(
+                SourceFileEvidence(
+                    path=request.target.entry_path,
+                    sha256="sha256:" + hashlib.sha256(b"legacy\n").hexdigest(),
+                    content="legacy\n",
+                ),
+            ),
+            wiki_trace=wiki,
+            wiki_trace_digest=artifact_digest(wiki),
+        ),
         platform_adapter=PlatformAdapter.bind(
             adapter_id="final-review-adapter",
             policy=policy,
         ),
     )
-    proposal = ArchitectManifestProposal(
-        manifest=manifest,
-        scope_policy_digest=context.platform_adapter.scope_policy_digest,
-        public_decisions=("Use an additive target.",),
+
+
+def _architect_output(context: ArchitectContext) -> ArchitectManifestProposal:
+    return ArchitectManifestProposal(
+        semantic_decisions=(
+            ArchitectSemanticDecision(
+                decision_id="additive-target",
+                category="target_architecture",
+                summary="Use an additive target.",
+                evidence_ids=("source-node", "wiki-page"),
+            ),
+        ),
         cited_graph_nodes=("source-node",),
         cited_wiki_pages=("wiki-page",),
     )
+
+
+def _completed_session(
+    tmp_path: Path,
+    *,
+    validator_unavailable: bool = False,
+) -> tuple[
+    AgentRunSession,
+    MigrationRequest,
+    MigrationManifest,
+    ChangeSet,
+    ValidationReport,
+]:
+    project = tmp_path / "project"
+    source = project / "source"
+    source.mkdir(parents=True)
+    (source / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+    revision = snapshot_tree(source).revision
+    request = MigrationRequest(
+        request_id="request-final-review",
+        platform=Platform.SALESFORCE,
+        repository="source",
+        base_revision=revision,
+        target=MigrationTarget(
+            entry_path="legacy.txt",
+            target_runtime="Salesforce API 67.0",
+            source_version="Salesforce API 67.0",
+            target_version="Salesforce API 67.0",
+            description="Create one additive synthetic target.",
+        ),
+        requested_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    session = AgentRunSession.initialize(
+        project,
+        project / "runs" / "final-review",
+        run_id="run-final-review",
+        thread_id="thread-final-review",
+        slice_id="salesforce-vf-to-lwc",
+        source_root="source",
+        request_digest=artifact_digest(request),
+        agent_definition_digests=DIGESTS,
+        provider_id="offline-provider",
+        model_id="offline-model",
+    )
+    architect_context = _architect_context(request)
+    manifest = expand_architect_proposal(
+        _architect_output(architect_context),
+        architect_context,
+    ).manifest
+    change_set = ChangeSet(
+        change_set_id="changes-final-review",
+        request_id=request.request_id,
+        manifest_id=manifest.manifest_id,
+        base_revision=revision,
+        changed_paths=("target.txt",),
+        unified_diff=(
+            "diff --git a/target.txt b/target.txt\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/target.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+target\n"
+        ),
+    )
+    completed = datetime(2026, 8, 24, 12, tzinfo=UTC)
+    receipt = ToolReceipt(
+        receipt_id="receipt-local-contract",
+        tool_id="local-contract",
+        request_id=request.request_id,
+        run_id=session.context.run_id,
+        attempt=1,
+        base_revision=revision,
+        environment=EnvironmentKind.LOCAL,
+        input_artifact_digest=artifact_digest(change_set),
+        operation="controller-local-contract",
+        working_directory="source",
+        started_at=completed,
+        ended_at=completed,
+        exit_code=0,
+        terminal=True,
+    )
+    report = ValidationReport(
+        report_id="report-final-review",
+        request_id=request.request_id,
+        manifest_id=manifest.manifest_id,
+        change_set_id=change_set.change_set_id,
+        base_revision=revision,
+        results=(
+            CheckResult(
+                check_id="local-contract",
+                command_id="local-contract",
+                required=True,
+                status=CheckStatus.PASSED,
+                receipt=receipt,
+                summary="The exact local contract passed.",
+            ),
+        ),
+        disposition=ValidationDisposition.READY_FOR_HUMAN_REVIEW,
+        attempt=1,
+        completed_at=completed,
+    )
+    _write_role_evidence(
+        session,
+        request,
+        manifest,
+        change_set,
+        report,
+        validator_unavailable=validator_unavailable,
+    )
+    _freeze_completed_lifecycle(session)
+    return session, request, manifest, change_set, report
+
+
+def _write_role_evidence(
+    session: AgentRunSession,
+    request: MigrationRequest,
+    manifest: MigrationManifest,
+    change_set: ChangeSet,
+    report: ValidationReport,
+    *,
+    validator_unavailable: bool,
+) -> None:
+    root = f"model-runs/{request.request_id}"
+    context = _architect_context(request)
+    agent_output = _architect_output(context)
+    proposal = expand_architect_proposal(agent_output, context)
+    assert proposal.manifest == manifest
     architect = ArchitectRun(
+        agent_output=agent_output,
         proposal=proposal,
         model_call=_model_call(
             "architect",
             DIGESTS.architect,
-            input_value=context,
-            output_value=proposal,
+            input_value=context.model_context,
+            output_value=agent_output,
         ),
     )
     file_plan = EngineerFilePlan(
@@ -359,24 +372,32 @@ def _write_role_evidence(
         report_digest=artifact_digest(report),
         assessment="supports_report",
         summary="The deterministic evidence supports final human review.",
-        cited_check_ids=("check-local",),
+        cited_check_ids=("local-contract",),
         cited_receipt_digests=(artifact_digest(report.results[0].receipt),),
         advisory_only=True,
     )
     validator_context = ValidatorEvidenceContext.freeze(manifest, change_set, report)
-    validator = ValidatorAssessment(
-        advisory=advisory,
-        authoritative_disposition=report.disposition,
-        all_required_checks_terminal_and_passed=True,
-        model_call=_model_call(
-            "validator",
-            DIGESTS.validator,
-            input_value=validator_context,
-            output_value=advisory,
-        ),
+    validator = (
+        ValidatorAgent.unavailable(
+            validator_context,
+            reason_code="model_call_failed",
+            attempted=True,
+        )
+        if validator_unavailable
+        else ValidatorAssessment(
+            advisory=advisory,
+            authoritative_disposition=report.disposition,
+            all_required_checks_terminal_and_passed=True,
+            model_call=_model_call(
+                "validator",
+                DIGESTS.validator,
+                input_value=validator_context,
+                output_value=advisory,
+            ),
+        )
     )
-    session.store.write_json(f"{root}/dependency-graph.json", graph)
-    session.store.write_json(f"{root}/wiki-trace.json", wiki)
+    session.store.write_json(f"{root}/dependency-graph.json", context.dependency_graph)
+    session.store.write_json(f"{root}/wiki-trace.json", context.wiki_trace)
     session.store.write_json(f"{root}/architect-context.json", context)
     session.store.write_json(f"{root}/architect.json", architect)
     session.store.write_json(f"{root}/engineer-attempt-1.json", engineer)
@@ -450,6 +471,26 @@ def test_final_review_is_durable_and_grants_no_external_authority(tmp_path: Path
     assert session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND)
 
 
+def test_final_review_accepts_explicit_validator_advisory_unavailable_evidence(
+    tmp_path: Path,
+) -> None:
+    session, migration_request, manifest, change_set, report = _completed_session(
+        tmp_path,
+        validator_unavailable=True,
+    )
+    validator = ValidatorAssessment.model_validate(
+        session.store.read_json(
+            f"model-runs/{migration_request.request_id}/validator-attempt-1.json"
+        )
+    )
+
+    review = _request(session, migration_request, manifest, change_set, report)
+
+    assert validator.advisory.assessment == "unavailable"
+    assert validator.unavailable_receipt is not None
+    assert review.validator_assessment_digest == artifact_digest(validator)
+
+
 @pytest.mark.parametrize(
     ("selection", "outcome", "next_action"),
     [
@@ -511,6 +552,7 @@ def test_final_review_rejects_unpersisted_or_drifting_role_artifacts(tmp_path: P
         update={
             "transformations": (
                 manifest.transformations[0].model_copy(update={"description": "Drifted plan."}),
+                *manifest.transformations[1:],
             )
         }
     )

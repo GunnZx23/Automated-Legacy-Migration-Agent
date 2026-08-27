@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "case_count": {
+      "const": 6,
+      "default": 6,
+      "title": "Case Count",
+      "type": "integer"
+    },
+    "cell_count": {
+      "const": 72,
+      "default": 72,
+      "title": "Cell Count",
+      "type": "integer"
+    },
+    "configuration_count": {
+      "const": 4,
+      "default": 4,
+      "title": "Configuration Count",
+      "type": "integer"
+    },
+    "measured_cell_count": {
+      "const": 0,
+      "default": 0,
+      "title": "Measured Cell Count",
+      "type": "integer"
+    },
+    "registry_id": {
+      "const": "legacy-migration-benchmark-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "repetitions": {
+      "const": 3,
+      "default": 3,
+      "title": "Repetitions",
+      "type": "integer"
+    },
+    "verified": {
+      "const": true,
+      "default": true,
+      "title": "Verified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "registry_id"
+  ],
+  "title": "EvaluationVerification",
+  "type": "object"
+}

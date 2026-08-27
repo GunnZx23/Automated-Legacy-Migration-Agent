@@ -5,6 +5,11 @@ platform: salesforce
 public_synthetic: true
 api_version: "67.0"
 migration_kind: visualforce_to_lwc
+fixture_scope:
+  source_only: true
+  shipped_tree: input
+  candidate_tree: not_shipped
+  candidate_origin: agent_generated_in_isolated_workspace
 
 source:
   root: input
@@ -12,49 +17,6 @@ source:
   controller: force-app/main/default/classes/LegacyAccountContactExplorerController.cls
   unit_test: force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls
   permission_set: force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml
-
-expected:
-  root: expected
-  component: force-app/main/default/lwc/accountContactExplorer
-  controller: force-app/main/default/classes/AccountContactExplorerController.cls
-  unit_test: force-app/main/default/classes/AccountContactExplorerControllerTest.cls
-  jest_test: force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js
-  permission_set: force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml
-  package_manifest: manifest/package.xml
-  preserved_legacy_files:
-    - sfdx-project.json
-    - force-app/main/default/pages/LegacyAccountContactExplorer.page
-    - force-app/main/default/pages/LegacyAccountContactExplorer.page-meta.xml
-    - force-app/main/default/classes/LegacyAccountContactExplorerController.cls
-    - force-app/main/default/classes/LegacyAccountContactExplorerController.cls-meta.xml
-    - force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls
-    - force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls-meta.xml
-  added_files:
-    - package.json
-    - package-lock.json
-    - jest.config.js
-    - manifest/package.xml
-    - force-app/main/default/classes/AccountContactExplorerController.cls
-    - force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml
-    - force-app/main/default/classes/AccountContactExplorerControllerTest.cls
-    - force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml
-    - force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html
-    - force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js
-    - force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css
-    - force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml
-    - force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js
-    - force-app/main/default/lwc/accountContactExplorer/__tests__/data/accounts.json
-    - force-app/main/default/lwc/accountContactExplorer/__tests__/data/contacts.json
-  modified_files:
-    - force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml
-  destructive_changes: []
-  retirement_candidates:
-    - force-app/main/default/pages/LegacyAccountContactExplorer.page
-    - force-app/main/default/pages/LegacyAccountContactExplorer.page-meta.xml
-    - force-app/main/default/classes/LegacyAccountContactExplorerController.cls
-    - force-app/main/default/classes/LegacyAccountContactExplorerController.cls-meta.xml
-    - force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls
-    - force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls-meta.xml
 
 behavior:
   accounts:
@@ -94,16 +56,16 @@ security:
 
 validation:
   local_required:
-    - id: fixture-structure
-      assertion: Every declared path exists below its declared root.
-    - id: legacy-preservation
-      assertion: Every preserved legacy artifact is byte-for-byte identical in input and expected.
-    - id: lwc-jest
+    - id: input-fixture-structure
+      assertion: Every declared source path exists below the input root.
+    - id: generated-candidate-contract
+      assertion: Every model-generated candidate must pass the controller-owned Salesforce static and dependency checks.
+    - id: controller-lwc-jest
       assertions:
-        - Out-of-order imperative Apex responses cannot replace data for the current Account selection.
-      working_directory: expected
-      install_command: npm ci
-      command: npm run test:unit
+        - Candidate-authored Jest tests execute as required evidence.
+        - The independent controller suite verifies rendered behavior and stale-response handling.
+      working_directory: isolated generated candidate
+      command: controller-owned pinned Jest validation
   org_required_for_deployment_claim:
     - id: apex-tests
       tests:
@@ -113,8 +75,8 @@ validation:
         - Account results are ordered and capped at 50.
         - Contact results are filtered by Account, ordered by LastName then FirstName, and capped at 100.
     - id: metadata-validation
-      manifest: expected/manifest/package.xml
-  final_state: ready_for_human_review
+      manifest: generated candidate manifest/package.xml
+  final_state: source_fixture_ready_for_model_generation
 
 decision_required:
   action: destructive_change
@@ -123,6 +85,6 @@ decision_required:
 acceptance:
   - All version-bearing Salesforce metadata and project/package manifests use API version 67.0.
   - The LWC is exposed on Lightning App pages and as a Lightning tab.
-  - The expected permission set grants read but no create, edit, or delete access.
+  - The generated permission set grants read but no create, edit, or delete access.
   - Null Account selection returns no contacts and never issues an unbounded query.
   - No production, deployment, commit, push, or destructive action is implied.

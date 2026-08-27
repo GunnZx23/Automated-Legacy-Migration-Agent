@@ -21,6 +21,8 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     EngineerRun,
     ValidatorAssessment,
     ValidatorEvidenceContext,
+    ValidatorModelAdvisory,
+    expand_architect_proposal,
     validate_architect_proposal,
 )
 from legacy_migration_agent.contracts import (
@@ -650,7 +652,11 @@ def _validate_persisted_role_artifacts(
         raise PolicyViolation("final-review dependency graph differs from Architect context")
     if context.wiki_trace.model_dump(mode="json") != wiki_payload:
         raise PolicyViolation("final-review Wiki trace differs from Architect context")
-    validate_architect_proposal(architect.proposal, context)
+    validate_architect_proposal(architect.proposal, context, architect.agent_output)
+    if architect.proposal != expand_architect_proposal(architect.agent_output, context):
+        raise PolicyViolation(
+            "final-review Architect expansion differs from controller-owned policy"
+        )
     if architect.proposal.manifest != manifest:
         raise PolicyViolation("final-review manifest differs from the Architect artifact")
     if engineer.change_set != change_set:
@@ -667,11 +673,14 @@ def _validate_persisted_role_artifacts(
         or not validator.all_required_checks_terminal_and_passed
     ):
         raise PolicyViolation("final-review Validator evidence does not bind the exact report")
-    calls = (
+    calls = [
         (architect.model_call, session.context.agent_definition_digests.architect),
         (engineer.model_call, session.context.agent_definition_digests.engineer),
-        (validator.model_call, session.context.agent_definition_digests.validator),
-    )
+    ]
+    if validator.model_call is not None:
+        calls.append((validator.model_call, session.context.agent_definition_digests.validator))
+    elif validator.unavailable_receipt is None:
+        raise PolicyViolation("final-review Validator advisory availability is unproven")
     for call, expected_definition_digest in calls:
         if (
             call.provider != session.context.provider_id
@@ -681,13 +690,26 @@ def _validate_persisted_role_artifacts(
             raise PolicyViolation("final-review role identity differs from the run session")
         if call.live_invocation and not call.store_false_sent:
             raise PolicyViolation("final-review live model evidence lacks storage control")
-    expected_model_digests = (
-        (architect.model_call.input_digest, artifact_digest(context)),
-        (architect.model_call.output_digest, artifact_digest(architect.proposal)),
+    expected_model_digests = [
+        (architect.model_call.input_digest, artifact_digest(context.model_context)),
+        (architect.model_call.output_digest, artifact_digest(architect.agent_output)),
         (engineer.model_call.output_digest, artifact_digest(engineer.model_outcome)),
-        (validator.model_call.input_digest, artifact_digest(validator_context)),
-        (validator.model_call.output_digest, artifact_digest(validator.advisory)),
-    )
+    ]
+    if validator.model_call is not None:
+        try:
+            model_advisory = ValidatorModelAdvisory.model_validate(
+                validator.advisory.model_dump(mode="python")
+            )
+        except (TypeError, ValueError) as exc:
+            raise PolicyViolation(
+                "final-review completed Validator advisory is outside the model schema"
+            ) from exc
+        expected_model_digests.extend(
+            (
+                (validator.model_call.input_digest, artifact_digest(validator_context)),
+                (validator.model_call.output_digest, artifact_digest(model_advisory)),
+            )
+        )
     if any(actual != expected for actual, expected in expected_model_digests):
         raise PolicyViolation("final-review model-call evidence differs from persisted handoffs")
     return _FinalReviewRoleEvidence(

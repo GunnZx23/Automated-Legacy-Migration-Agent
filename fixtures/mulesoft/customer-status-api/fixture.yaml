@@ -4,6 +4,11 @@ title: Customer Status API
 platform: mulesoft
 public_synthetic: true
 migration_kind: mule3_to_mule4_side_by_side
+fixture_scope:
+  source_only: true
+  shipped_tree: input
+  candidate_tree: not_shipped
+  candidate_origin: agent_generated_in_isolated_workspace
 
 source:
   root: input
@@ -20,38 +25,6 @@ source:
   munit_syntax: "1.x"
   entrypoint: legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
   unit_test: legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
-
-target:
-  root: expected
-  project_root: mule4/customer-status-api
-  runtime: "4.9.20"
-  release_channel: LTS
-  java: "17"
-  dataweave: "2.0"
-  munit: "3.7.3"
-  mule_maven_plugin: "4.10.1"
-  http_connector: "1.12.0"
-  entrypoint: mule4/customer-status-api/src/main/mule/customer-status-api.xml
-  unit_test: mule4/customer-status-api/src/test/munit/customer-status-api-test.xml
-
-expected:
-  preserved_files:
-    - legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
-    - legacy-mule3/customer-status-api/src/main/app/mule-app.properties
-    - legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
-  added_files:
-    - mule4/customer-status-api/pom.xml
-    - mule4/customer-status-api/src/main/mule/customer-status-api.xml
-    - mule4/customer-status-api/src/main/resources/application.yaml
-    - mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl
-    - mule4/customer-status-api/mule-artifact.json
-    - mule4/customer-status-api/src/test/munit/customer-status-api-test.xml
-  modified_files: []
-  deleted_files: []
-  retirement_candidates:
-    - legacy-mule3/customer-status-api/src/main/app/customer-status-api.xml
-    - legacy-mule3/customer-status-api/src/main/app/mule-app.properties
-    - legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml
 
 behavior:
   method: GET
@@ -79,24 +52,28 @@ validation:
     - exact-inventory
     - legacy-byte-preservation
     - safe-structured-parsing
-    - mule3-domain-contract
-    - mule4-domain-contract
-    - dataweave-version-mapping
-    - munit-version-mapping
+    - mule4-public-interface
+    - dataweave-2-compatibility
+    - candidate-munit-structure
+    - pinned-toolchain-allowlist
     - pom-artifact-version-consistency
+    - loopback-only-config
     - no-secrets
     - no-outbound-connectors
   local_static_evidence_boundary: >-
-    These checks assert fixture-specific structure, attributes, text tokens,
-    pinned coordinates, inventory, preservation, and bounded safety patterns.
-    They do not compile DataWeave or execute Mule, HTTP, Maven, or MUnit.
+    These checks assert approved inventory, source preservation, safe parsing,
+    the normalized public route, loopback-only networking, DataWeave 2 syntax,
+    candidate-owned test structure, pinned coordinates, and bounded safety
+    patterns. They do not prescribe private flow names, one XML topology, test
+    titles, or assertion wording, and they do not compile DataWeave or execute
+    Mule, HTTP, Maven, or MUnit.
   runtime_authority: disabled
   runtime_authority_reason: No reviewed source-pinned immutable offline image is attested.
   maven_dependency_resolution: not_run
   maven_package: not_run
   munit_runtime: unavailable
   deployment: not_run
-  final_state: static_fixture_contract_checked_runtime_unverified
+  final_state: source_fixture_only_candidate_not_generated
 
 decision_required:
   action: destructive_change

@@ -119,11 +119,30 @@ _STANDARD_SCHEMA: dict[str, tuple[str, ...]] = {
         "Phone",
         "Title",
     ),
+    "Profile": (
+        "Id",
+        "Name",
+    ),
+    "User": (
+        "Id",
+        "Alias",
+        "CommunityNickname",
+        "Email",
+        "EmailEncodingKey",
+        "LanguageLocaleKey",
+        "LastName",
+        "LocaleSidKey",
+        "ProfileId",
+        "TimeZoneSidKey",
+        "Username",
+    ),
 }
 
 _RELATIONSHIP_TO_OBJECT = {
     "accounts": "Account",
     "contacts": "Contact",
+    "profiles": "Profile",
+    "users": "User",
 }
 
 _PLATFORM_APEX_TYPES = {

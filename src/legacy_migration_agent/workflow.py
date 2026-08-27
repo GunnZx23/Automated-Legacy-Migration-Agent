@@ -48,6 +48,7 @@ from legacy_migration_agent.contracts import (
     ValidationReport,
 )
 from legacy_migration_agent.core.integrity import artifact_digest
+from legacy_migration_agent.core.observability import lifecycle_event
 from legacy_migration_agent.core.policies import (
     PolicyViolation,
     validate_change_set,
@@ -910,6 +911,18 @@ class MigrationWorkflow:
             manifest,
             change_set,
             report,
+        )
+        lifecycle_event(
+            "correction.classified",
+            correction_id=correction.correction_id,
+            attempt=attempt,
+            disposition=report.disposition.value,
+            action=correction.action.value,
+            next_attempt=correction.next_attempt,
+            maximum_attempts=correction.maximum_attempts,
+            failed_signal_count=len(correction.failed_check_ids),
+            failed_signals=",".join(correction.failed_check_ids) or "none",
+            retry_available=correction.action is CorrectionAction.RETRY_IMPLEMENTATION,
         )
         return {
             "validation_report": report,

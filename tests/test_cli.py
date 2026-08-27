@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from legacy_migration_agent.application.migration_scenarios import migration_scenario
 from legacy_migration_agent.cli import build_parser, main
 from legacy_migration_agent.contracts import (
     DependencyEvidence,
@@ -20,7 +21,7 @@ from legacy_migration_agent.contracts import (
     TransformationStep,
     ValidationCommand,
 )
-from legacy_migration_agent.core.workspace import content_revision
+from legacy_migration_agent.core.workspace import content_revision, snapshot_tree
 from legacy_migration_agent.graphs.dependency_graph import build_salesforce_dependency_graph
 from legacy_migration_agent.schema_compatibility import PUBLIC_SCHEMA_MODELS
 
@@ -170,7 +171,7 @@ def test_wiki_search_returns_a_trace(capsys) -> None:
             "--max-primary-hits",
             "1",
             "--as-of",
-            "2026-08-26",
+            "2026-08-27",
         ]
     )
 
@@ -201,7 +202,8 @@ def test_agent_request_create_binds_the_local_source_without_external_action(
     tmp_path: Path,
     capsys,
 ) -> None:
-    source = tmp_path / "source"
+    scenario = migration_scenario(Platform.SALESFORCE)
+    source = tmp_path / scenario.source_root
     shutil.copytree(
         PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input",
         source,
@@ -214,12 +216,8 @@ def test_agent_request_create_binds_the_local_source_without_external_action(
             str(tmp_path),
             "--request-id",
             "cli-salesforce-request",
-            "--platform",
-            "salesforce",
-            "--source-root",
-            "source",
-            "--description",
-            "Migrate the bounded Visualforce fixture to LWC and Apex.",
+            "--scenario-id",
+            scenario.scenario_id,
             "--requested-at",
             "2026-08-25T12:00:00+00:00",
             "--output",
@@ -230,10 +228,57 @@ def test_agent_request_create_binds_the_local_source_without_external_action(
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["external_action_performed"] is False
+    assert payload["scenario_id"] == scenario.scenario_id
     assert payload["platform"] == "salesforce"
     request = json.loads((tmp_path / "request.json").read_text(encoding="utf-8"))
     assert request["base_revision"].startswith("sha256:")
     assert request["target"]["target_runtime"] == "Lightning Web Components with Apex"
+
+
+def test_launch_cli_exposes_scenario_identity_not_free_form_authority() -> None:
+    parser = build_parser()
+    subparsers = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+
+    request_destinations = {
+        action.dest for action in subparsers.choices["agent-request-create"]._actions
+    }
+    start_destinations = {action.dest for action in subparsers.choices["agent-run-start"]._actions}
+    assert "scenario_id" in request_destinations
+    assert "scenario_id" in start_destinations
+    assert not {"platform", "source_root", "description"} & request_destinations
+    assert not {"platform", "source_root", "description", "as_of"} & start_destinations
+
+
+def test_agent_request_create_rejects_unknown_scenario_before_writing_output(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    before = snapshot_tree(tmp_path)
+    output = tmp_path / "request.json"
+
+    result = main(
+        [
+            "agent-request-create",
+            "--project-root",
+            str(tmp_path),
+            "--request-id",
+            "cli-unknown-scenario",
+            "--scenario-id",
+            "salesforce-rust-service",
+            "--requested-at",
+            "2026-08-25T12:00:00+00:00",
+            "--output",
+            "request.json",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "agent_request_invalid"
+    assert not output.exists()
+    assert snapshot_tree(tmp_path) == before
 
 
 def test_run_and_final_review_parsers_require_identity_human_and_live_gates() -> None:
@@ -250,12 +295,10 @@ def test_run_and_final_review_parsers_require_identity_human_and_live_gates() ->
                 "run-1",
                 "--thread-id",
                 "thread-1",
-                "--source-root",
-                "source",
+                "--scenario-id",
+                "salesforce-vf-to-lwc",
                 "--request",
                 "request.json",
-                "--as-of",
-                "2026-08-25",
                 "--model-id",
                 "approved-model",
                 "--api-key-env",
@@ -274,12 +317,10 @@ def test_run_and_final_review_parsers_require_identity_human_and_live_gates() ->
             "run-1",
             "--thread-id",
             "thread-1",
-            "--source-root",
-            "source",
+            "--scenario-id",
+            "salesforce-vf-to-lwc",
             "--request",
             "request.json",
-            "--as-of",
-            "2026-08-25",
             "--model-id",
             "approved-model",
             "--api-key-env",
@@ -329,6 +370,28 @@ def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
                     timeout,
                 ]
             )
+
+
+def test_vscode_launch_profile_opens_only_the_integrated_browser() -> None:
+    launch = json.loads((PROJECT_ROOT / ".vscode/launch.json").read_text(encoding="utf-8"))
+
+    assert launch["version"] == "0.2.0"
+    assert len(launch["configurations"]) == 1
+    profile = launch["configurations"][0]
+    assert profile["name"] == "Agent UI: VS Code Integrated Browser"
+    assert profile["type"] == "node-terminal"
+    assert profile["request"] == "launch"
+    assert profile["cwd"] == "${workspaceFolder}"
+    assert profile["command"] == (
+        "uv run --frozen legacy-migration-agent ui --project-root . "
+        "--ollama-model qwen3.8:latest --ollama-timeout-seconds 600"
+    )
+    assert "--open-browser" not in profile["command"]
+    assert profile["serverReadyAction"] == {
+        "pattern": r"Agent UI available at (http://127\.0\.0\.1:\d+/)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser",
+    }
 
 
 def test_ui_command_forwards_only_the_bounded_server_configuration(
@@ -406,7 +469,6 @@ def test_ui_command_does_not_import_dormant_cli_capabilities() -> None:
         server.serve_ui = lambda *args, **kwargs: calls.append((args, kwargs))
         result = main(["ui", "--ollama-model", "qwen3.8:latest"])
         dormant_modules = (
-            "legacy_migration_agent.application.final_review",
             "legacy_migration_agent.evaluation",
             "legacy_migration_agent.graphs.graph_evaluation",
             "legacy_migration_agent.schema_compatibility",
@@ -598,7 +660,7 @@ def test_evaluation_verify_fails_closed_with_sanitized_output(
     assert "missing-results" not in json.dumps(payload)
 
 
-def test_evaluation_pilot_run_local_writes_and_reexecutes_bounded_receipts(
+def test_evaluation_pilot_run_local_initializes_unperformed_qwen_cells(
     capsys,
     tmp_path: Path,
 ) -> None:
@@ -617,19 +679,19 @@ def test_evaluation_pilot_run_local_writes_and_reexecutes_bounded_receipts(
 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["summary"]["measured_cells"] == 2
+    assert payload["summary"]["measured_cells"] == 0
     assert payload["summary"]["status_counts"] == {
         "decision_required": 0,
         "failed": 0,
         "not_performed": 2,
-        "succeeded": 2,
+        "succeeded": 0,
         "unavailable": 0,
     }
     assert payload["summary"]["model_quality_evaluated"] is False
     assert payload["summary"]["external_platform_evaluated"] is False
-    assert payload["verification"]["local_static_receipts_reexecuted"] == 2
+    assert payload["verification"]["agent_run_receipts_verified"] == 0
     assert (snapshot / "results.json").is_file()
-    assert len(tuple((snapshot / "evidence").glob("*.json"))) == 2
+    assert not tuple((snapshot / "evidence").glob("*.json"))
 
 
 def test_evaluation_pilot_verify_accepts_checked_in_partial_snapshot(capsys) -> None:
@@ -648,7 +710,7 @@ def test_evaluation_pilot_verify_accepts_checked_in_partial_snapshot(capsys) -> 
     assert result == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["verified"] is True
-    assert payload["measured_cells"] == 2
+    assert payload["measured_cells"] == 0
     assert payload["not_performed_cells"] == 2
     assert payload["complete"] is False
 

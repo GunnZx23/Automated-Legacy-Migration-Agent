@@ -30,6 +30,8 @@ from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
 
 TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9_+-]*")
+EXACT_DIAGNOSTIC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]*[_.][a-z0-9_.-]*$")
+TOP_LEVEL_LIST_ITEM_PATTERN = re.compile(r"^(?:[-+*]|\d+[.)])\s+")
 MAX_RETRIEVAL_PAGES = 3
 MAX_SELECTED_CONTENT_CHARS = 1600
 INDEX_FILENAME = "index.md"
@@ -281,6 +283,7 @@ class LlmWiki:
         expand_links: bool = True,
         as_of: date | None = None,
         max_age_days: int = 365,
+        required_exact_ids: Iterable[str] = (),
     ) -> RetrievalTrace:
         terms = _tokens(query)
         if not terms:
@@ -296,21 +299,47 @@ class LlmWiki:
         effective_as_of = as_of or date.today()
         oldest_allowed = effective_as_of - timedelta(days=max_age_days)
 
+        exact_ids = _normalize_required_exact_ids(required_exact_ids, query=query)
+        eligible_pages = {
+            page_id: loaded
+            for page_id, loaded in self._pages.items()
+            if _page_is_eligible(
+                loaded.record,
+                platform=platform,
+                source_version=source_version,
+                target_version=target_version,
+                oldest_allowed=oldest_allowed,
+                effective_as_of=effective_as_of,
+            )
+        }
+
+        if exact_ids:
+            exact_hits = self._exact_id_hits(
+                exact_ids,
+                eligible_pages=eligible_pages,
+                terms=terms,
+            )
+            return RetrievalTrace(
+                retrieval_strategy="deterministic_lexical",
+                query=query,
+                normalized_terms=tuple(sorted(terms)),
+                platform=platform,
+                source_version=source_version,
+                target_version=target_version,
+                catalog_digest=self.catalog_digest,
+                as_of=effective_as_of,
+                max_age_days=max_age_days,
+                max_primary_hits=max_primary_hits,
+                expand_links=False,
+                hits=exact_hits,
+                evidence_bundle_digest=_evidence_bundle_digest(
+                    self.catalog_digest,
+                    exact_hits,
+                ),
+            )
+
         ranked: list[tuple[float, str, tuple[str, ...]]] = []
-        for page_id, loaded in self._pages.items():
-            record = loaded.record
-            if (
-                record.status == "deprecated"
-                or record.last_verified < oldest_allowed
-                or record.last_verified > effective_as_of
-            ):
-                continue
-            if platform is not None and record.platforms and platform not in record.platforms:
-                continue
-            if source_version is not None and record.source_version != source_version:
-                continue
-            if target_version is not None and record.target_version != target_version:
-                continue
+        for page_id, loaded in eligible_pages.items():
             score, fields = _score_page(terms, loaded)
             if score > 0:
                 ranked.append((score, page_id, fields))
@@ -318,7 +347,7 @@ class LlmWiki:
         primary = ranked[:max_primary_hits]
 
         hits: list[RetrievalHit] = [
-            self._hit(page_id, score, fields) for score, page_id, fields in primary
+            self._hit(page_id, score, fields, terms=terms) for score, page_id, fields in primary
         ]
         seen = {hit.page_id for hit in hits}
         if expand_links:
@@ -328,34 +357,15 @@ class LlmWiki:
                         break
                     if linked_id in seen:
                         continue
-                    linked = self._pages[linked_id]
-                    if (
-                        linked.record.status == "deprecated"
-                        or linked.record.last_verified < oldest_allowed
-                        or linked.record.last_verified > effective_as_of
-                    ):
-                        continue
-                    if (
-                        platform is not None
-                        and linked.record.platforms
-                        and platform not in linked.record.platforms
-                    ):
-                        continue
-                    if (
-                        source_version is not None
-                        and linked.record.source_version != source_version
-                    ):
-                        continue
-                    if (
-                        target_version is not None
-                        and linked.record.target_version != target_version
-                    ):
+                    linked = eligible_pages.get(linked_id)
+                    if linked is None:
                         continue
                     hits.append(
                         self._hit(
                             linked_id,
                             0.25,
                             ("linked-page",),
+                            terms=terms,
                             expanded_from=primary_id,
                         )
                     )
@@ -386,10 +396,16 @@ class LlmWiki:
         page_id: str,
         score: float,
         matched_fields: Iterable[str],
+        terms: set[str],
         expanded_from: str | None = None,
+        required_exact_ids: tuple[str, ...] = (),
     ) -> RetrievalHit:
         record = self._pages[page_id].record
-        selected_content = _select_content(self._pages[page_id].body)
+        selected_content = _select_content(
+            self._pages[page_id].body,
+            terms=terms,
+            required_exact_ids=required_exact_ids,
+        )
         return RetrievalHit(
             page_id=page_id,
             title=record.title,
@@ -407,6 +423,76 @@ class LlmWiki:
             selected_content_digest=_text_digest(selected_content),
             sources=record.sources,
         )
+
+    def _exact_id_hits(
+        self,
+        exact_ids: tuple[str, ...],
+        *,
+        eligible_pages: dict[str, _LoadedPage],
+        terms: set[str],
+    ) -> tuple[RetrievalHit, ...]:
+        """Select the one eligible curated page that owns each exact diagnostic ID."""
+
+        page_ids_by_signal: dict[str, str] = {}
+        for exact_id in exact_ids:
+            matches = tuple(
+                sorted(
+                    page_id
+                    for page_id, loaded in eligible_pages.items()
+                    if _page_contains_exact_id(loaded, exact_id)
+                )
+            )
+            if not matches:
+                raise PolicyViolation(
+                    "required exact Wiki diagnostic has no eligible curated page: " + exact_id
+                )
+            if len(matches) != 1:
+                raise PolicyViolation(
+                    "required exact Wiki diagnostic is ambiguous across curated pages: " + exact_id
+                )
+            page_ids_by_signal[exact_id] = matches[0]
+
+        exact_ids_by_page: dict[str, list[str]] = {}
+        for exact_id in exact_ids:
+            exact_ids_by_page.setdefault(page_ids_by_signal[exact_id], []).append(exact_id)
+        if len(exact_ids_by_page) > MAX_RETRIEVAL_PAGES:
+            raise PolicyViolation(
+                "required exact Wiki diagnostics exceed the bounded selected-page limit"
+            )
+
+        ranked_pages: list[tuple[float, str, tuple[str, ...]]] = []
+        for page_id in exact_ids_by_page:
+            score, matched_fields = _score_page(terms, eligible_pages[page_id])
+            ranked_pages.append(
+                (
+                    score,
+                    page_id,
+                    tuple(dict.fromkeys((*matched_fields, "exact-diagnostic-id"))),
+                )
+            )
+        ranked_pages.sort(key=lambda item: (-item[0], item[1]))
+
+        hits = tuple(
+            self._hit(
+                page_id,
+                score,
+                fields,
+                terms=terms,
+                required_exact_ids=tuple(exact_ids_by_page[page_id]),
+            )
+            for score, page_id, fields in ranked_pages
+        )
+        selected = "\n".join(hit.selected_content for hit in hits)
+        missing = tuple(
+            exact_id
+            for exact_id in exact_ids
+            if not contains_exact_diagnostic_id(selected, exact_id)
+        )
+        if missing:  # pragma: no cover - _select_content owns the concrete invariant
+            raise PolicyViolation(
+                "selected Wiki excerpts omit required exact diagnostics: " + ", ".join(missing)
+            )
+        return hits
 
 
 def _preflight_wiki_tree(root: Path) -> tuple[Path, int, tuple[_WikiTreeEntry, ...]]:
@@ -707,11 +793,71 @@ def _tokens(value: str) -> set[str]:
     return set(TOKEN_PATTERN.findall(value.lower()))
 
 
+def _normalize_required_exact_ids(
+    values: Iterable[str],
+    *,
+    query: str,
+) -> tuple[str, ...]:
+    normalized = tuple(sorted(dict.fromkeys(value.strip() for value in values)))
+    if any(EXACT_DIAGNOSTIC_ID_PATTERN.fullmatch(value) is None for value in normalized):
+        raise ValueError("required exact Wiki diagnostic IDs are malformed")
+    query_tokens = set(query.split())
+    omitted = tuple(value for value in normalized if value not in query_tokens)
+    if omitted:
+        raise ValueError(
+            "required exact Wiki diagnostic IDs must occur verbatim in the query: "
+            + ", ".join(omitted)
+        )
+    return normalized
+
+
+def contains_exact_diagnostic_id(text: str, exact_id: str) -> bool:
+    """Match one diagnostic token without accepting a longer identifier substring."""
+
+    if EXACT_DIAGNOSTIC_ID_PATTERN.fullmatch(exact_id) is None:
+        raise ValueError("exact Wiki diagnostic ID is malformed")
+    boundary = rf"(?<![A-Za-z0-9_.-]){re.escape(exact_id)}(?![A-Za-z0-9_.-])"
+    return re.search(boundary, text) is not None
+
+
+def _page_is_eligible(
+    record: WikiPageRecord,
+    *,
+    platform: Platform | None,
+    source_version: str | None,
+    target_version: str | None,
+    oldest_allowed: date,
+    effective_as_of: date,
+) -> bool:
+    if (
+        record.status == "deprecated"
+        or record.last_verified < oldest_allowed
+        or record.last_verified > effective_as_of
+    ):
+        return False
+    if platform is not None and record.platforms and platform not in record.platforms:
+        return False
+    if source_version is not None and record.source_version != source_version:
+        return False
+    return target_version is None or record.target_version == target_version
+
+
+def _page_contains_exact_id(loaded: _LoadedPage, exact_id: str) -> bool:
+    if exact_id in loaded.record.tags:
+        return True
+    return contains_exact_diagnostic_id(loaded.body, exact_id)
+
+
 def _text_digest(value: str) -> str:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
-def _select_content(body: str) -> str:
+def _select_content(
+    body: str,
+    *,
+    terms: set[str] | None = None,
+    required_exact_ids: tuple[str, ...] = (),
+) -> str:
     """Return a bounded, deterministic excerpt from curated page content.
 
     HTML comments and non-printing controls are not exposed to the Architect.
@@ -729,8 +875,39 @@ def _select_content(body: str) -> str:
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     if not normalized:
         raise PolicyViolation("wiki page has no safe content to retrieve")
+    if required_exact_ids:
+        return _select_exact_content(
+            normalized,
+            terms=set() if terms is None else terms,
+            required_exact_ids=required_exact_ids,
+        )
     if len(normalized) <= MAX_SELECTED_CONTENT_CHARS:
         return normalized
+
+    query_terms = set() if terms is None else terms
+    if query_terms:
+        paragraphs = normalized.split("\n\n")
+        ranked: list[tuple[int, int, int]] = []
+        for index, paragraph in enumerate(paragraphs):
+            matched = query_terms & _tokens(paragraph)
+            if not matched:
+                continue
+            weighted_score = sum(8 if "_" in term else 1 for term in matched)
+            ranked.append((weighted_score, len(matched), index))
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        if ranked:
+            selected_indexes = {0}
+            for _, _, index in ranked:
+                contextual_indexes = {index}
+                if index + 1 < len(paragraphs):
+                    contextual_indexes.add(index + 1)
+                candidate_indexes = sorted(selected_indexes | contextual_indexes)
+                candidate = "\n\n".join(paragraphs[item] for item in candidate_indexes)
+                if len(candidate) < MAX_SELECTED_CONTENT_CHARS:
+                    selected_indexes.update(contextual_indexes)
+            selected = "\n\n".join(paragraphs[index] for index in sorted(selected_indexes))
+            if len(selected) < MAX_SELECTED_CONTENT_CHARS:
+                return selected.rstrip() + "…"
 
     limit = MAX_SELECTED_CONTENT_CHARS - 1
     selected = normalized[:limit]
@@ -742,6 +919,113 @@ def _select_content(body: str) -> str:
         if word_boundary >= limit // 2:
             selected = selected[:word_boundary]
     return selected.rstrip() + "…"
+
+
+def _select_exact_content(
+    normalized: str,
+    *,
+    terms: set[str],
+    required_exact_ids: tuple[str, ...],
+) -> str:
+    """Return a bounded excerpt that retains every required diagnostic verbatim."""
+
+    paragraphs = normalized.split("\n\n")
+    required_indexes = _required_exact_content_indexes(paragraphs, required_exact_ids)
+    selected_indexes = {0, *required_indexes}
+    selected = _join_paragraphs(paragraphs, selected_indexes)
+    if len(selected) > MAX_SELECTED_CONTENT_CHARS:
+        # A Markdown list is one paragraph when its items have no blank lines.
+        # Retry with whole top-level list items as semantic units so one exact
+        # diagnostic does not pull unrelated sibling bullets into the excerpt.
+        # Required units remain intact; an individually oversized unit still
+        # fails closed below instead of truncating a diagnostic identifier.
+        paragraphs = _split_top_level_list_items(paragraphs)
+        required_indexes = _required_exact_content_indexes(
+            paragraphs,
+            required_exact_ids,
+        )
+        selected_indexes = {0, *required_indexes}
+        selected = _join_paragraphs(paragraphs, selected_indexes)
+    if len(selected) > MAX_SELECTED_CONTENT_CHARS:
+        raise PolicyViolation(
+            "required exact Wiki diagnostic excerpts exceed the bounded content limit"
+        )
+
+    contextual_indexes = tuple(
+        index + 1 for index in sorted(required_indexes) if index + 1 < len(paragraphs)
+    )
+    for index in contextual_indexes:
+        candidate = _join_paragraphs(paragraphs, {*selected_indexes, index})
+        if len(candidate) < MAX_SELECTED_CONTENT_CHARS:
+            selected_indexes.add(index)
+
+    ranked: list[tuple[int, int, int]] = []
+    for index, paragraph in enumerate(paragraphs):
+        if index in selected_indexes:
+            continue
+        matched = terms & _tokens(paragraph)
+        if matched:
+            weighted_score = sum(8 if "_" in term else 1 for term in matched)
+            ranked.append((weighted_score, len(matched), index))
+    ranked.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    for _, _, index in ranked:
+        candidate = _join_paragraphs(paragraphs, {*selected_indexes, index})
+        if len(candidate) < MAX_SELECTED_CONTENT_CHARS:
+            selected_indexes.add(index)
+
+    selected = _join_paragraphs(paragraphs, selected_indexes)
+    missing = tuple(
+        exact_id
+        for exact_id in required_exact_ids
+        if not contains_exact_diagnostic_id(selected, exact_id)
+    )
+    if missing:  # pragma: no cover - selected_indexes is derived from exact matches
+        raise PolicyViolation(
+            "selected Wiki excerpt omits required exact diagnostics: " + ", ".join(missing)
+        )
+    suffix = "…" if len(selected) < MAX_SELECTED_CONTENT_CHARS else ""
+    return selected.rstrip() + suffix
+
+
+def _required_exact_content_indexes(
+    content_units: list[str],
+    required_exact_ids: tuple[str, ...],
+) -> set[int]:
+    required_indexes: set[int] = set()
+    for exact_id in required_exact_ids:
+        matching_indexes = tuple(
+            index
+            for index, content in enumerate(content_units)
+            if contains_exact_diagnostic_id(content, exact_id)
+        )
+        if not matching_indexes:
+            raise PolicyViolation(
+                "eligible Wiki page body omits required exact diagnostic: " + exact_id
+            )
+        required_indexes.add(
+            min(matching_indexes, key=lambda index: (len(content_units[index]), index))
+        )
+    return required_indexes
+
+
+def _split_top_level_list_items(paragraphs: list[str]) -> list[str]:
+    content_units: list[str] = []
+    for paragraph in paragraphs:
+        lines = paragraph.splitlines()
+        item_starts = tuple(
+            index for index, line in enumerate(lines) if TOP_LEVEL_LIST_ITEM_PATTERN.match(line)
+        )
+        if not item_starts or item_starts[0] != 0:
+            content_units.append(paragraph)
+            continue
+        for position, start in enumerate(item_starts):
+            end = item_starts[position + 1] if position + 1 < len(item_starts) else len(lines)
+            content_units.append("\n".join(lines[start:end]))
+    return content_units
+
+
+def _join_paragraphs(paragraphs: list[str], indexes: set[int]) -> str:
+    return "\n\n".join(paragraphs[index] for index in sorted(indexes))
 
 
 def _evidence_bundle_digest(

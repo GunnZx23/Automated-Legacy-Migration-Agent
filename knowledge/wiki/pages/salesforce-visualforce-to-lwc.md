@@ -1,27 +1,64 @@
 # Salesforce Visualforce to LWC migration
 
-Preserve the observable behavior before modernizing the implementation. Record
-the Visualforce components, controller properties and actions, validation
-messages, query limits, sort order, empty states, and partial-page rerenders.
+Preserve the observable behavior before modernizing implementation details. Record
+the Visualforce controls, controller properties and actions, validation
+messages, query limits, sort order, loading behavior, empty results, errors,
+and partial-page rerenders.
+
+For this bounded fixture, either `@wire(getAccounts)` or an imperative
+`getAccounts()` call may load Account choices. The Contacts call must remain
+imperative because the user explicitly starts it with **Load**. Do not reject a
+candidate merely for choosing wire versus imperative Account retrieval when
+the rendered behavior and safe-error handling are correct.
+
+Project correction rule `lwc_template_binding_invalid`: the pinned LWC compiler
+accepts simple identifier or dotted-property bindings in this candidate
+template. Put negation, comparisons, indexing, calls, and compound conditions
+in standard JavaScript getters and bind the getter by name.
+
+For a combobox, a placeholder is not the required blank choice. Include a
+rendered option whose value is the empty string, followed by the returned
+Account choices. Bind `lightning-button.disabled` to a getter that describes
+the disabled state, such as `isLoadDisabled`, and have that getter return true
+for the blank selection. Do not bind a positive `canLoadContacts` getter
+directly to `disabled`; that reverses the selection gate.
+
+The project browser harness needs stable semantic hooks: put
+`data-role="account-selector"` on the interactive selector and provide unique
+hooks for the Load action and contact results. These hooks are a test adapter,
+not a required UI design. Keep controls accessible and render guidance or
+controlled errors through a nonempty `role="alert"` region.
+
+Controller-owned signals apply to both the first candidate and a correction:
+
+- `controller_jest_account_options`: render an empty-string option before the
+  Accounts; a `lightning-combobox` placeholder is not that option.
+- `controller_jest_account_error`: render a safe, nontechnical Account error.
+- `controller_jest_selection_gate`: Load is disabled for blank and enabled for
+  nonblank selection; do not bind a positive `canLoadContacts` getter directly.
+  Bind a disabled-state getter because a positive getter reverses the gate.
+- `controller_jest_explicit_load`: request Contacts only after the explicit
+  action and render successful results.
+- `controller_jest_loading_state`: show loading while the current request is
+  pending.
+- `controller_jest_stale_response`: each selection change invalidates pending
+  work; a late success or failure cannot change Contacts, alerts, or loading.
+  A generation counter or request token is valid.
+- `controller_jest_blank_selection`: invalidate pending work, clear result
+  states, disable Load, and show safe guidance when selection is cleared.
+- `controller_jest_empty_state`: show empty only after a current empty success,
+  never before the first explicit Load.
+- `controller_jest_contacts_error`: show a safe error with no visible `contact-results` hook,
+  even when its rows are empty.
 
 Typical mappings include `apex:pageBlock` to `lightning-card`,
 `apex:selectList` to `lightning-combobox`, `apex:commandButton` to
 `lightning-button`, and `apex:pageBlockTable` to `lightning-datatable`. A
-`rerender` becomes a reactive DOM update; it is not an “LWC module update.”
+Visualforce `rerender` becomes a reactive DOM update; it is not an “LWC module
+update.”
 
-The fixture loads a criteria-filtered Account/Contact list only after the user
-clicks **Load**. Use an imperative Apex call for that explicit, one-shot action;
-Salesforce specifically recommends imperative invocation when a button controls
-when the method runs. Keep `@AuraEnabled(cacheable=true)` only if the method is
-read-only. Pass a JavaScript object whose property names match the Apex
-parameters.
-
-If parameters can change while the promise is pending, capture the requested
-identifier and a request generation. Apply a result, error, or loading-state
-completion only when both still match the current selection, so an older slow
-response cannot replace newer state.
-
-Keep interaction semantics unless the approved manifest explicitly changes
-them. For example, retain an explicit Load button when the legacy page does not
-load automatically on selection. Treat deletion of the legacy page or
-controller as a separate destructive decision after consumer discovery.
+Keep `@AuraEnabled(cacheable=true)` only on read-only methods. Pass an object
+whose JavaScript property names match the Apex parameters. Preserve the
+explicit Load interaction unless the approved manifest changes it. Deleting
+the legacy page or controller remains a separate destructive decision after
+consumer discovery.

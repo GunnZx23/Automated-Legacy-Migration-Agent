@@ -135,7 +135,7 @@ def test_summary_metric_set_must_match_registry(tmp_path: Path) -> None:
         verify_evaluation(load_registry(REGISTRY_PATH), results)
 
 
-def test_checked_in_pilot_is_honestly_partial_and_reexecutes_static_claims() -> None:
+def test_checked_in_pilot_contains_only_unperformed_qwen_agent_cells() -> None:
     verification = load_and_verify_pilot(
         PROJECT_ROOT,
         PILOT_REGISTRY_PATH,
@@ -143,45 +143,57 @@ def test_checked_in_pilot_is_honestly_partial_and_reexecutes_static_claims() -> 
     )
     results = load_pilot_results(PILOT_SNAPSHOT_DIR / "results.json")
 
-    assert verification.measured_cells == 2
+    registry = load_pilot_registry(PILOT_REGISTRY_PATH)
+
+    assert verification.measured_cells == 0
     assert verification.not_performed_cells == 2
-    assert verification.local_static_receipts_reexecuted == 2
     assert verification.agent_run_receipts_verified == 0
     assert verification.agent_run_sources_reverified == 0
     assert verification.portable_agent_receipts_only is False
     assert verification.complete is False
-    assert tuple(cell.status for cell in results.cells) == (
-        ResultStatus.SUCCEEDED,
-        ResultStatus.SUCCEEDED,
-        ResultStatus.NOT_PERFORMED,
-        ResultStatus.NOT_PERFORMED,
+    assert results.snapshot_status == "not_performed"
+    assert tuple(cell.status for cell in results.cells) == (ResultStatus.NOT_PERFORMED,) * 2
+    assert tuple(case.evaluation_mode.value for case in registry.cases) == (
+        "agent_run",
+        "agent_run",
     )
+    assert tuple(case.expected_model_id for case in registry.cases) == (
+        "qwen3.8:latest",
+        "qwen3.8:latest",
+    )
+    assert all(cell.evidence_receipt_path is None for cell in results.cells)
+    assert all(cell.evidence_receipt_digest is None for cell in results.cells)
+    assert all("candidate_path" not in case for case in _document(PILOT_REGISTRY_PATH)["cases"])
+    assert not tuple((PILOT_SNAPSHOT_DIR / "evidence").glob("*.json"))
+    assert results.summary.agent_cells_planned == 2
+    assert results.summary.agent_cells_measured == 0
     assert results.summary.model_quality_evaluated is False
     assert results.summary.external_platform_evaluated is False
     assert results.summary.passed is False
 
 
-def test_local_pilot_build_is_deterministic_and_invokes_no_external_boundary() -> None:
+def test_pilot_registry_rejects_a_static_reference_candidate(tmp_path: Path) -> None:
+    document = _document(PILOT_REGISTRY_PATH)
+    document["cases"][0]["evaluation_mode"] = "local_static"
+    document["cases"][0]["candidate_path"] = "private/unshipped-salesforce-candidate"
+
+    with pytest.raises(EvaluationVerificationError, match="invalid evaluation document"):
+        load_pilot_registry(_write_document(tmp_path, "static-candidate.json", document))
+
+
+def test_local_pilot_build_only_initializes_unperformed_agent_cells() -> None:
     registry = load_pilot_registry(PILOT_REGISTRY_PATH)
 
     first, first_receipts = build_local_pilot_results(PROJECT_ROOT, registry)
     second, second_receipts = build_local_pilot_results(PROJECT_ROOT, registry)
 
     assert first == second
-    assert first_receipts == second_receipts
-    assert all(
-        receipt.evidence_kind is PilotEvidenceKind.LOCAL_STATIC for receipt in first_receipts
-    )
-    for receipt in first_receipts:
-        assert receipt.boundary.provider.value == "not_invoked"
-        assert receipt.boundary.external_platform.value == "not_invoked"
-        assert receipt.boundary.authentication.value == "not_invoked"
-        assert receipt.boundary.subprocess.value == "not_invoked"
-        assert receipt.boundary.human_gate.value == "not_invoked"
-        assert receipt.boundary.external_authority_granted is False
-        assert receipt.local_observation is not None
-        assert receipt.local_observation.tests_executed is False
-        assert receipt.local_observation.model_quality_evaluated is False
+    assert first_receipts == second_receipts == ()
+    assert first.summary.measured_cells == 0
+    assert first.summary.agent_cells_measured == 0
+    assert tuple(cell.status for cell in first.cells) == (ResultStatus.NOT_PERFORMED,) * 2
+    assert all(cell.reason is PilotResultReason.AWAITING_QWEN_RUN for cell in first.cells)
+    assert "Repository tests establish harness behavior" in first.limitations[1]
 
 
 def test_local_pilot_snapshot_writer_is_idempotent_and_self_verifying(tmp_path: Path) -> None:
@@ -194,30 +206,7 @@ def test_local_pilot_snapshot_writer_is_idempotent_and_self_verifying(tmp_path: 
     assert load_and_verify_pilot(PROJECT_ROOT, PILOT_REGISTRY_PATH, snapshot).verified is True
     assert tuple(
         path.relative_to(snapshot).as_posix() for path in sorted(snapshot.rglob("*.json"))
-    ) == (
-        "evidence/mulesoft-static-fixture-contract.json",
-        "evidence/salesforce-static-fixture-contract.json",
-        "results.json",
-    )
-
-
-def test_pilot_receipt_tamper_is_rejected_even_if_result_digest_is_recomputed(
-    tmp_path: Path,
-) -> None:
-    snapshot = tmp_path / "snapshot"
-    shutil.copytree(PILOT_SNAPSHOT_DIR, snapshot)
-    receipt_path = snapshot / "evidence/salesforce-static-fixture-contract.json"
-    receipt_document = _document(receipt_path)
-    receipt_document["limitations"][0] = "Tampered but schema-valid limitation."
-    receipt_path.write_text(json.dumps(receipt_document), encoding="utf-8")
-    receipt = PilotEvidenceReceipt.model_validate_json(receipt_path.read_bytes())
-    results_path = snapshot / "results.json"
-    results_document = _document(results_path)
-    results_document["cells"][0]["evidence_receipt_digest"] = artifact_digest(receipt)
-    results_path.write_text(json.dumps(results_document), encoding="utf-8")
-
-    with pytest.raises(EvaluationVerificationError, match="differs from re-execution"):
-        load_and_verify_pilot(PROJECT_ROOT, PILOT_REGISTRY_PATH, snapshot)
+    ) == ("results.json",)
 
 
 def test_pilot_cell_order_tamper_fails_cross_artifact_verification(tmp_path: Path) -> None:
@@ -234,25 +223,11 @@ def test_pilot_cell_order_tamper_fails_cross_artifact_verification(tmp_path: Pat
         )
 
 
-def test_pilot_measured_reason_must_match_case_mode(tmp_path: Path) -> None:
-    results_document = _document(PILOT_SNAPSHOT_DIR / "results.json")
-    results_document["cells"][0]["reason"] = PilotResultReason.VERIFIED_AGENT_RUN.value
-    results = load_pilot_results(_write_document(tmp_path, "results.json", results_document))
-
-    with pytest.raises(EvaluationVerificationError, match="reason differs"):
-        verify_pilot_evaluation(
-            PROJECT_ROOT,
-            load_pilot_registry(PILOT_REGISTRY_PATH),
-            results,
-            PILOT_SNAPSHOT_DIR,
-        )
-
-
 def test_pilot_not_performed_cell_cannot_claim_a_receipt(tmp_path: Path) -> None:
     results_document = _document(PILOT_SNAPSHOT_DIR / "results.json")
-    results_document["cells"][2]["reason"] = PilotResultReason.VERIFIED_AGENT_RUN.value
-    results_document["cells"][2]["evidence_receipt_path"] = "evidence/fake.json"
-    results_document["cells"][2]["evidence_receipt_digest"] = "sha256:" + "0" * 64
+    results_document["cells"][0]["reason"] = PilotResultReason.VERIFIED_AGENT_RUN.value
+    results_document["cells"][0]["evidence_receipt_path"] = "evidence/fake.json"
+    results_document["cells"][0]["evidence_receipt_digest"] = "sha256:" + "0" * 64
 
     with pytest.raises(EvaluationVerificationError, match="invalid evaluation document"):
         load_pilot_results(_write_document(tmp_path, "results.json", results_document))
@@ -262,8 +237,11 @@ def test_agent_ingestion_records_verified_workflow_status_without_quality_claims
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    shutil.copytree(PROJECT_ROOT / "fixtures", tmp_path / "fixtures")
+    fixture_source = PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer"
     fixture_destination = tmp_path / "fixtures/salesforce/account-contact-explorer"
+    fixture_destination.mkdir(parents=True)
+    shutil.copytree(fixture_source / "input", fixture_destination / "input")
+    shutil.copy2(fixture_source / "fixture.yaml", fixture_destination / "fixture.yaml")
     source = fixture_destination / "input"
     request = MigrationRequest(
         request_id="pilot-qwen-request",
@@ -346,6 +324,7 @@ def test_agent_ingestion_records_verified_workflow_status_without_quality_claims
     )
 
     assert receipt.status is ResultStatus.SUCCEEDED
+    assert receipt.evidence_kind is PilotEvidenceKind.AGENT_RUN
     assert receipt.claims == ("agent_workflow_reached_ready_for_human_review",)
     assert receipt.boundary.provider.value == "invoked"
     assert receipt.boundary.external_platform.value == "unknown"
@@ -380,16 +359,16 @@ def test_agent_ingestion_records_verified_workflow_status_without_quality_claims
     verification = load_and_verify_pilot(tmp_path, PILOT_REGISTRY_PATH, output)
 
     assert results.snapshot_sequence == 2
-    assert results.summary.measured_cells == 3
+    assert results.summary.measured_cells == 1
     assert results.summary.agent_cells_measured == 1
     assert results.summary.complete is False
+    assert results.snapshot_status == "partially_measured"
     assert results.summary.model_quality_evaluated is False
-    assert verification.measured_cells == 3
+    assert verification.measured_cells == 1
     assert verification.not_performed_cells == 1
     assert verification.agent_run_receipts_verified == 1
     assert verification.agent_run_sources_reverified == 1
     assert verification.portable_agent_receipts_only is False
-    assert verification.local_static_receipts_reexecuted == 2
 
     tampered_output = tmp_path / "pilot-with-tampered-qwen-observation"
     shutil.copytree(output, tampered_output)
@@ -403,7 +382,7 @@ def test_agent_ingestion_records_verified_workflow_status_without_quality_claims
     tampered_receipt = PilotEvidenceReceipt.model_validate_json(tampered_receipt_path.read_bytes())
     tampered_results_path = tampered_output / "results.json"
     tampered_results_document = _document(tampered_results_path)
-    tampered_results_document["cells"][2]["evidence_receipt_digest"] = artifact_digest(
+    tampered_results_document["cells"][0]["evidence_receipt_digest"] = artifact_digest(
         tampered_receipt
     )
     tampered_results_path.write_text(

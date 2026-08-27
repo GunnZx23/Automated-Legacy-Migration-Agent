@@ -1,16 +1,45 @@
 # Salesforce Apex security for LWC services
 
-For code compiled at API 67.0, database operations default to user mode and a
-class without a sharing keyword defaults to `with sharing`. Keep the fixture's
-explicit `public with sharing` and `WITH USER_MODE`: they make the intended
-record-sharing, object, and field authorization visible to reviewers and avoid
-relying on version defaults. `with sharing` alone is not a CRUD/FLS check.
+Project correction rule `apex_public_interface_annotation_mismatch`: the
+generated service must be `public with sharing class
+AccountContactExplorerController` and expose exactly these two LWC-callable
+interfaces:
+
+```apex
+@AuraEnabled(cacheable=true)
+public static List<Account> getAccounts()
+@AuraEnabled(cacheable=true)
+public static List<Contact> getContacts(Id accountId)
+```
+
+Place the annotation directly on each method. Both methods are read-only, and
+every SOQL statement must use `WITH USER_MODE`, static bind variables, bounded
+ordering, and a limit. These exact names and signatures are this project's
+candidate contract; the underlying `@AuraEnabled static` exposure and user-mode
+security behavior are Salesforce platform features.
+
+Keep both explicit `with sharing` and `WITH USER_MODE`. The first enforces the
+class's record-sharing behavior; by itself it does not enforce object- and
+field-level permissions. User-mode database operations enforce sharing, CRUD,
+and field-level security. Writing both makes the intended boundary visible and
+does not depend on changing API defaults.
 
 Expose only required `public static` methods with `@AuraEnabled`. Use
-`cacheable=true` only for methods that read data and do not mutate it. Bind
-values in static SOQL. Return controlled errors without stack traces, raw SOQL,
-or secrets. Users also require Apex class access through a profile or permission
-set; an LWC bundle does not grant that permission itself.
+`cacheable=true` only for methods that read data and do not mutate it. In this
+project's generated service, each query method must translate query failures to
+a new `AuraHandledException` with a short safe literal message. Never return
+`Exception.getMessage()`, stack traces, raw SOQL, record data, or secrets;
+catch/helper layout and exact safe wording remain candidate-owned. Users also
+require Apex class access; an LWC bundle does not grant that permission itself.
+For this bounded fixture, update only the approved
+`AccountContactExplorerUser` permission set to add the new controller while
+preserving its legacy controller, Visualforce page, and read-only object and
+field access. Do not create a second permission set or modify a profile.
+
+Project correction rule `apex_controlled_query_error_missing` applies only to
+the generated service class. Repair each query method's safe exception
+translation without changing its public signature, query contract, or any
+unrelated artifact.
 
 Keep LWC code compatible with Lightning Web Security: prefer plain objects to
 `Map` for Apex serialization, do not mutate objects received across component

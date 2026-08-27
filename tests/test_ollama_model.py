@@ -10,7 +10,11 @@ import pytest
 from pydantic import Field
 
 import legacy_migration_agent.agent_runtime.ollama_model as ollama_module
-from legacy_migration_agent.agent_runtime.model_agents import EngineerModelOutcome
+from legacy_migration_agent.agent_runtime.model_agents import (
+    ArchitectConversationReply,
+    EngineerFilePlanOutcome,
+    EngineerModelOutcome,
+)
 from legacy_migration_agent.agent_runtime.ollama_model import (
     OLLAMA_CHAT_URL,
     OLLAMA_TAGS_URL,
@@ -30,6 +34,7 @@ from legacy_migration_agent.core.observability import terminal_lifecycle_logging
 
 REVISION_A = "a" * 64
 REVISION_B = "b" * 64
+MODEL_ID = "test-model:latest"
 
 
 class Input(StrictModel):
@@ -142,7 +147,7 @@ def approval() -> LiveModelApproval:
 def response(content: str, **extra: object) -> bytes:
     return json.dumps(
         {
-            "model": "qwen3.6:latest",
+            "model": MODEL_ID,
             "done": True,
             "done_reason": "stop",
             "message": {"role": "assistant", "content": content},
@@ -157,8 +162,8 @@ def inventory(revision: str) -> bytes:
         {
             "models": [
                 {
-                    "name": "qwen3.6:latest",
-                    "model": "qwen3.6:latest",
+                    "name": MODEL_ID,
+                    "model": MODEL_ID,
                     "digest": revision,
                 }
             ]
@@ -175,7 +180,7 @@ def client_with(
 ) -> OllamaStructuredModelClient:
     monkeypatch.setattr(ollama_module, "_LoopbackHttpTransport", lambda: transport)
     return OllamaStructuredModelClient(
-        "qwen3.6:latest",
+        MODEL_ID,
         approval=approval(),
         timeout_seconds=timeout_seconds,
     )
@@ -237,7 +242,7 @@ def test_ollama_adapter_posts_schema_to_fixed_loopback_without_tools(
     chat_request = transport.requests[1]
     assert chat_request["payload"] is not None
     sent = json.loads(chat_request["payload"])
-    assert sent["model"] == "qwen3.6:latest"
+    assert sent["model"] == MODEL_ID
     assert sent["stream"] is False
     assert sent["think"] is False
     assert sent["options"] == {"temperature": 0}
@@ -319,6 +324,72 @@ def test_ollama_schema_projection_preserves_current_discriminated_union_shape() 
         "const": "file_plan",
         "type": "string",
     }
+
+
+def test_ollama_file_plan_only_schema_excludes_intervention_branch() -> None:
+    schema = _project_ollama_schema(EngineerFilePlanOutcome.model_json_schema(mode="validation"))
+
+    encoded = json.dumps(schema, sort_keys=True)
+    assert '"const": "file_plan"' in encoded
+    assert "decision_required" not in encoded
+    assert "intervention" not in encoded
+
+
+def test_ollama_schema_projection_preserves_architect_conversation_states() -> None:
+    schema = _project_ollama_schema(ArchitectConversationReply.model_json_schema(mode="validation"))
+
+    assert schema["type"] == "object"
+    clarification, ready = schema["oneOf"]
+    assert clarification["properties"]["advisory_summary"] == {"type": "null"}
+    assert clarification["properties"]["missing_information"]["minItems"] == 1
+    assert clarification["properties"]["missing_information"]["maxItems"] == 8
+    assert ready["properties"]["advisory_summary"] == {"type": "string"}
+    assert ready["properties"]["missing_information"]["minItems"] == 0
+    assert ready["properties"]["missing_information"]["maxItems"] == 0
+    assert all(
+        branch["required"]
+        == [
+            "status",
+            "assistant_message",
+            "advisory_summary",
+            "missing_information",
+        ]
+        for branch in schema["oneOf"]
+    )
+
+
+def test_ollama_architect_conversation_rejects_cross_state_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = json.dumps(
+        {
+            "status": "ready_to_launch",
+            "assistant_message": "Ready.",
+            "advisory_summary": None,
+            "missing_information": [],
+        }
+    )
+    transport = FakeTransport(response(content))
+    client = client_with(monkeypatch, transport)
+    terminal_output = io.StringIO()
+
+    with terminal_lifecycle_logging(stream=terminal_output):
+        with pytest.raises(ModelOutputError, match="failed schema validation"):
+            client.parse(
+                system_prompt="bounded",
+                input_value=Input(value="x"),
+                output_type=ArchitectConversationReply,
+            )
+
+    sent = json.loads(transport.requests[1]["payload"])
+    assert sent["format"] == _project_ollama_schema(
+        ArchitectConversationReply.model_json_schema(mode="validation")
+    )
+    lifecycle_log = terminal_output.getvalue()
+    assert "event=ollama.output.rejected" in lifecycle_log
+    assert 'phase="schema_validation"' in lifecycle_log
+    assert "validation_errors=1" in lifecycle_log
+    assert "Ready." not in lifecycle_log
 
 
 def test_ollama_request_uses_projection_but_full_model_still_rejects_constraints(
@@ -465,7 +536,7 @@ def test_ollama_adapter_classifies_nonterminal_output_as_incomplete(
 ) -> None:
     payload = json.dumps(
         {
-            "model": "qwen3.6:latest",
+            "model": MODEL_ID,
             "done": False,
             "message": {"role": "assistant", "content": ""},
         }
@@ -488,7 +559,7 @@ def test_ollama_adapter_sanitizes_transport_failures(monkeypatch: pytest.MonkeyP
             raise RuntimeError(secret)
 
     monkeypatch.setattr(ollama_module, "_LoopbackHttpTransport", ExplodingTransport)
-    client = OllamaStructuredModelClient("qwen3.6:latest", approval=approval())
+    client = OllamaStructuredModelClient(MODEL_ID, approval=approval())
     with pytest.raises(ModelRuntimeError) as caught:
         client.parse(
             system_prompt="bounded",
@@ -503,9 +574,9 @@ def test_ollama_adapter_rejects_bad_configuration_before_transport() -> None:
     with pytest.raises(ModelConfigurationError, match="model_id"):
         OllamaStructuredModelClient("\n", approval=approval())
     with pytest.raises(ModelConfigurationError, match="timeout"):
-        OllamaStructuredModelClient("qwen3.6:latest", approval=approval(), timeout_seconds=0)
+        OllamaStructuredModelClient(MODEL_ID, approval=approval(), timeout_seconds=0)
     with pytest.raises(ModelConfigurationError, match="approval"):
-        OllamaStructuredModelClient("qwen3.6:latest", approval=None)  # type: ignore[arg-type]
+        OllamaStructuredModelClient(MODEL_ID, approval=None)  # type: ignore[arg-type]
 
 
 def test_private_transport_uses_fixed_numeric_loopback_and_no_redirects() -> None:

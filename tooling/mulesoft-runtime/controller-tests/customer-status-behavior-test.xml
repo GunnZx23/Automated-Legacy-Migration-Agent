@@ -1,29 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
       xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
         http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
         http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <http:request-config name="controller-customer-status-request">
+        <http:request-connection host="127.0.0.1" port="8081"/>
+    </http:request-config>
 
     <munit:config name="controller-customer-status-behavior-test-suite"/>
 
     <munit:test name="controller-build-customer-status-response-contract"
-                description="Controller-owned behavioral contract for the migrated sub-flow">
-        <munit:behavior>
-            <munit:set-event cloneOriginalEvent="false">
-                <munit:variables>
-                    <munit:variable key="customerId"
-                                    value="#[&quot;CTRL-CUST-9001&quot;]"
-                                    mediaType="text/plain"
-                                    encoding="UTF-8"/>
-                </munit:variables>
-            </munit:set-event>
-        </munit:behavior>
+                description="Controller-owned HTTP behavior contract for the migrated public route">
+        <munit:enable-flow-sources>
+            <munit:enable-flow-source value="__CONTROLLER_ENTRY_FLOW__"/>
+        </munit:enable-flow-sources>
         <munit:execution>
-            <flow-ref name="build-customer-status-response"/>
+            <http:request method="GET"
+                          path="/api/customers/CTRL-CUST-9001/status"
+                          config-ref="controller-customer-status-request"/>
         </munit:execution>
         <munit:validation>
             <munit-tools:assert-that expression="#[payload.customerId]"

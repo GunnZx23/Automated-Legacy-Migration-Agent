@@ -542,22 +542,18 @@ def load_and_verify(
 
 
 # The small executable pilot below is intentionally separate from the fixed
-# 72-cell benchmark above.  It measures only claims that the local controller
-# can establish without a model, network, org, Mule runtime, or human approval.
-# Two additional cells reserve an evidence-bound place for later user-run Qwen
-# sessions; they remain not_performed until an existing terminal run is
-# explicitly ingested.
+# 72-cell benchmark above. It reserves an evidence-bound place for one real
+# user-run Qwen session per supported platform. No checked-in reference
+# implementation is treated as model-quality or migration evidence.
 
-PILOT_CELL_COUNT = 4
+PILOT_CELL_COUNT = 2
 
 
 class PilotEvaluationMode(StrEnum):
-    LOCAL_STATIC = "local_static"
     AGENT_RUN = "agent_run"
 
 
 class PilotEvidenceKind(StrEnum):
-    LOCAL_STATIC = "local_static"
     AGENT_RUN = "agent_run"
 
 
@@ -568,9 +564,6 @@ class PilotBoundaryState(StrEnum):
 
 
 class PilotClaim(StrEnum):
-    SALESFORCE_STATIC_CONTRACT = "salesforce_candidate_static_contract_passed"
-    SALESFORCE_DEPENDENCY_CLOSURE = "salesforce_dependency_closure_static_resolved"
-    MULESOFT_STATIC_CONTRACT = "mulesoft_candidate_static_contract_passed"
     AGENT_READY_FOR_REVIEW = "agent_workflow_reached_ready_for_human_review"
     AGENT_FAILURE = "agent_workflow_terminal_failure_observed"
     AGENT_DECISION_REQUIRED = "agent_workflow_decision_required_observed"
@@ -578,7 +571,6 @@ class PilotClaim(StrEnum):
 
 
 class PilotResultReason(StrEnum):
-    CONTROLLER_STATIC_CHECK = "controller_owned_static_check"
     AWAITING_QWEN_RUN = "awaiting_user_qwen_run"
     VERIFIED_AGENT_RUN = "verified_agent_run_status"
 
@@ -597,66 +589,31 @@ class PilotCase(StrictModel):
     platform: Platform
     evaluation_mode: PilotEvaluationMode
     source_path: str = Field(min_length=1, max_length=240)
-    candidate_path: str | None = Field(default=None, max_length=240)
     fixture_contract_path: str = Field(min_length=1, max_length=240)
-    expected_provider_id: str | None = Field(default=None, max_length=80)
-    expected_model_id: str | None = Field(default=None, max_length=160)
+    expected_provider_id: str = Field(min_length=1, max_length=80)
+    expected_model_id: str = Field(min_length=1, max_length=160)
 
     @field_validator("source_path", "fixture_contract_path")
     @classmethod
     def validate_required_path(cls, value: str) -> str:
         return validate_relative_path(value)
 
-    @field_validator("candidate_path")
-    @classmethod
-    def validate_optional_path(cls, value: str | None) -> str | None:
-        return validate_relative_path(value) if value is not None else None
-
     @model_validator(mode="after")
     def validate_mode_fields(self) -> PilotCase:
-        if self.evaluation_mode is PilotEvaluationMode.LOCAL_STATIC:
-            if self.candidate_path is None:
-                raise ValueError("local-static pilot cases require a candidate path")
-            if self.expected_provider_id is not None or self.expected_model_id is not None:
-                raise ValueError("local-static pilot cases cannot name a model provider")
-        else:
-            if self.candidate_path is not None:
-                raise ValueError("agent-run pilot cases receive candidates from the run")
-            if not self.expected_provider_id or not self.expected_model_id:
-                raise ValueError("agent-run pilot cases require an exact provider and model")
+        if self.evaluation_mode is not PilotEvaluationMode.AGENT_RUN:
+            raise ValueError("pilot cases must measure real agent runs")
         return self
 
 
 _EXPECTED_PILOT_CASES: tuple[
-    tuple[str, Platform, PilotEvaluationMode, str, str | None, str, str | None, str | None],
+    tuple[str, Platform, PilotEvaluationMode, str, str, str, str],
     ...,
 ] = (
-    (
-        "salesforce-static-fixture-contract",
-        Platform.SALESFORCE,
-        PilotEvaluationMode.LOCAL_STATIC,
-        "fixtures/salesforce/account-contact-explorer/input",
-        "fixtures/salesforce/account-contact-explorer/expected",
-        "fixtures/salesforce/account-contact-explorer/fixture.yaml",
-        None,
-        None,
-    ),
-    (
-        "mulesoft-static-fixture-contract",
-        Platform.MULESOFT,
-        PilotEvaluationMode.LOCAL_STATIC,
-        "fixtures/mulesoft/customer-status-api/input",
-        "fixtures/mulesoft/customer-status-api/expected",
-        "fixtures/mulesoft/customer-status-api/fixture.yaml",
-        None,
-        None,
-    ),
     (
         "salesforce-qwen-end-to-end",
         Platform.SALESFORCE,
         PilotEvaluationMode.AGENT_RUN,
         "fixtures/salesforce/account-contact-explorer/input",
-        None,
         "fixtures/salesforce/account-contact-explorer/fixture.yaml",
         "ollama",
         "qwen3.8:latest",
@@ -666,7 +623,6 @@ _EXPECTED_PILOT_CASES: tuple[
         Platform.MULESOFT,
         PilotEvaluationMode.AGENT_RUN,
         "fixtures/mulesoft/customer-status-api/input",
-        None,
         "fixtures/mulesoft/customer-status-api/fixture.yaml",
         "ollama",
         "qwen3.8:latest",
@@ -692,7 +648,6 @@ class PilotEvaluationRegistry(StrictModel):
                 case.platform,
                 case.evaluation_mode,
                 case.source_path,
-                case.candidate_path,
                 case.fixture_contract_path,
                 case.expected_provider_id,
                 case.expected_model_id,
@@ -700,7 +655,7 @@ class PilotEvaluationRegistry(StrictModel):
             for case in self.cases
         )
         if observed != _EXPECTED_PILOT_CASES:
-            raise ValueError("pilot registry differs from the four predeclared bounded cases")
+            raise ValueError("pilot registry differs from the two predeclared Qwen cases")
         return self
 
 
@@ -714,7 +669,7 @@ class PilotExecutionBoundary(StrictModel):
 
 
 class PilotArtifactBinding(StrictModel):
-    role: Literal["source_tree", "candidate_tree", "fixture_contract", "run_evidence"]
+    role: Literal["source_tree", "fixture_contract", "run_evidence"]
     path: str = Field(min_length=1, max_length=300)
     artifact_kind: Literal["tree", "file"]
     digest: Sha256Digest
@@ -723,18 +678,6 @@ class PilotArtifactBinding(StrictModel):
     @classmethod
     def validate_path(cls, value: str) -> str:
         return validate_relative_path(value)
-
-
-class PilotLocalObservation(StrictModel):
-    validator_id: Literal[
-        "salesforce-candidate-static-v1",
-        "mulesoft-candidate-static-v1",
-    ]
-    check_output_digest: Sha256Digest
-    tests_executed: Literal[False] = False
-    model_quality_evaluated: Literal[False] = False
-    semantic_conformance_evaluated: Literal[False] = False
-    external_platform_evaluated: Literal[False] = False
 
 
 class PilotAgentRunObservation(StrictModel):
@@ -792,10 +735,9 @@ class PilotEvidenceReceipt(StrictModel):
     evidence_kind: PilotEvidenceKind
     status: ResultStatus
     claims: tuple[PilotClaim, ...] = Field(min_length=1, max_length=4)
-    bindings: tuple[PilotArtifactBinding, ...] = Field(min_length=3, max_length=4)
+    bindings: tuple[PilotArtifactBinding, ...] = Field(min_length=3, max_length=3)
     boundary: PilotExecutionBoundary
-    local_observation: PilotLocalObservation | None = None
-    agent_run_observation: PilotAgentRunObservation | None = None
+    agent_run_observation: PilotAgentRunObservation
     limitations: tuple[str, ...] = Field(min_length=2, max_length=8)
 
     @model_validator(mode="after")
@@ -805,36 +747,20 @@ class PilotEvidenceReceipt(StrictModel):
         roles = tuple(binding.role for binding in self.bindings)
         if len(roles) != len(set(roles)):
             raise ValueError("receipt artifact-binding roles must be unique")
-        if self.evidence_kind is PilotEvidenceKind.LOCAL_STATIC:
-            if self.local_observation is None or self.agent_run_observation is not None:
-                raise ValueError("local-static receipts require exactly one local observation")
-            if set(roles) != {"source_tree", "candidate_tree", "fixture_contract"}:
-                raise ValueError("local-static receipt bindings are incomplete")
-            expected_boundary = PilotExecutionBoundary(
-                provider=PilotBoundaryState.NOT_INVOKED,
-                external_platform=PilotBoundaryState.NOT_INVOKED,
-                authentication=PilotBoundaryState.NOT_INVOKED,
-                subprocess=PilotBoundaryState.NOT_INVOKED,
-                human_gate=PilotBoundaryState.NOT_INVOKED,
-                external_authority_granted=False,
+        if self.evidence_kind is not PilotEvidenceKind.AGENT_RUN:
+            raise ValueError("pilot receipts must represent real agent runs")
+        if set(roles) != {"source_tree", "fixture_contract", "run_evidence"}:
+            raise ValueError("agent-run receipt bindings are incomplete")
+        if self.boundary.provider is not PilotBoundaryState.INVOKED:
+            raise ValueError("agent-run receipt must record its existing provider invocation")
+        if (
+            self.boundary.external_platform is not PilotBoundaryState.UNKNOWN
+            or self.boundary.authentication is not PilotBoundaryState.UNKNOWN
+            or self.boundary.subprocess is not PilotBoundaryState.UNKNOWN
+        ):
+            raise ValueError(
+                "portable agent receipts cannot infer platform, authentication, or subprocess boundaries"
             )
-            if self.boundary != expected_boundary:
-                raise ValueError("local-static receipts cannot claim external execution")
-        else:
-            if self.agent_run_observation is None or self.local_observation is not None:
-                raise ValueError("agent-run receipts require exactly one agent observation")
-            if set(roles) != {"source_tree", "fixture_contract", "run_evidence"}:
-                raise ValueError("agent-run receipt bindings are incomplete")
-            if self.boundary.provider is not PilotBoundaryState.INVOKED:
-                raise ValueError("agent-run receipt must record its existing provider invocation")
-            if (
-                self.boundary.external_platform is not PilotBoundaryState.UNKNOWN
-                or self.boundary.authentication is not PilotBoundaryState.UNKNOWN
-                or self.boundary.subprocess is not PilotBoundaryState.UNKNOWN
-            ):
-                raise ValueError(
-                    "portable agent receipts cannot infer platform, authentication, or subprocess boundaries"
-                )
         return self
 
 
@@ -867,12 +793,10 @@ class PilotCellResult(StrictModel):
 
 
 class PilotEvaluationSummary(StrictModel):
-    planned_cells: Literal[4] = 4
-    recorded_cells: Literal[4] = 4
+    planned_cells: Literal[2] = 2
+    recorded_cells: Literal[2] = 2
     measured_cells: int = Field(ge=0, le=PILOT_CELL_COUNT)
     status_counts: StatusCounts
-    local_static_cells_planned: Literal[2] = 2
-    local_static_cells_passed: int = Field(ge=0, le=2)
     agent_cells_planned: Literal[2] = 2
     agent_cells_measured: int = Field(ge=0, le=2)
     complete: bool
@@ -888,7 +812,7 @@ class PilotEvaluationResults(StrictModel):
     registry_digest: Sha256Digest
     snapshot_sequence: int = Field(ge=1, le=16)
     parent_results_digest: Sha256Digest | None = None
-    snapshot_status: Literal["partially_measured", "complete"]
+    snapshot_status: Literal["not_performed", "partially_measured", "complete"]
     cells: tuple[PilotCellResult, ...] = Field(
         min_length=PILOT_CELL_COUNT,
         max_length=PILOT_CELL_COUNT,
@@ -911,11 +835,6 @@ class PilotEvaluationResults(StrictModel):
             not_performed=counts[ResultStatus.NOT_PERFORMED],
         )
         measured = PILOT_CELL_COUNT - counts[ResultStatus.NOT_PERFORMED]
-        local_passed = sum(
-            cell.status is ResultStatus.SUCCEEDED
-            for cell in self.cells
-            if cell.case_id.endswith("static-fixture-contract")
-        )
         agent_measured = sum(
             cell.status is not ResultStatus.NOT_PERFORMED
             for cell in self.cells
@@ -925,14 +844,15 @@ class PilotEvaluationResults(StrictModel):
             raise ValueError("pilot summary status counts do not match cells")
         if self.summary.measured_cells != measured:
             raise ValueError("pilot summary measured-cell count does not match cells")
-        if self.summary.local_static_cells_passed != local_passed:
-            raise ValueError("pilot summary local-static count does not match cells")
         if self.summary.agent_cells_measured != agent_measured:
             raise ValueError("pilot summary agent-cell count does not match cells")
         complete = counts[ResultStatus.NOT_PERFORMED] == 0
         if self.summary.complete != complete:
             raise ValueError("pilot summary completion does not match cells")
-        if self.snapshot_status != ("complete" if complete else "partially_measured"):
+        expected_snapshot_status = (
+            "not_performed" if measured == 0 else "complete" if complete else "partially_measured"
+        )
+        if self.snapshot_status != expected_snapshot_status:
             raise ValueError("pilot snapshot status does not match completion")
         if self.snapshot_sequence == 1 and self.parent_results_digest is not None:
             raise ValueError("initial pilot snapshot cannot have a parent")
@@ -944,10 +864,9 @@ class PilotEvaluationResults(StrictModel):
 class PilotEvaluationVerification(StrictModel):
     verified: Literal[True] = True
     registry_id: Literal["legacy-migration-pilot-v1"]
-    planned_cells: Literal[4] = 4
+    planned_cells: Literal[2] = 2
     measured_cells: int = Field(ge=0, le=PILOT_CELL_COUNT)
     not_performed_cells: int = Field(ge=0, le=PILOT_CELL_COUNT)
-    local_static_receipts_reexecuted: int = Field(ge=0, le=2)
     agent_run_receipts_verified: int = Field(ge=0, le=2)
     agent_run_sources_reverified: int = Field(ge=0, le=2)
     portable_agent_receipts_only: bool
@@ -1002,7 +921,7 @@ def _pilot_project_root(path: Path) -> Path:
 def _binding(
     project_root: Path,
     *,
-    role: Literal["source_tree", "candidate_tree", "fixture_contract", "run_evidence"],
+    role: Literal["source_tree", "fixture_contract", "run_evidence"],
     relative_path: str,
     artifact_kind: Literal["tree", "file"],
 ) -> PilotArtifactBinding:
@@ -1015,107 +934,6 @@ def _binding(
         artifact_kind=artifact_kind,
         digest=digest,
     )
-
-
-def _local_boundary() -> PilotExecutionBoundary:
-    return PilotExecutionBoundary(
-        provider=PilotBoundaryState.NOT_INVOKED,
-        external_platform=PilotBoundaryState.NOT_INVOKED,
-        authentication=PilotBoundaryState.NOT_INVOKED,
-        subprocess=PilotBoundaryState.NOT_INVOKED,
-        human_gate=PilotBoundaryState.NOT_INVOKED,
-        external_authority_granted=False,
-    )
-
-
-def _measure_local_case(
-    project_root: Path,
-    registry: PilotEvaluationRegistry,
-    case: PilotCase,
-) -> PilotEvidenceReceipt:
-    if case.evaluation_mode is not PilotEvaluationMode.LOCAL_STATIC:
-        raise EvaluationVerificationError("only local-static pilot cases can run provider-free")
-    assert case.candidate_path is not None
-    source = project_root.joinpath(*case.source_path.split("/"))
-    candidate = project_root.joinpath(*case.candidate_path.split("/"))
-    source_before = content_revision(source)
-    candidate_before = content_revision(candidate)
-
-    if case.platform is Platform.SALESFORCE:
-        from legacy_migration_agent.platforms.local_checks import (
-            check_dependency_closure,
-            check_salesforce_candidate,
-        )
-
-        candidate_check = check_salesforce_candidate(candidate)
-        dependency_check, _ = check_dependency_closure(candidate)
-        check_output: Any = {
-            "candidate_contract": candidate_check,
-            "dependency_closure": dependency_check,
-        }
-        validator_id: Literal[
-            "salesforce-candidate-static-v1",
-            "mulesoft-candidate-static-v1",
-        ] = "salesforce-candidate-static-v1"
-        claims: tuple[PilotClaim, ...] = (
-            PilotClaim.SALESFORCE_STATIC_CONTRACT,
-            PilotClaim.SALESFORCE_DEPENDENCY_CLOSURE,
-        )
-    else:
-        from legacy_migration_agent.platforms.mulesoft_local_checks import (
-            check_mulesoft_candidate,
-        )
-
-        mule_check = check_mulesoft_candidate(candidate, source)
-        check_output = mule_check.model_dump(mode="json")
-        validator_id = "mulesoft-candidate-static-v1"
-        claims = (PilotClaim.MULESOFT_STATIC_CONTRACT,)
-
-    if content_revision(source) != source_before or content_revision(candidate) != candidate_before:
-        raise EvaluationVerificationError("provider-free pilot check mutated a bound fixture tree")
-
-    receipt = PilotEvidenceReceipt(
-        receipt_id=f"receipt-{case.case_id}",
-        registry_id=registry.registry_id,
-        registry_digest=artifact_digest(registry),
-        cell_id=case.case_id,
-        case_id=case.case_id,
-        platform=case.platform,
-        evidence_kind=PilotEvidenceKind.LOCAL_STATIC,
-        status=ResultStatus.SUCCEEDED,
-        claims=claims,
-        bindings=(
-            _binding(
-                project_root,
-                role="source_tree",
-                relative_path=case.source_path,
-                artifact_kind="tree",
-            ),
-            _binding(
-                project_root,
-                role="candidate_tree",
-                relative_path=case.candidate_path,
-                artifact_kind="tree",
-            ),
-            _binding(
-                project_root,
-                role="fixture_contract",
-                relative_path=case.fixture_contract_path,
-                artifact_kind="file",
-            ),
-        ),
-        boundary=_local_boundary(),
-        local_observation=PilotLocalObservation(
-            validator_id=validator_id,
-            check_output_digest=artifact_digest(check_output),
-        ),
-        limitations=(
-            "This receipt establishes only controller-owned static fixture claims.",
-            "No model-quality, semantic-acceptance, external-platform, deployment, or production claim was evaluated.",
-            "Prepared Apex, Jest, Maven, and MUnit sources are not evidence that those runtimes executed.",
-        ),
-    )
-    return receipt
 
 
 def _pilot_summary(cells: tuple[PilotCellResult, ...]) -> PilotEvaluationSummary:
@@ -1131,11 +949,6 @@ def _pilot_summary(cells: tuple[PilotCellResult, ...]) -> PilotEvaluationSummary
             unavailable=counts[ResultStatus.UNAVAILABLE],
             not_performed=counts[ResultStatus.NOT_PERFORMED],
         ),
-        local_static_cells_passed=sum(
-            cell.status is ResultStatus.SUCCEEDED
-            for cell in cells
-            if cell.case_id.endswith("static-fixture-contract")
-        ),
         agent_cells_measured=sum(
             cell.status is not ResultStatus.NOT_PERFORMED
             for cell in cells
@@ -1149,52 +962,35 @@ def build_local_pilot_results(
     project_root: Path,
     registry: PilotEvaluationRegistry,
 ) -> tuple[PilotEvaluationResults, tuple[PilotEvidenceReceipt, ...]]:
-    """Execute only the two provider-free static cells in registry order."""
+    """Initialize the two real-agent pilot cells without invoking a provider."""
 
-    root = _pilot_project_root(project_root)
-    receipts: list[PilotEvidenceReceipt] = []
-    cells: list[PilotCellResult] = []
-    for case in registry.cases:
-        if case.evaluation_mode is PilotEvaluationMode.LOCAL_STATIC:
-            receipt = _measure_local_case(root, registry, case)
-            receipts.append(receipt)
-            cells.append(
-                PilotCellResult(
-                    cell_id=case.case_id,
-                    case_id=case.case_id,
-                    status=receipt.status,
-                    reason=PilotResultReason.CONTROLLER_STATIC_CHECK,
-                    evidence_receipt_path=f"evidence/{case.case_id}.json",
-                    evidence_receipt_digest=artifact_digest(receipt),
-                )
-            )
-        else:
-            cells.append(
-                PilotCellResult(
-                    cell_id=case.case_id,
-                    case_id=case.case_id,
-                    status=ResultStatus.NOT_PERFORMED,
-                    reason=PilotResultReason.AWAITING_QWEN_RUN,
-                )
-            )
-    ordered_cells = tuple(cells)
+    _pilot_project_root(project_root)
+    ordered_cells = tuple(
+        PilotCellResult(
+            cell_id=case.case_id,
+            case_id=case.case_id,
+            status=ResultStatus.NOT_PERFORMED,
+            reason=PilotResultReason.AWAITING_QWEN_RUN,
+        )
+        for case in registry.cases
+    )
     return (
         PilotEvaluationResults(
-            results_id="legacy-migration-pilot-v1-local-current",
+            results_id="legacy-migration-pilot-v1-baseline",
             registry_id=registry.registry_id,
             registry_digest=artifact_digest(registry),
             snapshot_sequence=1,
             parent_results_digest=None,
-            snapshot_status="partially_measured",
+            snapshot_status="not_performed",
             cells=ordered_cells,
             summary=_pilot_summary(ordered_cells),
             limitations=(
-                "Two local-static cells were measured; both Qwen end-to-end cells remain not_performed.",
-                "Static success does not establish model quality, behavioral equivalence, runtime execution, org validation, deployment readiness, or production readiness.",
+                "Both Qwen end-to-end cells remain not_performed until a real terminal run is explicitly ingested.",
+                "Repository tests establish harness behavior but are not model-quality, migration-output, org, Mule-runtime, deployment, or production evidence.",
                 "The fixed 72-cell benchmark-v1 remains a separate not_performed baseline.",
             ),
         ),
-        tuple(receipts),
+        (),
     )
 
 
@@ -1203,7 +999,7 @@ def write_local_pilot_snapshot(
     registry_path: Path,
     output_dir: Path,
 ) -> PilotEvaluationResults:
-    """Write an immutable, self-contained local pilot snapshot."""
+    """Write an immutable baseline containing only unperformed agent-run cells."""
 
     registry = load_pilot_registry(registry_path)
     results, receipts = build_local_pilot_results(project_root, registry)
@@ -1220,7 +1016,7 @@ def verify_pilot_evaluation(
     results: PilotEvaluationResults,
     snapshot_dir: Path,
 ) -> PilotEvaluationVerification:
-    """Re-execute static receipts and validate all result/evidence bindings."""
+    """Validate agent-run result and evidence bindings without invoking a provider."""
 
     root = _pilot_project_root(project_root)
     safe_snapshot = _pilot_project_root(snapshot_dir)
@@ -1237,7 +1033,6 @@ def verify_pilot_evaluation(
         raise EvaluationVerificationError("pilot results are not in canonical registry order")
 
     case_by_id = {case.case_id: case for case in registry.cases}
-    local_reexecuted = 0
     agent_verified = 0
     agent_sources_reverified = 0
     for cell in results.cells:
@@ -1250,12 +1045,7 @@ def verify_pilot_evaluation(
         if artifact_digest(receipt) != cell.evidence_receipt_digest:
             raise EvaluationVerificationError("pilot evidence receipt digest does not match")
         case = case_by_id[cell.case_id]
-        expected_reason = (
-            PilotResultReason.CONTROLLER_STATIC_CHECK
-            if case.evaluation_mode is PilotEvaluationMode.LOCAL_STATIC
-            else PilotResultReason.VERIFIED_AGENT_RUN
-        )
-        if cell.reason is not expected_reason:
+        if cell.reason is not PilotResultReason.VERIFIED_AGENT_RUN:
             raise EvaluationVerificationError("pilot cell reason differs from its case mode")
         if (
             receipt.registry_id != registry.registry_id
@@ -1266,76 +1056,68 @@ def verify_pilot_evaluation(
             or receipt.status is not cell.status
         ):
             raise EvaluationVerificationError("pilot evidence receipt identity does not match cell")
-        if receipt.evidence_kind is PilotEvidenceKind.LOCAL_STATIC:
-            expected_receipt = _measure_local_case(root, registry, case)
-            if receipt != expected_receipt:
-                raise EvaluationVerificationError("local pilot receipt differs from re-execution")
-            local_reexecuted += 1
-        else:
-            if case.evaluation_mode is not PilotEvaluationMode.AGENT_RUN:
-                raise EvaluationVerificationError("agent receipt is attached to a static case")
-            observation = receipt.agent_run_observation
-            assert observation is not None
-            if (
-                observation.provider_id != case.expected_provider_id
-                or observation.model_id != case.expected_model_id
-            ):
-                raise EvaluationVerificationError("agent receipt provider/model differs from case")
-            expected_status, expected_claim = _agent_result_from_disposition(
-                observation.workflow_status,
-                observation.terminal_disposition,
-                failed=observation.workflow_status == "failed",
+        if receipt.evidence_kind is not PilotEvidenceKind.AGENT_RUN:
+            raise EvaluationVerificationError("pilot receipt does not represent an agent run")
+        if case.evaluation_mode is not PilotEvaluationMode.AGENT_RUN:
+            raise EvaluationVerificationError("agent receipt is attached to a non-agent case")
+        observation = receipt.agent_run_observation
+        if (
+            observation.provider_id != case.expected_provider_id
+            or observation.model_id != case.expected_model_id
+        ):
+            raise EvaluationVerificationError("agent receipt provider/model differs from case")
+        expected_status, expected_claim = _agent_result_from_disposition(
+            observation.workflow_status,
+            observation.terminal_disposition,
+            failed=observation.workflow_status == "failed",
+        )
+        if receipt.status is not expected_status or receipt.claims != (expected_claim,):
+            raise EvaluationVerificationError("agent receipt overstates its workflow outcome")
+        expected_human_gate = (
+            PilotBoundaryState.INVOKED
+            if observation.manifest_gate_performed
+            else PilotBoundaryState.NOT_INVOKED
+        )
+        if receipt.boundary.human_gate is not expected_human_gate:
+            raise EvaluationVerificationError("agent receipt human-gate boundary is inconsistent")
+        bindings = {binding.role: binding for binding in receipt.bindings}
+        if bindings["source_tree"] != _binding(
+            root,
+            role="source_tree",
+            relative_path=case.source_path,
+            artifact_kind="tree",
+        ) or bindings["fixture_contract"] != _binding(
+            root,
+            role="fixture_contract",
+            relative_path=case.fixture_contract_path,
+            artifact_kind="file",
+        ):
+            raise EvaluationVerificationError("agent receipt fixture binding does not match")
+        run_binding = bindings["run_evidence"]
+        if not run_binding.path.startswith(".runs/"):
+            raise EvaluationVerificationError("agent receipt run evidence is outside .runs")
+        run_evidence = root.joinpath(*run_binding.path.split("/"))
+        if run_evidence.exists():
+            expected_agent_receipt = build_agent_run_receipt(
+                root,
+                registry,
+                case_id=case.case_id,
+                run_dir=run_evidence.parent,
+                run_id=observation.run_id,
+                thread_id=observation.thread_id,
             )
-            if receipt.status is not expected_status or receipt.claims != (expected_claim,):
-                raise EvaluationVerificationError("agent receipt overstates its workflow outcome")
-            expected_human_gate = (
-                PilotBoundaryState.INVOKED
-                if observation.manifest_gate_performed
-                else PilotBoundaryState.NOT_INVOKED
-            )
-            if receipt.boundary.human_gate is not expected_human_gate:
+            if receipt != expected_agent_receipt:
                 raise EvaluationVerificationError(
-                    "agent receipt human-gate boundary is inconsistent"
+                    "agent receipt differs from source-run revalidation"
                 )
-            bindings = {binding.role: binding for binding in receipt.bindings}
-            if bindings["source_tree"] != _binding(
-                root,
-                role="source_tree",
-                relative_path=case.source_path,
-                artifact_kind="tree",
-            ) or bindings["fixture_contract"] != _binding(
-                root,
-                role="fixture_contract",
-                relative_path=case.fixture_contract_path,
-                artifact_kind="file",
-            ):
-                raise EvaluationVerificationError("agent receipt fixture binding does not match")
-            run_binding = bindings["run_evidence"]
-            if not run_binding.path.startswith(".runs/"):
-                raise EvaluationVerificationError("agent receipt run evidence is outside .runs")
-            run_evidence = root.joinpath(*run_binding.path.split("/"))
-            if run_evidence.exists():
-                expected_agent_receipt = build_agent_run_receipt(
-                    root,
-                    registry,
-                    case_id=case.case_id,
-                    run_dir=run_evidence.parent,
-                    run_id=observation.run_id,
-                    thread_id=observation.thread_id,
-                )
-                if receipt != expected_agent_receipt:
-                    raise EvaluationVerificationError(
-                        "agent receipt differs from source-run revalidation"
-                    )
-                agent_sources_reverified += 1
-            agent_verified += 1
+            agent_sources_reverified += 1
+        agent_verified += 1
 
     measured = results.summary.measured_cells
     return PilotEvaluationVerification(
         registry_id=registry.registry_id,
         measured_cells=measured,
         not_performed_cells=PILOT_CELL_COUNT - measured,
-        local_static_receipts_reexecuted=local_reexecuted,
         agent_run_receipts_verified=agent_verified,
         agent_run_sources_reverified=agent_sources_reverified,
         portable_agent_receipts_only=agent_verified > agent_sources_reverified,

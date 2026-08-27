@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from salesforce_candidate_factory import salesforce_candidate_outputs
 
 import legacy_migration_agent.graphs.dependency_graph as dependency_graph_module
 from legacy_migration_agent.core.policies import PolicyViolation
@@ -119,16 +120,19 @@ def test_input_fixture_builds_evidence_bearing_legacy_graph() -> None:
     assert all(digest.sha256 and len(digest.sha256) == 64 for digest in graph.source_digests)
 
 
-def test_expected_fixture_links_lwc_test_and_permission_to_target_controller(
+def test_synthetic_candidate_links_lwc_test_and_permission_to_target_controller(
     tmp_path: Path,
 ) -> None:
     entry = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
-    source_root = tmp_path / "expected"
+    source_root = tmp_path / "candidate"
     shutil.copytree(
-        FIXTURE_ROOT / "expected",
+        FIXTURE_ROOT / "input",
         source_root,
-        ignore=shutil.ignore_patterns("node_modules"),
     )
+    for relative_path, content in salesforce_candidate_outputs().items():
+        destination = source_root.joinpath(*relative_path.split("/"))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
     graph = build_salesforce_dependency_graph(
         source_root,
         (entry,),
@@ -178,6 +182,46 @@ def test_expected_fixture_links_lwc_test_and_permission_to_target_controller(
     assert (
         "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml"
     ) in lwc.metadata_paths
+
+
+def test_standard_user_constructor_and_profile_query_resolve_as_schema(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    entry = _write(
+        root,
+        "force-app/main/default/classes/GeneratedControllerTest.cls",
+        """
+@IsTest
+private class GeneratedControllerTest {
+    @IsTest
+    static void createsBoundedUser() {
+        Profile selectedProfile = [SELECT Id, Name FROM Profile LIMIT 1];
+        User selectedUser = new User(
+            Alias = 'bounded',
+            Email = 'bounded@example.invalid',
+            LastName = 'Bounded',
+            ProfileId = selectedProfile.Id,
+            Username = 'bounded@example.invalid'
+        );
+        Assert.isNotNull(selectedUser);
+    }
+}
+""",
+    )
+
+    graph = build_salesforce_dependency_graph(
+        root,
+        (entry.relative_to(root).as_posix(),),
+        content_revision(root),
+    )
+
+    assert graph.has_unresolved is False
+    assert graph.warnings == ()
+    assert graph.node(NodeKind.SCHEMA_OBJECT, "Profile") is not None
+    assert graph.node(NodeKind.SCHEMA_FIELD, "Profile.Id") is not None
+    assert graph.node(NodeKind.SCHEMA_FIELD, "Profile.Name") is not None
+    assert graph.node(NodeKind.UNRESOLVED, "User") is None
 
 
 def test_graph_is_deterministic_and_revision_bound() -> None:

@@ -16,7 +16,7 @@ from collections.abc import Callable
 from contextlib import closing
 from typing import Any, Literal, Protocol, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from legacy_migration_agent.agent_runtime.openai_model import (
     LiveModelApproval,
@@ -327,7 +327,12 @@ class OllamaStructuredModelClient:
         parsed = _decode_json_object(content_bytes, role="structured output")
         try:
             return output_type.model_validate_json(_canonical_json(parsed), strict=True)
-        except ValueError as exc:
+        except ValidationError as exc:
+            lifecycle_event(
+                "ollama.output.rejected",
+                phase="schema_validation",
+                validation_errors=exc.error_count(),
+            )
             raise ModelOutputError("model structured output failed schema validation") from exc
 
     def _resolve_model_revision(self, *, timeout_seconds: float) -> str:

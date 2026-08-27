@@ -32,6 +32,15 @@ def _frontend() -> tuple[str, str, str]:
     )  # type: ignore[return-value]
 
 
+def test_failure_titles_include_unresolved_architect_risk_contract() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    assert (
+        'unresolved_question_risk_missing: "The Architect returned blocking questions '
+        'without a corresponding human-decision risk."'
+    ) in script
+
+
 def test_new_chat_is_initially_visible_and_not_gate_disabled() -> None:
     page, script, _stylesheet = _frontend()
     parser = _ElementAttributes()
@@ -94,7 +103,7 @@ def test_runtime_readiness_is_server_owned_and_gates_model_requests() -> None:
     assert "selectedProviderId" not in script
 
 
-def test_composer_sends_chat_and_launches_migration_separately() -> None:
+def test_composer_sends_chat_and_inline_gate_launches_migration_separately() -> None:
     page, script, _stylesheet = _frontend()
     parser = _ElementAttributes()
     parser.feed(page)
@@ -103,10 +112,8 @@ def test_composer_sends_chat_and_launches_migration_separately() -> None:
     assert request["minlength"] == "1"
     assert request["maxlength"] == "2000"
     assert "disabled" not in request
-    assert "launch-button" in parser.by_id
-    assert "hidden" in parser.by_id["launch-button"]
-    assert "launch-preview" in parser.by_id
-    assert "hidden" in parser.by_id["launch-preview"]
+    assert "launch-button" not in parser.by_id
+    assert "launch-preview" not in parser.by_id
 
     send = script[
         script.index("async function sendConversationMessage") : script.index(
@@ -120,7 +127,8 @@ def test_composer_sends_chat_and_launches_migration_separately() -> None:
     ]
     assert "`/api/conversations/${messageConversationId}/messages`" in send
     assert "message," in send
-    assert "platform: state.selectedPlatform || null" in send
+    assert "scenario_id: state.selectedScenarioId || null" in send
+    assert "platform:" not in send
     assert 'api("/api/sessions"' not in send
     assert "`/api/conversations/${launchConversationId}/launch`" in launch
     assert "body: { launch_token: readiness.launchToken }" in launch
@@ -131,13 +139,13 @@ def test_composer_sends_chat_and_launches_migration_separately() -> None:
     assert "modelRuntimeReady()" in script
     assert "!state.platformSelectionDirty" in script
     assert "!state.conversationSyncUncertain" in script
-    assert (
-        "elements.launchButton.hidden = runDisplayed || conversationLaunched || !previewAvailable;"
-        in script
-    )
     assert "readiness.launchToken !== null" in script
+    assert "readiness.scenarioId === state.selectedScenarioId" in script
+    assert 'start.dataset.launchAction = "start";' in script
+    assert 'start.addEventListener("click", launchMigration);' in script
     assert 'elements.requestForm.addEventListener("submit", sendConversationMessage)' in script
-    assert 'elements.launchButton.addEventListener("click", launchMigration)' in script
+    assert 'elements.launchButton.addEventListener("click", launchMigration)' not in script
+    assert 'label: "Scenario launch gate"' in script
 
 
 def test_conversation_identity_is_persisted_and_restored_before_run_fallback() -> None:
@@ -206,20 +214,192 @@ def test_reviewer_is_clearly_a_human_audit_identity() -> None:
     _page, script, stylesheet = _frontend()
 
     assert script.count('textElement("label", "", "Human reviewer ID")') == 2
-    assert script.count('"capstone-author"') == 2
-    assert script.count("not another agent") == 2
+    assert script.count('"capstone-author"') == 3
+    assert script.count("not another agent") == 3
     assert ".decision-help" in stylesheet
 
 
-def test_ready_request_is_rendered_before_explicit_launch() -> None:
+def test_final_review_is_an_independent_non_authorizing_human_gate() -> None:
     page, script, stylesheet = _frontend()
 
-    assert "Refined request to launch" in page
-    assert "Review this exact text before starting the migration." in page
-    assert 'launchPreviewRequest: document.querySelector("#launch-preview-request")' in script
-    assert "elements.launchPreviewRequest.textContent = previewAvailable ? refinedRequest" in script
-    assert "elements.launchPreviewPlatform.textContent = previewAvailable" in script
-    assert ".launch-preview" in stylesheet
+    assert 'id="candidate-review-status"' in page
+    gate = script[
+        script.index("function finalReviewGate") : script.index(
+            "function priorAttemptMessage", script.index("function finalReviewGate")
+        )
+    ]
+    request = script[
+        script.index("async function requestFinalReview") : script.index(
+            "async function submitFinalReviewDecision",
+            script.index("async function requestFinalReview"),
+        )
+    ]
+    decide = script[
+        script.index("async function submitFinalReviewDecision") : script.index(
+            "async function submitRetry", script.index("async function submitFinalReviewDecision")
+        )
+    ]
+    assert "not another agent or authenticated account" in gate
+    assert "No choice authorizes Git, deployment, publication" in gate
+    assert 'reviewer.value = "independent-reviewer";' in gate
+    assert "request_changes" in gate
+    assert "reviewer.readOnly = true;" in gate
+    assert "`/api/sessions/${state.run.handle}/final-review/request`" in request
+    assert "requester:" in request
+    assert "designated_reviewer:" in request
+    assert "`/api/sessions/${state.run.handle}/final-review/decision`" in decide
+    assert '["accept", "reject", "request_changes"]' in decide
+    assert ".final-review-facts" in stylesheet
+    assert ".candidate-review-status" in stylesheet
+
+
+def test_ready_request_is_rendered_in_inline_controller_gate() -> None:
+    page, script, stylesheet = _frontend()
+
+    assert 'id="launch-preview"' not in page
+    gate = script[
+        script.index("function conversationLaunchGate") : script.index(
+            "function approvalGate", script.index("function conversationLaunchGate")
+        )
+    ]
+    render = script[
+        script.index("function renderConversationView") : script.index(
+            "async function createConversation", script.index("function renderConversationView")
+        )
+    ]
+    refine = script[
+        script.index("function keepRefiningConversation") : script.index(
+            "function conversationLaunchGate", script.index("function keepRefiningConversation")
+        )
+    ]
+    assert '"Controller · explicit launch gate"' in gate
+    assert 'launchPending ? "Retry this exact migration launch?" : "Start this migration?"' in gate
+    assert 'textElement("p", "launch-gate-request", readiness.canonicalRequest)' in gate
+    assert "Architect advisory:" in gate
+    assert "readiness.advisorySummary" in gate
+    assert "readiness.launchContractDigest" in gate
+    assert "const scenario = scenarioById(readiness.scenarioId);" in gate
+    assert "scenario.platform !== readiness.platform" in gate
+    assert 'textElement("dt", "", "Source")' in gate
+    assert 'textElement("dt", "", "Target")' in gate
+    assert (
+        'request.setAttribute("aria-label", "Controller-owned canonical migration request")' in gate
+    )
+    assert "Chat and Architect prose are advisory" in gate
+    assert 'start.addEventListener("click", launchMigration);' in gate
+    assert 'refine.addEventListener("click", keepRefiningConversation);' in gate
+    assert "elements.requestInput.focus();" in refine
+    assert "api(" not in refine
+    assert "elements.conversation.append(launchGate);" in render
+    assert ".launch-gate-request" in stylesheet
+    assert ".scenario-boundary" in stylesheet
+
+
+def test_controller_checks_and_validator_advisory_are_attributed_separately() -> None:
+    page, script, _stylesheet = _frontend()
+
+    assert "Authoritative checks → non-authoritative advisory" in page
+    assert "Public model activity" in page
+    controller = script[
+        script.index("function controllerValidationMessage") : script.index(
+            "function validatorMessage", script.index("function controllerValidationMessage")
+        )
+    ]
+    validator = script[
+        script.index("function validatorMessage") : script.index(
+            "function completionMessage", script.index("function validatorMessage")
+        )
+    ]
+    assert 'messageArticle(\n    "Controller"' in controller
+    assert "controller-owned deterministic checks" in controller
+    assert 'messageArticle(\n    "Validator"' in validator
+    assert 'typeof assessment === "string"' in validator
+    assert "assessment.replaceAll" not in validator
+    assert "advisory unavailable" in validator
+
+
+def test_architecture_attribution_separates_controller_and_agent_ownership() -> None:
+    page, script, _stylesheet = _frontend()
+    service = (STATIC_ROOT.parent / "service.py").read_text(encoding="utf-8")
+
+    working = script[
+        script.index("function renderWorkingHarness") : script.index(
+            "function setBusy", script.index("function renderWorkingHarness")
+        )
+    ]
+    architect = script[
+        script.index("function architectMessage") : script.index(
+            "function reviewList", script.index("function architectMessage")
+        )
+    ]
+    approval = script[
+        script.index("function approvalGate") : script.index(
+            "function correctionGate", script.index("function approvalGate")
+        )
+    ]
+
+    assert "Controller → Architect" in page
+    assert "Exact source + graph/Wiki evidence → semantic recommendation" in page
+    assert "Controller expansion + digest-bound human decision" in page
+    assert "Proposes isolated file content" in page
+    assert "Authoritative checks → non-authoritative advisory" in page
+    assert "Controller-retrieved LLM Wiki evidence" in page
+    assert "Controller-expanded manifest paths" in page
+
+    assert "Controller binds the exact source inputs" in working
+    assert "builds the dependency graph" in working
+    assert "retrieves curated Wiki evidence" in working
+    assert "Architect then selects bounded evidence IDs" in working
+    assert "Controller expands an accepted semantic recommendation" in working
+    assert "Engineer proposes isolated file content" in working
+    assert "it cannot change the deterministic disposition" in working
+
+    assert "evidence-bound semantic recommendation" in architect
+    assert "selected graph" in architect
+    assert "selected Wiki" in architect
+    assert "The Controller supplied exact digest-bound source evidence" in architect
+    assert "built the dependency graph" in architect
+    assert "paths, checks, implementation-contract text, approval actions" in architect
+    assert "Selected graph ID" in script
+    assert "Selected Wiki page ID" in script
+    assert "Architect-selected evidence IDs" in script
+    assert "Controller expanded the Architect's semantic recommendation" in approval
+
+    assert "built" in service
+    assert "Controller bound the exact source inputs" in service
+    assert "Architect selected " in service
+    assert "bounded graph/Wiki IDs" in service
+    assert "Controller expanded " in service
+    assert "it into the exact manifest" in service
+    assert "the Architect does not author approval actions" in service
+    assert "the Architect does not copy or author implementation-contract entries" in service
+    assert "typed output fields, not native tool calls" in service
+
+    for stale_claim in (
+        "The Architect proposes",
+        "Available after Architect analysis",
+        "Mapping dependencies and retrieving Wiki guidance",
+        "The Architect omitted the required human approval gate",
+        "The Architect changed the controller-owned implementation contract",
+        "the role is tool-free",
+    ):
+        assert stale_claim not in page
+        assert stale_claim not in script
+        assert stale_claim not in service
+
+
+def test_saved_run_must_match_server_supplied_scenario_metadata() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    render_run = script[
+        script.index("function renderRun(run)") : script.index(
+            "async function sendConversationMessage", script.index("function renderRun(run)")
+        )
+    ]
+    assert "const scenario = scenarioById(run.scenario_id);" in render_run
+    assert "scenario.platform !== run.platform" in render_run
+    assert "scenario.title !== run.scenario_title" in render_run
+    assert "state.selectedScenarioId = run.scenario_id;" in render_run
 
 
 def test_launch_pending_freezes_intake_but_keeps_new_chat_and_retry_available() -> None:
@@ -245,3 +425,58 @@ def test_launch_pending_freezes_intake_but_keeps_new_chat_and_retry_available() 
     assert "elements.newChatButton.disabled = state.busy;" in composer
     assert 'state.conversation?.status === "launch_pending"' in send
     assert "Retry Start migration" in send
+    gate = script[
+        script.index("function conversationLaunchGate") : script.index(
+            "function approvalGate", script.index("function conversationLaunchGate")
+        )
+    ]
+    assert 'launchPending ? "Retry Start migration" : "Start migration"' in gate
+    assert "if (!launchPending)" in gate
+    assert 'textElement("button", "button button-secondary", "Keep chatting")' in gate
+
+
+def test_interrupted_authorized_retry_renders_the_existing_resume_gate() -> None:
+    _page, script, _stylesheet = _frontend()
+    render_conversation = script[
+        script.index("function renderConversation(run)") : script.index(
+            "function renderPendingMessage", script.index("function renderConversation(run)")
+        )
+    ]
+
+    assert 'run.status === "implementing"' in render_conversation
+    assert "run.execution_attempt === 2" in render_conversation
+    assert "run.correction?.retry_available" in render_conversation
+    assert "run.correction?.approval" in render_conversation
+    assert "execution stopped before the Engineer provider call began" in render_conversation
+    assert "correctionGate(run)" in render_conversation
+
+
+def test_validation_ui_distinguishes_root_failure_from_dependent_zero_test_checks() -> None:
+    _page, script, stylesheet = _frontend()
+    controller_message = script[
+        script.index("function controllerValidationMessage") : script.index(
+            "function validatorMessage", script.index("function controllerValidationMessage")
+        )
+    ]
+    correction_gate = script[
+        script.index("function correctionGate") : script.index(
+            "function finalReviewGate", script.index("function correctionGate")
+        )
+    ]
+    evidence = script[
+        script.index("function renderEvidence") : script.index(
+            "function setRunStatus", script.index("function renderEvidence")
+        )
+    ]
+
+    assert "!result.dependent_on" in controller_message
+    assert "Boolean(result.dependent_on)" in controller_message
+    assert "root LWC load failure prevented all tests from running" in controller_message
+    assert '"Root correction signals"' in correction_gate
+    assert 'result.status === "failed" && !result.dependent_on' in evidence
+    assert 'dependent ? "dependent" : result.status' in evidence
+    assert "No tests ran because ${result.dependent_on}" in evidence
+    assert 'root ${rootFailures === 1 ? "failure" : "failures"}' in evidence
+    assert 'dependent ${dependentChecks === 1 ? "check" : "checks"}' in evidence
+    assert ".validation-result.dependent" in stylesheet
+    assert ".validation-result.dependent .validation-status" in stylesheet

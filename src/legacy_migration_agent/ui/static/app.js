@@ -6,6 +6,7 @@ const state = {
   modelReadiness: null,
   scenarios: [],
   selectedPlatform: "",
+  selectedScenarioId: "",
   platformSelectionDirty: false,
   conversationSyncUncertain: false,
   conversation: null,
@@ -44,6 +45,7 @@ const elements = {
   boundaryTitle: document.querySelector("#boundary-title"),
   candidateDiff: document.querySelector("#candidate-diff"),
   candidateProvenance: document.querySelector("#candidate-provenance"),
+  candidateReviewStatus: document.querySelector("#candidate-review-status"),
   candidateSection: document.querySelector("#candidate-section"),
   changesTab: document.querySelector("#changes-tab"),
   changesView: document.querySelector("#changes-view"),
@@ -67,10 +69,6 @@ const elements = {
   focusRequestButton: document.querySelector("#focus-request-button"),
   graphSummary: document.querySelector("#graph-summary"),
   harnessStages: document.querySelector("#harness-stages"),
-  launchButton: document.querySelector("#launch-button"),
-  launchPreview: document.querySelector("#launch-preview"),
-  launchPreviewPlatform: document.querySelector("#launch-preview-platform"),
-  launchPreviewRequest: document.querySelector("#launch-preview-request"),
   manifestPaths: document.querySelector("#manifest-paths"),
   manifestPathsTitle: document.querySelector("#manifest-paths-title"),
   metrics: document.querySelector("#metrics"),
@@ -129,9 +127,9 @@ const readyHarnessStages = [
   },
   {
     key: "approval",
-    label: "Approval gate",
+    label: "Scenario launch gate",
     state: "waiting",
-    detail: "Waits for a valid digest-bound manifest.",
+    detail: "Waits for a selected controller-owned contract and explicit Start migration.",
   },
   {
     key: "engineer",
@@ -384,6 +382,14 @@ function platformLabel(platform) {
     : "MuleSoft: Mule 3 → Mule 4";
 }
 
+function scenarioById(scenarioId) {
+  return state.scenarios.find((scenario) => scenario.scenario_id === scenarioId) || null;
+}
+
+function scenarioForPlatform(platform) {
+  return state.scenarios.find((scenario) => scenario.platform === platform) || null;
+}
+
 function conversationFromPayload(payload) {
   const view = payload?.conversation || payload?.view || payload;
   if (!view || !validConversationId(view.conversation_id)) {
@@ -411,7 +417,11 @@ function conversationReadiness(conversation) {
   return {
     ready,
     platform: readiness.platform || conversation?.selected_platform || null,
-    refinedRequest: readiness.refined_request || conversation?.refined_request || null,
+    scenarioId:
+      readiness.scenario_id || conversation?.selected_scenario_id || null,
+    canonicalRequest: readiness.canonical_request || null,
+    advisorySummary: readiness.advisory_summary || null,
+    launchContractDigest: readiness.launch_contract_digest || null,
     launchToken,
     missingInformation: Array.isArray(readiness.missing_information)
       ? readiness.missing_information
@@ -639,7 +649,7 @@ function updateRequestHelp() {
   }
   if (readiness.ready) {
     elements.requestHelp.textContent =
-      "The request is ready. Keep chatting to refine it, or choose Start migration to generate the human-gated plan.";
+      "The selected scenario is ready. Review the Controller question, or keep chatting for advisory guidance.";
     return;
   }
   if (!state.selectedPlatform) {
@@ -662,16 +672,11 @@ function updateComposerState() {
   const readiness = conversationReadiness(state.conversation);
   const readyToLaunch =
     readiness.ready &&
+    readiness.launchToken !== null &&
+    readiness.scenarioId === state.selectedScenarioId &&
     modelRuntimeReady() &&
     !state.platformSelectionDirty &&
     !state.conversationSyncUncertain;
-  const refinedRequest = readiness.refinedRequest;
-  const previewAvailable =
-    readyToLaunch &&
-    typeof refinedRequest === "string" &&
-    refinedRequest.trim() !== "" &&
-    readiness.launchToken !== null &&
-    ["salesforce", "mulesoft"].includes(readiness.platform);
   elements.requestInput.disabled = state.busy || runDisplayed || conversationFrozen;
   elements.sendButton.disabled =
     state.busy ||
@@ -681,14 +686,15 @@ function updateComposerState() {
     !modelRuntimeReady() ||
     !validPrompt;
   elements.sendLabel.textContent = state.busy ? "Working…" : "Send";
-  elements.launchPreview.hidden = runDisplayed || conversationLaunched || !previewAvailable;
-  elements.launchPreviewPlatform.textContent = previewAvailable
-    ? platformLabel(readiness.platform)
-    : "";
-  elements.launchPreviewRequest.textContent = previewAvailable ? refinedRequest : "";
-  elements.launchButton.hidden = runDisplayed || conversationLaunched || !previewAvailable;
-  elements.launchButton.disabled =
-    state.busy || runDisplayed || conversationLaunched || !previewAvailable;
+  const launchStart = elements.conversation.querySelector('[data-launch-action="start"]');
+  if (launchStart instanceof HTMLButtonElement) {
+    launchStart.disabled =
+      state.busy || runDisplayed || conversationLaunched || !readyToLaunch;
+  }
+  const keepRefining = elements.conversation.querySelector('[data-launch-action="refine"]');
+  if (keepRefining instanceof HTMLButtonElement) {
+    keepRefining.disabled = state.busy || runDisplayed || conversationFrozen;
+  }
   elements.newChatButton.hidden = false;
   elements.newChatButton.disabled = state.busy;
   elements.focusRequestButton.disabled = state.busy;
@@ -733,7 +739,7 @@ function renderWorkingHarness(role) {
       },
       {
         key: "approval",
-        label: "Plan approval gate",
+        label: "Scenario launch gate",
         state: "waiting",
         detail: "No migration run has been started.",
       },
@@ -756,50 +762,50 @@ function renderWorkingHarness(role) {
     renderHarnessStages([
       {
         key: "architect",
-        label: "Architect",
+        label: "Controller → Architect",
         state: "active",
-        detail: "Scanning the dependency graph, retrieving Wiki evidence, and waiting for typed Ollama output.",
+        detail: "Controller binds the exact source inputs, builds the dependency graph, and retrieves curated Wiki evidence; Architect then selects bounded evidence IDs and returns a typed semantic recommendation.",
       },
-      { key: "approval", label: "Approval gate", state: "pending", detail: "Waits for a valid digest-bound manifest." },
-      { key: "engineer", label: "Engineer", state: "pending", detail: "Cannot run before human approval." },
-      { key: "validator", label: "Validator", state: "pending", detail: "Cannot run before a candidate exists." },
+      { key: "approval", label: "Manifest approval", state: "pending", detail: "Controller expands an accepted semantic recommendation into the exact digest-bound manifest before human review." },
+      { key: "engineer", label: "Engineer", state: "pending", detail: "Cannot propose isolated file content before human approval." },
+      { key: "validator", label: "Controller checks + Validator", state: "pending", detail: "Waits for a candidate, then Controller checks run before the optional Validator advisory." },
     ]);
     return;
   }
   if (role === "Engineer → Validator") {
     renderHarnessStages([
-      { key: "architect", label: "Architect", state: "complete", detail: "Bounded manifest created." },
+      { key: "architect", label: "Controller → Architect", state: "complete", detail: "Architect returned the semantic recommendation; Controller expanded it into the exact manifest." },
       { key: "approval", label: "Approval gate", state: "complete", detail: "Exact persisted manifest approved." },
       {
         key: "engineer",
-        label: "Gated continuation",
+        label: "Engineer + Controller checks",
         state: "active",
-        detail: "Engineer, deterministic checks, and Validator run sequentially in one synchronous request; verified sub-stage results appear when it returns.",
+        detail: "Engineer proposes isolated file content; Controller then runs deterministic checks. Verified sub-stage results appear when the synchronous request returns.",
       },
       {
         key: "validator",
-        label: "Validator",
+        label: "Validator advisory",
         state: "pending",
-        detail: "May run within the aggregate request; no live per-stage completion is claimed.",
+        detail: "May review the Controller report within the aggregate request; it cannot change the deterministic disposition.",
       },
     ]);
     return;
   }
   if (role === "Engineer correction → Validator") {
     renderHarnessStages([
-      { key: "architect", label: "Architect", state: "complete", detail: "The original bounded manifest remains unchanged." },
+      { key: "architect", label: "Controller → Architect", state: "complete", detail: "The original Controller-expanded manifest remains unchanged." },
       { key: "approval", label: "Correction gate", state: "complete", detail: "The reviewer authorized the exact offered attempt 2." },
       {
         key: "engineer",
         label: "Engineer · attempt 2",
         state: "active",
-        detail: "Applying typed failed-check and diagnostic feedback within the unchanged manifest.",
+        detail: "Proposing changed-file content for the typed failed-check and diagnostic signals within the unchanged manifest.",
       },
       {
         key: "validator",
-        label: "Validator · attempt 2",
+        label: "Controller checks + Validator · attempt 2",
         state: "pending",
-        detail: "Runs controller-owned checks after the corrected candidate is created.",
+        detail: "Controller checks run first; Validator may then provide a non-authoritative advisory.",
       },
     ]);
     return;
@@ -861,23 +867,27 @@ function renderScenarios() {
     button.type = "button";
     button.className = "suggestion-button";
     button.dataset.platform = scenario.platform;
+    button.dataset.scenarioId = scenario.scenario_id;
     button.dataset.shortLabel = scenario.platform === "salesforce" ? "SF" : "M4";
-    button.setAttribute("aria-pressed", String(scenario.platform === state.selectedPlatform));
-    button.textContent = platformLabel(scenario.platform);
+    button.setAttribute("aria-pressed", String(scenario.scenario_id === state.selectedScenarioId));
+    button.textContent = scenario.title;
+    button.title = `${scenario.source} → ${scenario.target}`;
     button.addEventListener("click", () => {
       if (state.busy) {
         return;
       }
       const currentText = elements.requestInput.value.trim();
       const currentTextIsExample = state.scenarios.some(
-        (candidate) => candidate.prompt === currentText,
+        (candidate) => candidate.canonical_request === currentText,
       );
       state.selectedPlatform = scenario.platform;
+      state.selectedScenarioId = scenario.scenario_id;
       state.platformSelectionDirty =
         Boolean(state.conversation) &&
-        state.conversation.selected_platform !== scenario.platform;
+        (state.conversation.selected_platform !== scenario.platform ||
+          state.conversation.selected_scenario_id !== scenario.scenario_id);
       if (!currentText || currentTextIsExample) {
-        elements.requestInput.value = scenario.prompt;
+        elements.requestInput.value = scenario.canonical_request;
       }
       updateComposerState();
       elements.requestInput.focus();
@@ -945,11 +955,13 @@ function architectMessage(run) {
   const unresolved = (run.manifest?.unresolved_questions || []).map(
     (question) => `Unresolved question: ${question}`,
   );
+  const graphSelectionCount = run.manifest?.cited_graph_nodes?.length || 0;
+  const wikiSelectionCount = run.manifest?.cited_wiki_pages?.length || 0;
   const message = messageArticle(
     "Architect",
     [
-      architect ? architect.detail : "I completed the bounded architecture analysis.",
-      `${run.evidence.graph_summary} I retrieved ${run.metrics.wiki_hits} relevant Wiki ${run.metrics.wiki_hits === 1 ? "entry" : "entries"} and proposed ${pathCount} manifest ${pathCount === 1 ? "path" : "paths"}.`,
+      `I returned an evidence-bound semantic recommendation using ${graphSelectionCount} selected graph ${graphSelectionCount === 1 ? "ID" : "IDs"} and ${wikiSelectionCount} selected Wiki ${wikiSelectionCount === 1 ? "page ID" : "page IDs"}.`,
+      `The Controller supplied exact digest-bound source evidence, built the dependency graph, and retrieved ${run.metrics.wiki_hits} relevant Wiki ${run.metrics.wiki_hits === 1 ? "entry" : "entries"} before my response. It then expanded the accepted recommendation into an exact ${pathCount}-path manifest; paths, checks, implementation-contract text, approval actions, and manifest identity are Controller-owned.`,
       ...decisions,
       ...unresolved,
       run.planning_decision
@@ -1040,21 +1052,124 @@ function manifestReview(manifest) {
     ),
   );
   const graphCitations = Array.isArray(manifest.cited_graph_nodes)
-    ? manifest.cited_graph_nodes.map((citation) => `Graph: ${citation}`)
+    ? manifest.cited_graph_nodes.map((citation) => `Selected graph ID: ${citation}`)
     : [];
   const wikiCitations = Array.isArray(manifest.cited_wiki_pages)
-    ? manifest.cited_wiki_pages.map((citation) => `Wiki: ${citation}`)
+    ? manifest.cited_wiki_pages.map((citation) => `Selected Wiki page ID: ${citation}`)
     : [];
   if (graphCitations.length > 0 || wikiCitations.length > 0) {
     review.append(
       reviewList(
-        "Evidence citations",
+        "Architect-selected evidence IDs",
         [...graphCitations, ...wikiCitations],
         "No evidence citations are available.",
       ),
     );
   }
   return review;
+}
+
+function keepRefiningConversation() {
+  if (state.busy || state.run || state.conversation?.status === "launch_pending") {
+    return;
+  }
+  elements.requestInput.focus();
+  elements.requestInput.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
+}
+
+function conversationLaunchGate(conversation) {
+  const readiness = conversationReadiness(conversation);
+  const scenario = scenarioById(readiness.scenarioId);
+  const launchPending = conversation.status === "launch_pending";
+  if (
+    !readiness.ready ||
+    readiness.launchToken === null ||
+    typeof readiness.canonicalRequest !== "string" ||
+    readiness.canonicalRequest.trim() === "" ||
+    typeof readiness.launchContractDigest !== "string" ||
+    !SHA256_PATTERN.test(readiness.launchContractDigest) ||
+    !["salesforce", "mulesoft"].includes(readiness.platform) ||
+    !scenario ||
+    scenario.platform !== readiness.platform
+  ) {
+    return null;
+  }
+
+  const article = document.createElement("article");
+  article.className = "gate-card launch-gate";
+  article.setAttribute("aria-labelledby", "launch-gate-title");
+  const heading = document.createElement("div");
+  heading.className = "gate-heading";
+  heading.append(
+    textElement("span", "gate-icon", "?"),
+    textElement("span", "gate-owner", "Controller · explicit launch gate"),
+    textElement(
+      "h3",
+      "",
+      launchPending ? "Retry this exact migration launch?" : "Start this migration?",
+    ),
+  );
+  heading.querySelector("h3").id = "launch-gate-title";
+
+  const request = textElement("p", "launch-gate-request", readiness.canonicalRequest);
+  request.setAttribute("aria-label", "Controller-owned canonical migration request");
+  article.append(
+    heading,
+    textElement(
+      "p",
+      "gate-description",
+      launchPending
+        ? "The exact token-bound launch was interrupted. Retry resumes that same launch; it does not create a different request."
+        : "Review the controller-owned canonical request below. Chat and Architect prose are advisory and cannot change this immutable launch contract.",
+    ),
+    textElement("span", "launch-gate-platform", scenario.title),
+    (() => {
+      const boundary = document.createElement("dl");
+      boundary.className = "scenario-boundary";
+      boundary.append(
+        textElement("dt", "", "Source"),
+        textElement("dd", "", scenario.source),
+        textElement("dt", "", "Target"),
+        textElement("dd", "", scenario.target),
+      );
+      return boundary;
+    })(),
+    request,
+    textElement(
+      "p",
+      "launch-gate-advisory",
+      readiness.advisorySummary
+        ? `Architect advisory: ${readiness.advisorySummary}`
+        : "Architect advisory summary unavailable; the canonical request remains authoritative.",
+    ),
+  );
+
+  const form = document.createElement("form");
+  form.id = "launch-form";
+  form.className = "decision-form";
+  const actions = document.createElement("div");
+  actions.className = "decision-actions";
+  const start = textElement(
+    "button",
+    "button button-primary",
+    launchPending ? "Retry Start migration" : "Start migration",
+  );
+  start.type = "button";
+  start.dataset.launchAction = "start";
+  start.addEventListener("click", launchMigration);
+  actions.append(start);
+  if (!launchPending) {
+    const refine = textElement("button", "button button-secondary", "Keep chatting");
+    refine.type = "button";
+    refine.dataset.launchAction = "refine";
+    refine.addEventListener("click", keepRefiningConversation);
+    actions.append(refine);
+  }
+  form.append(actions);
+  form.addEventListener("submit", (event) => event.preventDefault());
+  article.append(form);
+  elements.decisionForm = form;
+  return article;
 }
 
 function approvalGate(run) {
@@ -1074,7 +1189,7 @@ function approvalGate(run) {
     textElement(
       "p",
       "gate-description",
-      `The Architect proposes ${run.manifest.approved_paths.length} paths. Approval authorizes an isolated candidate, never an org, runtime, publication, or deployment action.`,
+      `The Controller expanded the Architect's semantic recommendation into this exact ${run.manifest.approved_paths.length}-path manifest. Approval authorizes an isolated candidate, never an org, runtime, publication, or deployment action.`,
     ),
     manifestReview(run.manifest),
   );
@@ -1155,9 +1270,9 @@ function correctionGate(run) {
         : "Attempt 1 completed with a recoverable validation failure. Approval authorizes only attempt 2 against the same manifest, base revision, and source snapshot.",
     ),
     reviewList(
-      "Typed failed checks",
+      "Root correction signals",
       correction.failed_check_ids,
-      "No failed check identifiers were offered.",
+      "No root correction signals were offered.",
     ),
   );
   const attemptOne = (run.attempt_history || []).find((item) => item.attempt === 1);
@@ -1216,6 +1331,155 @@ function correctionGate(run) {
   });
   article.append(form);
   elements.decisionForm = form;
+  return article;
+}
+
+function finalReviewGate(run) {
+  const review = run.final_review;
+  if (!review?.eligible) {
+    return null;
+  }
+  const article = document.createElement("article");
+  article.className = "gate-card final-review-gate";
+  article.setAttribute("aria-labelledby", "final-review-title");
+  const heading = document.createElement("div");
+  heading.className = "gate-heading";
+  heading.append(
+    textElement("span", "gate-icon", "✓"),
+    textElement("span", "gate-owner", "Controller · independent human review"),
+    textElement(
+      "h3",
+      "",
+      review.status === "not_requested"
+        ? "Request final human review"
+        : review.status === "awaiting_final_review"
+          ? "Record the designated reviewer's decision"
+          : "Final human review recorded",
+    ),
+  );
+  heading.querySelector("h3").id = "final-review-title";
+  article.append(
+    heading,
+    textElement(
+      "p",
+      "gate-description",
+      "This checkpoint is bound to the exact candidate and validation evidence. Human labels are declarative audit identities, not another agent or authenticated account. No choice authorizes Git, deployment, publication, or an external platform action.",
+    ),
+  );
+
+  if (review.status === "not_requested" && review.can_request) {
+    const form = document.createElement("form");
+    form.id = "final-review-request-form";
+    form.className = "decision-form";
+    const requesterLabel = textElement("label", "", "Requesting human ID");
+    requesterLabel.htmlFor = "final-review-requester";
+    const requester = document.createElement("input");
+    requester.id = "final-review-requester";
+    requester.name = "requester";
+    requester.value = "capstone-author";
+    requester.maxLength = 160;
+    requester.autocomplete = "off";
+    requester.required = true;
+    const reviewerLabel = textElement("label", "", "Independent human reviewer ID");
+    reviewerLabel.htmlFor = "final-review-designated-reviewer";
+    const reviewer = document.createElement("input");
+    reviewer.id = "final-review-designated-reviewer";
+    reviewer.name = "designated_reviewer";
+    reviewer.value = "independent-reviewer";
+    reviewer.maxLength = 160;
+    reviewer.autocomplete = "off";
+    reviewer.required = true;
+    const help = textElement(
+      "p",
+      "decision-help",
+      "Use two different human audit labels. This local app records them but does not authenticate either identity.",
+    );
+    const actions = document.createElement("div");
+    actions.className = "decision-actions";
+    const request = textElement("button", "button button-primary", "Request final review");
+    request.type = "button";
+    request.addEventListener("click", requestFinalReview);
+    actions.append(request);
+    form.append(requesterLabel, requester, reviewerLabel, reviewer, help, actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      requestFinalReview();
+    });
+    article.append(form);
+    elements.decisionForm = form;
+    return article;
+  }
+
+  const facts = document.createElement("dl");
+  facts.className = "final-review-facts";
+  facts.append(
+    textElement("dt", "", "Requester"),
+    textElement("dd", "", review.requester || "Unavailable"),
+    textElement("dt", "", "Designated reviewer"),
+    textElement("dd", "", review.designated_reviewer || "Unavailable"),
+    textElement("dt", "", "Status"),
+    textElement("dd", "", humanize(review.status)),
+  );
+  article.append(facts);
+
+  if (review.status === "awaiting_final_review" && review.can_decide) {
+    const form = document.createElement("form");
+    form.id = "final-review-decision-form";
+    form.className = "decision-form";
+    const reviewerLabel = textElement("label", "", "Designated human reviewer ID");
+    reviewerLabel.htmlFor = "final-review-reviewer";
+    const reviewer = document.createElement("input");
+    reviewer.id = "final-review-reviewer";
+    reviewer.name = "reviewer";
+    reviewer.value = review.designated_reviewer || "";
+    reviewer.maxLength = 160;
+    reviewer.readOnly = true;
+    reviewer.required = true;
+    const commentLabel = textElement("label", "", "Final review comment (optional)");
+    commentLabel.htmlFor = "final-review-comment";
+    const comment = document.createElement("textarea");
+    comment.id = "final-review-comment";
+    comment.name = "comment";
+    comment.rows = 2;
+    comment.maxLength = 2000;
+    const actions = document.createElement("div");
+    actions.className = "decision-actions";
+    [
+      ["accept", "Accept candidate"],
+      ["request_changes", "Request changes"],
+      ["reject", "Reject candidate"],
+    ].forEach(([selection, label], index) => {
+      const button = textElement(
+        "button",
+        index === 0 ? "button button-primary" : "button button-secondary",
+        label,
+      );
+      button.type = "button";
+      button.addEventListener("click", () => submitFinalReviewDecision(selection));
+      actions.append(button);
+    });
+    form.append(reviewerLabel, reviewer, commentLabel, comment, actions);
+    form.addEventListener("submit", (event) => event.preventDefault());
+    article.append(form);
+    elements.decisionForm = form;
+    return article;
+  }
+
+  article.append(
+    messageArticle(
+      "Controller",
+      [
+        review.status === "accepted"
+          ? "The designated human accepted this candidate for a separate next manual action. No external action was authorized."
+          : review.status === "changes_requested"
+            ? "The designated human requested changes. A new bounded run and new final review are required."
+            : "The designated human rejected this candidate. The request stops here.",
+      ],
+      {
+        meta: `${review.reviewer || review.designated_reviewer || "reviewer unavailable"}${review.comment ? ` · ${review.comment}` : ""}`,
+      },
+    ),
+  );
   return article;
 }
 
@@ -1282,26 +1546,51 @@ function engineerMessage(run) {
   );
 }
 
-function validatorMessage(run) {
-  const validator = stage(run, "validator");
+function controllerValidationMessage(run) {
   const passed = run.validation.results.filter((result) => result.status === "passed").length;
   const failedResults = run.validation.results.filter((result) => result.status === "failed");
+  const rootFailures = failedResults.filter((result) => !result.dependent_on);
+  const dependentChecks = failedResults.filter((result) => Boolean(result.dependent_on));
   const unavailable = run.validation.results.filter(
     (result) => result.status === "unavailable",
   ).length;
   return messageArticle(
-    "Validator",
+    "Controller",
     [
-      validator ? validator.detail : "I evaluated the isolated migration candidate.",
-      run.validation.validator_summary,
-      ...failedResults.flatMap((result) => [
+      `I ran the controller-owned deterministic checks against attempt ${run.validation.attempt}. Their report alone controls the ${humanize(run.validation.disposition)} disposition.`,
+      ...rootFailures.flatMap((result) => [
         `Failed check: ${result.check_id}. ${result.summary}`,
         ...(result.diagnostic_ids || []).map((id) => `Typed diagnostic: ${id}`),
       ]),
+      ...(dependentChecks.length
+        ? [
+            `${dependentChecks.length} downstream Jest ${dependentChecks.length === 1 ? "check was" : "checks were"} classified as dependent because the root LWC load failure prevented all tests from running.`,
+          ]
+        : []),
+    ],
+    {
+      meta: dependentChecks.length
+        ? `Authoritative deterministic evidence · ${passed} passed · ${rootFailures.length} root ${rootFailures.length === 1 ? "failure" : "failures"} · ${dependentChecks.length} dependent ${dependentChecks.length === 1 ? "check" : "checks"} · ${unavailable} unavailable`
+        : `Authoritative deterministic evidence · ${passed} passed, ${failedResults.length} failed, ${unavailable} unavailable`,
+    },
+  );
+}
+
+function validatorMessage(run) {
+  const assessment = run.validation.advisory_assessment;
+  const completed = run.validation.validator_completed !== false && typeof assessment === "string";
+  return messageArticle(
+    "Validator",
+    [
+      completed
+        ? run.validation.validator_summary
+        : "My advisory review was unavailable. The candidate and controller-owned deterministic disposition remain intact.",
       ...run.validation.concerns.map((concern) => `Advisory concern: ${concern}`),
     ],
     {
-      meta: `Attempt ${run.validation.attempt} · Deterministic disposition (authoritative): ${run.validation.disposition.replaceAll("_", " ")} · Validator advisory: ${run.validation.advisory_assessment.replaceAll("_", " ")} · checks: ${passed} passed, ${failedResults.length} failed, ${unavailable} unavailable`,
+      meta: completed
+        ? `Non-authoritative advisory: ${humanize(assessment)}`
+        : "Non-authoritative advisory unavailable · no deterministic result was changed",
     },
   );
 }
@@ -1419,7 +1708,7 @@ function failureMessage(run) {
       `The workflow ended in a controlled failure during ${failure.operation}.`,
       outcome,
       failure.summary,
-      failure.guidance || "Use the composer to refine the bounded request and start a new immutable run.",
+      failure.guidance || "Use New chat to discuss or select a supported scenario and start a new immutable run.",
     ],
     {
       meta: `Failure category: ${failure.category.replaceAll("_", " ")} · seam: ${failure.seam.replaceAll("_", " ")} · ${failure.retry_eligible ? "retry eligible" : "not retry eligible"}`,
@@ -1442,6 +1731,19 @@ function renderConversation(run) {
     });
   } else {
     elements.conversation.append(messageArticle("You", [run.prompt]));
+  }
+  const scenario = scenarioById(run.scenario_id);
+  if (scenario) {
+    elements.conversation.append(
+      messageArticle(
+        "Controller",
+        [
+          `Bound scenario: ${scenario.title}.`,
+          `Source: ${scenario.source}. Target: ${scenario.target}`,
+        ],
+        { meta: `Scenario ${scenario.scenario_id} · immutable run boundary` },
+      ),
+    );
   }
   elements.conversation.append(architectMessage(run));
   if (run.status === "awaiting_approval") {
@@ -1473,6 +1775,33 @@ function renderConversation(run) {
         elements.conversation.append(retryDecision);
       }
       elements.conversation.append(failureMessage(run));
+    } else if (
+      run.status === "implementing" &&
+      run.execution_attempt === 2 &&
+      run.correction?.retry_available &&
+      run.correction?.approval &&
+      run.candidate &&
+      run.validation
+    ) {
+      const prior = priorAttemptMessage(run);
+      const retryDecision = correctionDecisionMessage(run);
+      if (prior) {
+        elements.conversation.append(prior);
+      }
+      if (retryDecision) {
+        elements.conversation.append(retryDecision);
+      }
+      elements.conversation.append(
+        messageArticle(
+          "Controller",
+          [
+            "The exact attempt-2 approval was recorded, but execution stopped before the Engineer provider call began.",
+            "Resubmit the unchanged reviewer fields below to resume that same bounded attempt. No new attempt or additional authority will be created.",
+          ],
+          { meta: "Attempt 2 · authorized Engineer recovery pending" },
+        ),
+        correctionGate(run),
+      );
     } else if (run.status === "completed" && run.candidate && run.validation) {
       const prior = priorAttemptMessage(run);
       const retryDecision = correctionDecisionMessage(run);
@@ -1484,9 +1813,14 @@ function renderConversation(run) {
       }
       elements.conversation.append(
         engineerMessage(run),
+        controllerValidationMessage(run),
         validatorMessage(run),
         completionMessage(run),
       );
+      const finalReview = finalReviewGate(run);
+      if (finalReview) {
+        elements.conversation.append(finalReview);
+      }
       if (run.correction?.retry_available) {
         elements.conversation.append(correctionGate(run));
       }
@@ -1569,6 +1903,11 @@ function renderConversationView(conversation) {
   if (["salesforce", "mulesoft"].includes(conversation.selected_platform)) {
     state.selectedPlatform = conversation.selected_platform;
   }
+  if (typeof conversation.selected_scenario_id === "string") {
+    state.selectedScenarioId = conversation.selected_scenario_id;
+  } else if (state.selectedPlatform) {
+    state.selectedScenarioId = scenarioForPlatform(state.selectedPlatform)?.scenario_id || "";
+  }
   state.platformSelectionDirty = false;
   elements.decisionForm = null;
   elements.conversation.setAttribute("aria-live", "off");
@@ -1582,9 +1921,13 @@ function renderConversationView(conversation) {
         messageArticle(conversationMessageRole(message), [conversationMessageContent(message)]),
       );
     });
-    elements.conversation.scrollTop = elements.conversation.scrollHeight;
-    requestAnimationFrame(() => elements.conversation.setAttribute("aria-live", "polite"));
   }
+  const launchGate = conversationLaunchGate(conversation);
+  if (launchGate) {
+    elements.conversation.append(launchGate);
+  }
+  elements.conversation.scrollTop = elements.conversation.scrollHeight;
+  requestAnimationFrame(() => elements.conversation.setAttribute("aria-live", "polite"));
   const readiness = conversationReadiness(conversation);
   const launchPending = conversation.status === "launch_pending";
   renderHarnessStages([
@@ -1598,13 +1941,13 @@ function renderConversationView(conversation) {
     },
     {
       key: "approval",
-      label: "Plan approval gate",
+      label: "Scenario launch gate",
       state: launchPending ? "active" : readiness.ready ? "ready" : "waiting",
       detail: launchPending
         ? "An exact launch is reserved. Retry Start migration to recover that same run."
         : readiness.ready
           ? "Start migration to create a digest-bound plan for human review."
-        : "Opens only after the request is refined and migration is explicitly started.",
+        : "Opens only after a supported scenario is selected and its canonical contract is explicitly launched.",
     },
     {
       key: "engineer",
@@ -1628,10 +1971,10 @@ function renderConversationView(conversation) {
   updateComposerState();
 }
 
-async function createConversation(platform = null) {
+async function createConversation(scenarioId = null) {
   const response = await api("/api/conversations", {
     method: "POST",
-    body: { platform },
+    body: { scenario_id: scenarioId },
   });
   return conversationFromPayload(await response.json());
 }
@@ -1708,12 +2051,13 @@ function renderFailureDiagnostic(run) {
     provider_refusal: "The local model declined the structured role request.",
     response_incomplete: "The local model response ended before it was complete.",
     structured_output_invalid: "The model response did not satisfy the typed role contract.",
-    unauthorized_tool_call: "The controller blocked an unauthorized model tool call.",
+    unauthorized_tool_call: "The controller blocked a native provider tool call outside the typed role response.",
     model_inventory_invalid: "The selected local model identity could not be verified.",
     provider_response_invalid: "The Ollama response failed provider-protocol validation.",
-    required_approval_missing: "The Architect omitted the required human approval gate.",
-    implementation_contract_invalid: "The Architect changed the controller-owned implementation contract.",
-    transformation_scope_invalid: "The Architect plan crossed the frozen transformation boundary.",
+    required_approval_missing: "The Controller-expanded manifest was missing the required human approval binding.",
+    implementation_contract_invalid: "The Controller-expanded manifest failed its controller-owned implementation-contract check.",
+    transformation_scope_invalid: "The Controller-expanded manifest crossed the frozen transformation boundary.",
+    unresolved_question_risk_missing: "The Architect returned blocking questions without a corresponding human-decision risk.",
     policy_rejected: "The controller rejected the structured response at its policy boundary.",
     provider_timeout: "The local model exceeded the inference deadline.",
     provider_unavailable: "The local Ollama request could not be completed.",
@@ -1958,10 +2302,16 @@ function renderCandidate(candidate) {
   elements.candidateSection.hidden = !available;
   elements.downloadButton.hidden = !downloadable;
   elements.exportButton.hidden = !downloadable;
+  const readyForReview = state.run?.validation?.disposition === "ready_for_human_review";
+  elements.downloadButton.textContent = readyForReview
+    ? "↓ Download review candidate"
+    : "↓ Download failed candidate for debugging";
   elements.exportButton.disabled = state.busy || exported;
   elements.exportButton.textContent = exported
     ? "Saved to output/"
-    : "↳ Save candidate to output/";
+    : readyForReview
+      ? "↳ Save review candidate"
+      : "↳ Save debugging evidence";
   elements.exportStatus.hidden = !exported;
   elements.exportStatus.textContent = exported
     ? `${state.exportResult.file_count} files saved to ${state.exportResult.candidate_path}. ` +
@@ -1969,6 +2319,20 @@ function renderCandidate(candidate) {
         ? "Local checks passed; final human and platform review remain separate."
         : `Candidate-only export; validation disposition: ${humanize(state.exportResult.validation_disposition)}.`)
     : "";
+  const finalReview = state.run?.final_review;
+  elements.candidateReviewStatus.textContent = !candidate
+    ? ""
+    : !readyForReview
+      ? `Validation disposition: ${humanize(state.run?.validation?.disposition)}. Debugging evidence only.`
+      : finalReview?.status === "accepted"
+        ? "Final human review: accepted. External actions remain unauthorized."
+        : finalReview?.status === "rejected"
+          ? "Final human review: rejected."
+          : finalReview?.status === "changes_requested"
+            ? "Final human review: changes requested; start a new bounded run."
+            : finalReview?.status === "awaiting_final_review"
+              ? `Final human review pending: ${finalReview.designated_reviewer}.`
+              : "Ready for independent final human review; review has not been requested.";
   elements.changesTab.disabled = !available;
   elements.changesTab.setAttribute("aria-disabled", String(!available));
   const count = candidate?.changed_paths.length || 0;
@@ -1978,7 +2342,9 @@ function renderCandidate(candidate) {
   elements.candidateProvenance.textContent = candidate
     ? priorCandidate
       ? `Prior attempt ${candidate.attempt} candidate · read-only debugging evidence`
-      : `Attempt ${candidate.attempt} isolated candidate`
+      : readyForReview
+        ? `Attempt ${candidate.attempt} review candidate · ready for independent human review`
+        : `Attempt ${candidate.attempt} failed candidate · debugging evidence only`
     : "Isolated candidate";
   elements.fileCountBadge.textContent = String(count);
   elements.fileCount.textContent = `${count} file${count === 1 ? "" : "s"}`;
@@ -2018,7 +2384,7 @@ function resetEvidence() {
   renderList(
     elements.manifestPaths,
     [],
-    "Available after Architect analysis",
+    "Available after Controller manifest expansion",
     "code-path",
   );
   elements.graphSummary.textContent = "Evidence will appear here.";
@@ -2073,8 +2439,15 @@ function renderEvidence(run) {
   renderModelActivity(run);
   const paths = run.manifest ? run.manifest.approved_paths : [];
   elements.manifestPathsTitle.textContent =
-    run.status === "completed" ? "Approved manifest paths" : "Proposed manifest paths";
-  renderList(elements.manifestPaths, paths, "Available after Architect analysis", "code-path");
+    run.status === "completed"
+      ? "Approved Controller-expanded paths"
+      : "Controller-expanded manifest paths";
+  renderList(
+    elements.manifestPaths,
+    paths,
+    "Available after Controller manifest expansion",
+    "code-path",
+  );
   elements.graphSummary.textContent = run.evidence.graph_summary;
   clear(elements.wikiHits);
   if (run.evidence.wiki_hits.length === 0) {
@@ -2099,7 +2472,15 @@ function renderEvidence(run) {
   elements.validationSection.hidden = !validation;
   if (validation) {
     const passed = validation.results.filter((result) => result.status === "passed").length;
-    elements.validationSummaryCount.textContent = `${passed}/${validation.results.length} passed`;
+    const rootFailures = validation.results.filter(
+      (result) => result.status === "failed" && !result.dependent_on,
+    ).length;
+    const dependentChecks = validation.results.filter((result) =>
+      Boolean(result.dependent_on),
+    ).length;
+    elements.validationSummaryCount.textContent = dependentChecks
+      ? `${passed}/${validation.results.length} passed · ${rootFailures} root ${rootFailures === 1 ? "failure" : "failures"} · ${dependentChecks} dependent ${dependentChecks === 1 ? "check" : "checks"}`
+      : `${passed}/${validation.results.length} passed`;
     elements.validatorSummary.textContent = validation.validator_summary;
     elements.validatorAssessment.textContent =
       validation.validator_completed !== false && validation.advisory_assessment
@@ -2115,12 +2496,19 @@ function renderEvidence(run) {
     clear(elements.validationResults);
     validation.results.forEach((result) => {
       const item = document.createElement("li");
-      item.className = `validation-result ${result.status}`;
+      const dependent = Boolean(result.dependent_on);
+      item.className = `validation-result ${dependent ? "dependent" : result.status}`;
       item.append(
         textElement("span", "validation-dot", ""),
         textElement("strong", "", result.check_id),
-        textElement("span", "validation-status", result.status),
-        textElement("p", "", result.summary),
+        textElement("span", "validation-status", dependent ? "dependent" : result.status),
+        textElement(
+          "p",
+          "",
+          dependent
+            ? `No tests ran because ${result.dependent_on} prevented the LWC module from loading. Fix that root failure, then rerun this check. Raw result: ${result.summary}`
+            : result.summary,
+        ),
       );
       if (result.diagnostic_ids?.length) {
         item.append(
@@ -2158,11 +2546,16 @@ function renderRun(run) {
     state.exportResult = null;
   }
   state.run = run;
+  const scenario = scenarioById(run.scenario_id);
+  if (!scenario || scenario.platform !== run.platform || scenario.title !== run.scenario_title) {
+    throw new Error("The saved run does not match a known migration scenario.");
+  }
   if (run.correction?.approval) {
     state.retryApproval = null;
   }
-  if (state.scenarios.some((scenario) => scenario.platform === run.platform)) {
+  if (state.scenarios.some((candidate) => candidate.scenario_id === run.scenario_id)) {
     state.selectedPlatform = run.platform;
+    state.selectedScenarioId = run.scenario_id;
     state.platformSelectionDirty = false;
     elements.requestInput.value = run.prompt;
   }
@@ -2233,7 +2626,7 @@ async function sendConversationMessage(event) {
   setBusy(true, "Architect intake", "Responding to your migration message");
   try {
     if (!conversation) {
-      conversation = await createConversation(state.selectedPlatform || null);
+      conversation = await createConversation(state.selectedScenarioId || null);
       // An open conversation is now the active UI context. Clear any stale
       // run handle before remembering it so reload cannot replace this chat
       // with an unrelated prior run after a transient restore failure.
@@ -2251,7 +2644,7 @@ async function sendConversationMessage(event) {
         method: "POST",
         body: {
           message,
-          platform: state.selectedPlatform || null,
+          scenario_id: state.selectedScenarioId || null,
         },
       },
     );
@@ -2314,7 +2707,7 @@ async function launchMigration() {
     readiness.launchToken === null
   ) {
     showAlert(
-      "Refine the request and send the selected target to the Architect before starting the migration.",
+      "Select a supported scenario and receive an Architect advisory before starting the migration.",
     );
     return;
   }
@@ -2324,7 +2717,11 @@ async function launchMigration() {
   updateModelPresentation();
   elements.modeBadge.textContent = "Local Ollama · awaiting Architect plan";
   setRunStatus("architect planning");
-  setBusy(true, "Architect", "Mapping dependencies and retrieving Wiki guidance");
+  setBusy(
+    true,
+    "Architect",
+    "Controller preparing exact source, graph, and Wiki evidence; Architect will return a semantic recommendation",
+  );
   try {
     const response = await api(
       `/api/conversations/${launchConversationId}/launch`,
@@ -2448,6 +2845,66 @@ async function submitDecision(selection) {
   }
 }
 
+async function requestFinalReview() {
+  if (!state.run?.final_review?.can_request || state.busy || !elements.decisionForm) {
+    return;
+  }
+  if (!elements.decisionForm.reportValidity()) {
+    return;
+  }
+  const formData = new FormData(elements.decisionForm);
+  const body = {
+    requester: String(formData.get("requester") || ""),
+    designated_reviewer: String(formData.get("designated_reviewer") || ""),
+  };
+  clearAlert();
+  setBusy(true, "Controller", "Binding the exact candidate to an independent human review");
+  try {
+    const response = await api(`/api/sessions/${state.run.handle}/final-review/request`, {
+      method: "POST",
+      body,
+    });
+    renderRun(await response.json());
+  } catch (error) {
+    showAlert(error instanceof Error ? error.message : "Final review could not be requested.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function submitFinalReviewDecision(selection) {
+  if (
+    !state.run?.final_review?.can_decide ||
+    state.busy ||
+    !elements.decisionForm ||
+    !["accept", "reject", "request_changes"].includes(selection)
+  ) {
+    return;
+  }
+  if (!elements.decisionForm.reportValidity()) {
+    return;
+  }
+  const formData = new FormData(elements.decisionForm);
+  const body = {
+    selection,
+    reviewer: String(formData.get("reviewer") || ""),
+    comment: String(formData.get("comment") || ""),
+  };
+  clearAlert();
+  setBusy(true, "Controller", "Recording the one-use final human review decision");
+  try {
+    const response = await api(`/api/sessions/${state.run.handle}/final-review/decision`, {
+      method: "POST",
+      body,
+    });
+    renderRun(await response.json());
+  } catch (error) {
+    showAlert(error instanceof Error ? error.message : "Final review could not be recorded.");
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function submitRetry() {
   if (!state.run || state.busy || !state.run.correction?.retry_available) {
     return;
@@ -2499,7 +2956,9 @@ async function downloadCandidate() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `migration-candidate-${state.run.platform}.zip`;
+    link.download =
+      `migration-candidate-${state.run.platform}-${state.run.handle}-` +
+      `attempt-${state.run.candidate.attempt}.zip`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -2596,30 +3055,11 @@ async function restoreStoredConversation() {
 
 async function restoreStoredRun() {
   const handle = storedRunHandle();
-  if (!handle && newConversationRequested()) {
-    return;
-  }
   if (!handle) {
-    try {
-      const response = await api("/api/sessions/latest");
-      const payload = await response.json();
-      const recovered = payload && payload.run;
-      if (!recovered) {
-        return;
-      }
-      if (!validRunHandle(recovered.handle) || !rememberRunHandle(recovered.handle)) {
-        throw new AgentUiApiError("Recovered run identity mismatch.", "run_identity_mismatch", 409);
-      }
-      renderRun(recovered);
-      return;
-    } catch (error) {
-      showAlert(
-        error instanceof Error
-          ? error.message
-          : "The most recent local run could not be recovered.",
-      );
-      return;
-    }
+    // Passive startup restores only an identity bound to this browser. A
+    // launched conversation records its exact handle before reaching here;
+    // otherwise an unrelated historical run must never replace the chat.
+    return;
   }
   try {
     const response = await api(`/api/sessions/${handle}`);
@@ -2683,7 +3123,6 @@ async function initialize() {
 
 elements.requestForm.addEventListener("submit", sendConversationMessage);
 elements.newChatButton.addEventListener("click", () => startNewChat());
-elements.launchButton.addEventListener("click", launchMigration);
 elements.requestInput.addEventListener("input", updateComposerState);
 elements.requestInput.addEventListener("keydown", (event) => {
   if (

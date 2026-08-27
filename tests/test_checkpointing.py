@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from legacy_migration_agent.agent_runtime.checkpointing import durable_migration_workflow
+from legacy_migration_agent.agent_runtime.checkpointing import (
+    durable_migration_workflow,
+    strict_checkpoint_serializer,
+)
 from legacy_migration_agent.agent_runtime.correction import (
     CorrectionAttemptEvidence,
     CorrectionController,
@@ -28,6 +31,7 @@ from legacy_migration_agent.contracts import (
     RiskCategory,
     ToolReceipt,
     TransformationStep,
+    TransformationStepKind,
     ValidationCommand,
     ValidationDisposition,
     ValidationReport,
@@ -141,6 +145,14 @@ class Roles:
         )
 
 
+class SecretEngineerRoles(Roles):
+    def engineer(self, migration_request, manifest):
+        change_set = super().engineer(migration_request, manifest)
+        return change_set.model_copy(
+            update={"unified_diff": '+const client_secret = "literal-client-secret-123456";'}
+        )
+
+
 class FailingValidatorRoles(Roles):
     def validator(self, migration_request, manifest, change_set):
         self.validator_calls += 1
@@ -200,7 +212,7 @@ def implementation_stop(migration_request, manifest) -> ImplementationInterventi
         manifest_id=manifest.manifest_id,
         manifest_digest=artifact_digest(manifest),
         base_revision=manifest.base_revision,
-        agent_version="engineer/v11",
+        agent_version="engineer/v12",
         agent_definition_digest="sha256:" + "a" * 64,
         input_evidence_digest=input_digest,
         reason="The frozen implementation input lacks a required contract.",
@@ -317,6 +329,65 @@ def test_workflow_resumes_from_disk_after_connection_restart(tmp_path: Path):
         assert result.value["status"] == WorkflowStatus.COMPLETED
     assert resumed_roles.engineer_calls == 1
     assert resumed_roles.validator_calls == 1
+
+
+def test_checkpoint_serializer_rejects_secret_and_allows_request_token_code() -> None:
+    serializer = strict_checkpoint_serializer()
+    secret = "literal-client-secret-123456"
+
+    with pytest.raises(PolicyViolation, match="checkpoint state") as caught:
+        serializer.dumps_typed(
+            {"change_set": {"unified_diff": f'+const client_secret = "{secret}";'}}
+        )
+    assert secret not in str(caught.value)
+
+    benign = {
+        "change_set": {
+            "unified_diff": (
+                "+const token = ++this.requestGeneration;\n"
+                "+const accessToken = response.accessToken;"
+            )
+        }
+    }
+    encoded = serializer.dumps_typed(benign)
+    assert serializer.loads_typed(encoded) == benign
+
+
+def test_checkpoint_serializer_round_trips_transformation_step_kind() -> None:
+    serializer = strict_checkpoint_serializer()
+    semantic_step = TransformationStep(
+        step_id="preserve-loading-state",
+        kind=TransformationStepKind.SEMANTIC_DECISION,
+        description="Preserve the explicit loading state in the migrated UI.",
+        input_paths=(),
+        output_paths=(),
+        decision_id="loading-state",
+        evidence_ids=("wiki-loading-state",),
+    )
+
+    encoded = serializer.dumps_typed({"step": semantic_step})
+
+    assert serializer.loads_typed(encoded) == {"step": semantic_step}
+
+
+def test_durable_checkpoint_rejects_secret_before_sqlite_write(tmp_path: Path) -> None:
+    database = tmp_path / "secret-checkpoint.sqlite3"
+    roles = SecretEngineerRoles()
+    with durable_migration_workflow(
+        database,
+        roles.architect,
+        roles.engineer,
+        roles.validator,
+    ) as workflow:
+        paused = workflow.start(request(), thread_id="secret-checkpoint-thread")
+        with pytest.raises(PolicyViolation, match="checkpoint state"):
+            workflow.resume(
+                approval_from(paused),
+                thread_id="secret-checkpoint-thread",
+            )
+
+    secret = b"literal-client-secret-123456"
+    assert not any(secret in path.read_bytes() for path in tmp_path.iterdir() if path.is_file())
 
 
 def test_terminal_planning_intervention_survives_checkpoint_restart(tmp_path: Path):

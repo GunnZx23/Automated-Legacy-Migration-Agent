@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Literal, Protocol
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape as xml_escape
 
 from pydantic import Field, field_validator, model_validator
 
@@ -75,17 +76,29 @@ from legacy_migration_agent.graphs.mulesoft_dependency_graph import (
 from legacy_migration_agent.platforms.local_checks import tree_fingerprint
 from legacy_migration_agent.platforms.mulesoft_local_checks import (
     CORE,
+    HTTP,
     JAVA_VERSION,
+    MAX_ARTIFACT_BYTES,
     MULE3_APP,
     MULE4_APP,
+    MULE4_ARTIFACT,
+    MULE4_DATAWEAVE,
+    MULE4_POM,
+    MULE4_PROPERTIES,
     MULE4_RUNTIME,
+    MULE4_TEST,
     MULESOFT_IMPLEMENTATION_CONTRACT,
+    MULESOFT_PUBLIC_ROUTE,
     MUNIT,
     MUNIT_TOOLS,
     SOURCE_FILES,
     TARGET_FILES,
+    MuleSoftLocalCheckCode,
     MuleSoftLocalCheckFailure,
     check_mulesoft_candidate,
+    normalize_http_route,
+    parse_mule_application_properties,
+    resolve_mule_property_value,
 )
 from legacy_migration_agent.platforms.mulesoft_validation import (
     MAX_XML_REPORT_BYTES,
@@ -104,6 +117,9 @@ MULESOFT_MUNIT_COMMAND_ID: Final = "mulesoft-munit"
 MULESOFT_WORKSPACE_FINGERPRINT_COMMAND_ID: Final = "mulesoft-workspace-fingerprint"
 MULESOFT_RUNTIME_AUTHORITY_ANCHOR_KIND: Final = "mulesoft-munit-authority-v1"
 
+MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID: Final = "mulesoft_dependency_closure.target_graph"
+MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID: Final = "mulesoft_munit_execution.candidate_behavior"
+
 MULESOFT_VALIDATION_COMMAND_IDS: Final = (
     MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID,
     MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
@@ -115,6 +131,223 @@ MULESOFT_VALIDATION_COMMAND_IDS: Final = (
 MULESOFT_TARGET_RUNTIME: Final = "Mule 4.9.20 with Java 17"
 MULESOFT_SOURCE_VERSION: Final = "Mule 3.9.5"
 MULESOFT_TARGET_VERSION: Final = "Mule 4.9.20"
+
+
+@dataclass(frozen=True)
+class MuleSoftRepairSignalSpec:
+    """Code-owned boundary and semantic direction for one repairable signal."""
+
+    allowed_paths: tuple[str, ...]
+    instruction: str
+
+
+_MULESOFT_DIAGNOSTIC_ARTIFACT_KEYS: Final[dict[str, str]] = {
+    MULE4_ARTIFACT: "mule_artifact_json",
+    MULE4_POM: "pom_xml",
+    MULE4_APP: "application_xml",
+    MULE4_PROPERTIES: "application_yaml",
+    MULE4_DATAWEAVE: "response_dataweave",
+    MULE4_TEST: "candidate_munit",
+    MULE3_APP: "legacy_application_xml",
+    "legacy-mule3/customer-status-api/src/main/app/mule-app.properties": (
+        "legacy_application_properties"
+    ),
+    "legacy-mule3/customer-status-api/src/test/munit/customer-status-api-test.xml": (
+        "legacy_munit"
+    ),
+    "candidate": "candidate_inventory",
+    "source": "source_inventory",
+    "legacy-mule3": "legacy_source_tree",
+}
+
+
+def mulesoft_candidate_diagnostic_id(
+    code: MuleSoftLocalCheckCode,
+    artifact: str,
+) -> str:
+    """Return one stable, artifact-specific identifier without exposing prose."""
+
+    artifact_key = _MULESOFT_DIAGNOSTIC_ARTIFACT_KEYS.get(artifact)
+    if artifact_key is None:
+        artifact_key = "unknown_" + hashlib.sha256(artifact.encode("utf-8")).hexdigest()[:16]
+    return f"mulesoft_candidate.{code.value}.{artifact_key}"
+
+
+def _mulesoft_signal(
+    code: MuleSoftLocalCheckCode,
+    path: str,
+) -> str:
+    return mulesoft_candidate_diagnostic_id(code, path)
+
+
+def _artifact_repair_instruction(path: str, requirement: str) -> str:
+    return (
+        f"Repair only the approved generated artifact {path}. {requirement} Preserve the "
+        "approved public behavior and safety constraints, choose an equivalent valid private "
+        "implementation, and return this file only when its complete content actually changes."
+    )
+
+
+MULESOFT_REPAIR_SIGNALS: Final[dict[str, MuleSoftRepairSignalSpec]] = {
+    **{
+        _mulesoft_signal(MuleSoftLocalCheckCode.UNSAFE_TEXT, path): MuleSoftRepairSignalSpec(
+            allowed_paths=(path,),
+            instruction=_artifact_repair_instruction(
+                path,
+                "Make it bounded valid UTF-8 text without NUL bytes or unsafe encoding.",
+            ),
+        )
+        for path in TARGET_FILES
+    },
+    **{
+        _mulesoft_signal(MuleSoftLocalCheckCode.SECRET_MATERIAL, path): MuleSoftRepairSignalSpec(
+            allowed_paths=(path,),
+            instruction=_artifact_repair_instruction(
+                path,
+                "Remove embedded credentials, private keys, credential-bearing URLs, and "
+                "secret-shaped assignments; use no replacement secret value.",
+            ),
+        )
+        for path in TARGET_FILES
+    },
+    **{
+        _mulesoft_signal(code, path): MuleSoftRepairSignalSpec(
+            allowed_paths=(path,),
+            instruction=_artifact_repair_instruction(
+                path,
+                "Produce well-formed XML accepted by a safe parser, with no DTD or entity "
+                "declaration, while retaining the artifact's declared Mule or Maven role.",
+            ),
+        )
+        for code in (
+            MuleSoftLocalCheckCode.UNSAFE_XML,
+            MuleSoftLocalCheckCode.MALFORMED_XML,
+        )
+        for path in (MULE4_POM, MULE4_APP, MULE4_TEST)
+    },
+    _mulesoft_signal(
+        MuleSoftLocalCheckCode.MALFORMED_YAML, MULE4_PROPERTIES
+    ): MuleSoftRepairSignalSpec(
+        allowed_paths=(MULE4_PROPERTIES,),
+        instruction=_artifact_repair_instruction(
+            MULE4_PROPERTIES,
+            "Produce a bounded safe YAML mapping using scalar configuration values and no "
+            "aliases, merge keys, custom tags, or graph features.",
+        ),
+    ),
+    _mulesoft_signal(
+        MuleSoftLocalCheckCode.MALFORMED_JSON, MULE4_ARTIFACT
+    ): MuleSoftRepairSignalSpec(
+        allowed_paths=(MULE4_ARTIFACT,),
+        instruction=_artifact_repair_instruction(
+            MULE4_ARTIFACT,
+            "Produce a valid JSON object for the Mule application descriptor.",
+        ),
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.MULE4_CONTRACT, MULE4_APP): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_APP,),
+            instruction=_artifact_repair_instruction(
+                MULE4_APP,
+                "Restore the bounded Mule 4 listener and generated application behavior using "
+                "valid Mule 4 configuration and expressions; internal flow topology remains "
+                "implementation-owned.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.MULE4_CONTRACT, MULE4_PROPERTIES): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_PROPERTIES,),
+            instruction=_artifact_repair_instruction(
+                MULE4_PROPERTIES,
+                "Restore only the bounded loopback listener configuration needed by the "
+                "approved public route.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.DATAWEAVE_CONTRACT, MULE4_DATAWEAVE): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_DATAWEAVE,),
+            instruction=_artifact_repair_instruction(
+                MULE4_DATAWEAVE,
+                "Use DataWeave 2.0 to produce the approved JSON response fields from runtime "
+                "state. Formatting, field order, locals, and equivalent expressions remain "
+                "implementation-owned.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.MUNIT_CONTRACT, MULE4_TEST): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_TEST,),
+            instruction=_artifact_repair_instruction(
+                MULE4_TEST,
+                "Make the candidate-owned MUnit suite reach a callable generated Mule 4 flow "
+                "or the bounded loopback public route and assert nontrivially on an observed "
+                "runtime value. Test names and assertion style remain implementation-owned.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_POM,),
+            instruction=_artifact_repair_instruction(
+                MULE4_POM,
+                "Restore the approved packaging, pinned compatibility set, dependency and "
+                "plugin allowlists, and repository restrictions without adding credentials or "
+                "unapproved build capabilities.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.ARTIFACT_CONTRACT, MULE4_ARTIFACT): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_ARTIFACT,),
+            instruction=_artifact_repair_instruction(
+                MULE4_ARTIFACT,
+                "Restore the approved Mule runtime, Java, and required-product descriptor "
+                "constraints while retaining any unrelated safe metadata.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.VERSION_MISMATCH, MULE4_ARTIFACT): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_ARTIFACT,),
+            instruction=_artifact_repair_instruction(
+                MULE4_ARTIFACT,
+                "Align the descriptor runtime version with the approved project compatibility "
+                "set; do not alter other artifacts without their own diagnostic.",
+            ),
+        )
+    ),
+    **{
+        _mulesoft_signal(MuleSoftLocalCheckCode.OUTBOUND_CONNECTOR, path): MuleSoftRepairSignalSpec(
+            allowed_paths=(path,),
+            instruction=_artifact_repair_instruction(
+                path,
+                "Remove outbound connectors and requests. The only permitted request is the "
+                "candidate MUnit suite's bounded loopback HTTP call to the approved public route.",
+            ),
+        )
+        for path in (MULE4_APP, MULE4_TEST)
+    },
+    MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID: MuleSoftRepairSignalSpec(
+        allowed_paths=(MULE4_APP, MULE4_DATAWEAVE, MULE4_TEST),
+        instruction=(
+            "Repair only the approved generated Mule application XML, response DataWeave, or "
+            "candidate MUnit suite so every referenced generated flow, configuration, transform, "
+            "and test target resolves inside the candidate graph. Preserve public behavior and "
+            "choose any equivalent internal topology; return only files that actually change."
+        ),
+    ),
+    MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID: MuleSoftRepairSignalSpec(
+        allowed_paths=(MULE4_APP, MULE4_PROPERTIES, MULE4_DATAWEAVE, MULE4_TEST),
+        instruction=(
+            "Use the terminal runtime-owned MUnit failure signal to repair only the generated "
+            "application, loopback configuration, response transform, or candidate MUnit suite. "
+            "Restore the approved observable behavior without changing the pinned build contract "
+            "or controller-owned test artifacts, and return only files that actually change."
+        ),
+    ),
+}
 
 MULESOFT_RUNTIME_CONFIG: Final = PlatformRuntimeConfig(
     platform=Platform.MULESOFT,
@@ -219,17 +452,15 @@ _CONTROLLER_BEHAVIOR_SUITE_PATH: Final = (
     / "tooling/mulesoft-runtime/controller-tests/customer-status-behavior-test.xml"
 )
 _RELEASED_CONTROLLER_BEHAVIOR_CONTRACT_SHA256: Final = (
-    "sha256:28418b81effed1169b6584efde7467babf358b1f5e45426b2d6f19c8d5c60454"
+    "sha256:de3b1bd6151df82c94ffb3d41105544404bf4432ab0853d6544820f5deface11"
 )
 _RELEASED_CONTROLLER_BEHAVIOR_SUITE_SHA256: Final = (
-    "sha256:1c7ba92ae284754626d4790f3874cd61970731bb7f6317b0e6d8193d05add8a0"
+    "sha256:1a429b0c94c46ccab23eadc229f1a04d52e739f6b93d88174bacac988a5b4dda"
 )
 _CONTROLLER_BEHAVIOR_MAX_BYTES: Final = 64 * 1024
 _CONTROLLER_RUNTIME_TEST_PATH: Final = (
     "mule4/customer-status-api/src/test/munit/controller-customer-status-behavior-test.xml"
 )
-_GENERATED_MUNIT_SUITE_NAME: Final = "customer-status-api-test-suite"
-_GENERATED_MUNIT_TEST_NAME: Final = "build-customer-status-response-test"
 _CONTROLLER_BEHAVIOR_EXPECTATIONS: Final = (
     ("#[payload.customerId]", '#[MunitTools::equalTo("CTRL-CUST-9001")]'),
     ("#[payload.status]", '#[MunitTools::equalTo("ACTIVE")]'),
@@ -244,7 +475,7 @@ class _ControllerBehaviorExpectation(StrictModel):
 
 
 class _ControllerBehaviorContract(StrictModel):
-    """Source-pinned controller oracle that is never supplied by a candidate."""
+    """Source-pinned independent behavior contract never supplied by a candidate."""
 
     schema_version: Literal["1.0"] = "1.0"
     contract_id: Literal["customer-status-api-behavior-v1"]
@@ -253,7 +484,9 @@ class _ControllerBehaviorContract(StrictModel):
     ]
     suite_name: Literal["controller-customer-status-behavior-test-suite"]
     test_name: Literal["controller-build-customer-status-response-contract"]
-    flow_name: Literal["build-customer-status-response"]
+    flow_name_placeholder: Literal["__CONTROLLER_ENTRY_FLOW__"]
+    request_method: Literal["GET"]
+    request_path: Literal["/api/customers/CTRL-CUST-9001/status"]
     expectations: tuple[_ControllerBehaviorExpectation, ...] = Field(
         min_length=3,
         max_length=3,
@@ -294,12 +527,13 @@ class _ControllerBehaviorLoad:
 
 class _ControllerBehaviorReportBinding(StrictModel):
     contract_binding_digest: Sha256Digest
+    rendered_suite_sha256: Sha256Digest
     controller_report: ArtifactDigest
     controller_suite_name: str
     controller_test_name: str
-    supplemental_report: ArtifactDigest
-    supplemental_suite_name: str
-    supplemental_test_name: str
+    candidate_reports: tuple[ArtifactDigest, ...] = Field(min_length=1, max_length=127)
+    candidate_suite_names: tuple[str, ...] = Field(min_length=1, max_length=127)
+    candidate_test_count: int = Field(ge=1, le=10_000)
 
 
 def _container_execution_contract_digest() -> str:
@@ -442,36 +676,42 @@ def _validate_controller_behavior_suite(
 
     if root.tag != tag(CORE, "mule"):
         raise ValueError("controller behavior suite root is invalid")
-    if tuple(child.tag for child in root) != (tag(MUNIT, "config"), tag(MUNIT, "test")):
+    if tuple(child.tag for child in root) != (
+        tag(HTTP, "request-config"),
+        tag(MUNIT, "config"),
+        tag(MUNIT, "test"),
+    ):
         raise ValueError("controller behavior suite has unexpected top-level elements")
-    config, test = tuple(root)
+    request_config, config, test = tuple(root)
+    if (
+        request_config.attrib != {"name": "controller-customer-status-request"}
+        or tuple(child.tag for child in request_config) != (tag(HTTP, "request-connection"),)
+        or tuple(request_config)[0].attrib != {"host": "127.0.0.1", "port": "8081"}
+    ):
+        raise ValueError("controller behavior request boundary is invalid")
     if config.attrib != {"name": contract.suite_name}:
         raise ValueError("controller behavior suite identity is invalid")
     if test.attrib.get("name") != contract.test_name:
         raise ValueError("controller behavior test identity is invalid")
     if tuple(child.tag for child in test) != (
-        tag(MUNIT, "behavior"),
+        tag(MUNIT, "enable-flow-sources"),
         tag(MUNIT, "execution"),
         tag(MUNIT, "validation"),
     ):
         raise ValueError("controller behavior test phases are invalid")
-    behavior, execution, validation = tuple(test)
-    set_events = behavior.findall(tag(MUNIT, "set-event"))
-    variables = behavior.findall(f".//{tag(MUNIT, 'variable')}")
-    flow_refs = execution.findall(tag(CORE, "flow-ref"))
+    flow_sources, execution, validation = tuple(test)
+    enabled_sources = flow_sources.findall(tag(MUNIT, "enable-flow-source"))
+    requests = execution.findall(tag(HTTP, "request"))
     if (
-        len(set_events) != 1
-        or set_events[0].attrib != {"cloneOriginalEvent": "false"}
-        or len(variables) != 1
-        or variables[0].attrib
+        len(enabled_sources) != 1
+        or enabled_sources[0].attrib != {"value": contract.flow_name_placeholder}
+        or len(requests) != 1
+        or requests[0].attrib
         != {
-            "key": "customerId",
-            "value": '#["CTRL-CUST-9001"]',
-            "mediaType": "text/plain",
-            "encoding": "UTF-8",
+            "method": contract.request_method,
+            "path": contract.request_path,
+            "config-ref": "controller-customer-status-request",
         }
-        or len(flow_refs) != 1
-        or flow_refs[0].attrib != {"name": contract.flow_name}
     ):
         raise ValueError("controller behavior setup or execution is invalid")
     assertions = validation.findall(tag(MUNIT_TOOLS, "assert-that"))
@@ -1086,6 +1326,7 @@ class MuleSoftLocalValidator:
                 check,
                 receipt,
                 f"candidate static contract failed: {exc.code.value}:{exc.artifact}",
+                diagnostic_ids=(mulesoft_candidate_diagnostic_id(exc.code, exc.artifact),),
             )
         receipt = _controller_receipt(
             check,
@@ -1132,14 +1373,23 @@ class MuleSoftLocalValidator:
                 (MULE4_APP,),
                 candidate_revision,
             )
-            required = (
-                graph.node(NodeKind.MULE_FLOW, "customer-status-api-flow"),
-                graph.node(NodeKind.MULE_SUBFLOW, "build-customer-status-response"),
-                graph.node(NodeKind.MULE_CONFIGURATION, "customer-status-http-listener"),
-                graph.node(NodeKind.DATAWEAVE_MODULE, "dw/customer-status-response.dwl"),
-                graph.node(NodeKind.MUNIT_TEST, "build-customer-status-response-test"),
+            required_kinds = {
+                NodeKind.MULE_FLOW,
+                NodeKind.MULE_CONFIGURATION,
+                NodeKind.DATAWEAVE_MODULE,
+            }
+            resolved_kinds = {node.kind for node in graph.nodes if node.resolved}
+            target_munit_is_reachable = any(
+                node.kind is NodeKind.MUNIT_TEST
+                and node.resolved
+                and MULE4_TEST in node.metadata_paths
+                for node in graph.nodes
             )
-            if graph.has_unresolved or any(node is None or not node.resolved for node in required):
+            if (
+                graph.has_unresolved
+                or not required_kinds.issubset(resolved_kinds)
+                or not target_munit_is_reachable
+            ):
                 raise ValueError("required target dependency closure is unresolved")
         except (OSError, ValueError, PolicyViolation):
             failed_receipt = receipt.model_copy(update={"exit_code": 1})
@@ -1147,6 +1397,7 @@ class MuleSoftLocalValidator:
                 check,
                 failed_receipt,
                 "target Mule dependency closure is incomplete or unresolved",
+                diagnostic_ids=(MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID,),
             )
         return _passed_result(
             check,
@@ -1253,10 +1504,16 @@ class MuleSoftLocalValidator:
             expected_revision=snapshot_tree(workspace.root).revision,
         )
         try:
-            _install_controller_behavior_suite(
+            entry_flow_name = _discover_public_listener_flow(validation_workspace.root)
+            rendered_behavior_suite = _render_controller_behavior_suite(
+                behavior_suite,
+                behavior_contract,
+                entry_flow_name,
+            )
+            rendered_behavior_suite_digest = _install_controller_behavior_suite(
                 validation_workspace.root,
                 behavior_contract,
-                behavior_suite,
+                rendered_behavior_suite,
             )
             _make_tree_container_readable(validation_workspace.root)
             validation_fingerprint = tree_fingerprint(validation_workspace.root)
@@ -1344,6 +1601,7 @@ class MuleSoftLocalValidator:
                 artifacts,
                 behavior_contract,
                 self._behavior_binding_digest,
+                rendered_behavior_suite_digest,
             )
             combined_evidence_digest = artifact_digest(
                 {
@@ -1367,10 +1625,12 @@ class MuleSoftLocalValidator:
                 behavior_contract_digest=self._behavior_binding_digest,
                 behavior_report_digest=artifact_digest(behavior_reports),
             )
+            expected_reports = 1 + len(behavior_reports.candidate_reports)
+            expected_tests = 1 + behavior_reports.candidate_test_count
             complete = (
-                evidence.report_count == 2
-                and evidence.suites == 2
-                and evidence.tests == 2
+                evidence.report_count == expected_reports
+                and evidence.suites == expected_reports
+                and evidence.tests == expected_tests
                 and evidence.skipped == 0
             )
             if not complete:
@@ -1384,8 +1644,9 @@ class MuleSoftLocalValidator:
                     check,
                     receipt,
                     (
-                        "runtime-owned controller behavior and supplemental candidate MUnit "
-                        "passed; suites=2 tests=2 deployment=false"
+                        "Runtime-owned controller behavior and candidate-authored supplemental "
+                        f"MUnit passed; suites={evidence.suites} tests={evidence.tests} "
+                        "evidence-role=candidate-tests-supplemental deployment=false"
                     ),
                 )
             if outcome.exit_code == 0:
@@ -1398,6 +1659,7 @@ class MuleSoftLocalValidator:
                 check,
                 receipt,
                 "runtime-owned isolated MUnit completed with a candidate test failure",
+                diagnostic_ids=(MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID,),
             )
         except (MuleSoftEvidenceError, OSError, UnicodeError, ValueError) as exc:
             return _unavailable_result(
@@ -2203,6 +2465,8 @@ def _failed_result(
     check: ValidationCommand,
     receipt: ToolReceipt,
     summary: str,
+    *,
+    diagnostic_ids: tuple[str, ...] = (),
 ) -> CheckResult:
     return CheckResult(
         check_id=check.check_id,
@@ -2211,6 +2475,7 @@ def _failed_result(
         status=CheckStatus.FAILED,
         receipt=receipt,
         summary=summary,
+        diagnostic_ids=diagnostic_ids,
     )
 
 
@@ -2324,10 +2589,10 @@ def _container_receipt(
 
 def _disposition(results: tuple[CheckResult, ...]) -> ValidationDisposition:
     required = tuple(result for result in results if result.required)
-    if any(result.status is CheckStatus.UNAVAILABLE for result in required):
-        return ValidationDisposition.ENVIRONMENT_UNAVAILABLE
     if any(result.status is CheckStatus.FAILED for result in required):
         return ValidationDisposition.RECOVERABLE_FAILURE
+    if any(result.status is CheckStatus.UNAVAILABLE for result in required):
+        return ValidationDisposition.ENVIRONMENT_UNAVAILABLE
     if all(result.status is CheckStatus.PASSED for result in required):
         return ValidationDisposition.READY_FOR_HUMAN_REVIEW
     return ValidationDisposition.PLAN_INVALID
@@ -2576,10 +2841,11 @@ def _install_controller_behavior_suite(
     candidate_root: Path,
     contract: _ControllerBehaviorContract,
     payload: bytes,
-) -> None:
+) -> str:
     """Add one controller-only suite to the disposable runtime copy."""
 
     root = _safe_directory(candidate_root, "controller behavior candidate root")
+    _reject_reserved_controller_test_identity(root, contract)
     if contract.runtime_relative_path != _CONTROLLER_RUNTIME_TEST_PATH:
         raise PolicyViolation("controller behavior runtime path drifted")
     destination = root / contract.runtime_relative_path
@@ -2602,8 +2868,132 @@ def _install_controller_behavior_suite(
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-    if _file_digest(destination) != contract.suite_sha256:
+    rendered_digest = f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    if _file_digest(destination) != rendered_digest:
         raise PolicyViolation("installed controller behavior suite digest mismatch")
+    return rendered_digest
+
+
+def _discover_public_listener_flow(candidate_root: Path) -> str:
+    """Find the candidate-chosen flow that owns the fixed public HTTP route."""
+
+    properties_payload = _read_regular_file(
+        candidate_root / MULE4_PROPERTIES,
+        max_bytes=MAX_ARTIFACT_BYTES,
+        role="candidate Mule application properties",
+    )
+    payload = _read_regular_file(
+        candidate_root / MULE4_APP,
+        max_bytes=MAX_XML_REPORT_BYTES,
+        role="candidate Mule application",
+    )
+    try:
+        properties = parse_mule_application_properties(properties_payload.decode("utf-8"))
+    except (MuleSoftLocalCheckFailure, UnicodeError) as exc:
+        raise PolicyViolation("candidate Mule application properties are not safe YAML") from exc
+    try:
+        text = payload.decode("utf-8")
+        if _CONTROLLER_XML_GUARD.search(text):
+            raise PolicyViolation("candidate Mule application has an unsafe declaration")
+        root = ElementTree.fromstring(text)
+    except (ElementTree.ParseError, UnicodeError) as exc:
+        raise PolicyViolation("candidate Mule application is not safe XML") from exc
+    flow_tag = f"{{{CORE}}}flow"
+    listener_tag = f"{{{HTTP}}}listener"
+    listener_config_tag = f"{{{HTTP}}}listener-config"
+    listener_configs: dict[str, str | None] = {}
+    for config in root.findall(listener_config_tag):
+        name = config.attrib.get("name", "").strip()
+        raw_base_path = config.attrib.get("basePath")
+        base_path = resolve_mule_property_value(raw_base_path, properties)
+        if (
+            not name
+            or len(name) > 500
+            or name in listener_configs
+            or (raw_base_path is not None and base_path is None)
+            or normalize_http_route(base_path, "/") is None
+        ):
+            raise PolicyViolation("candidate listener configuration is not safely bounded")
+        listener_configs[name] = base_path
+    matches: list[str] = []
+    for flow in root.findall(flow_tag):
+        flow_name = flow.attrib.get("name", "").strip()
+        for listener in flow.iter(listener_tag):
+            methods = {
+                method.strip().upper()
+                for method in re.split(r"[\s,]+", listener.attrib.get("allowedMethods", ""))
+                if method.strip()
+            }
+            config_ref = listener.attrib.get("config-ref")
+            if config_ref is None or config_ref not in listener_configs:
+                continue
+            listener_path = resolve_mule_property_value(listener.attrib.get("path"), properties)
+            if listener_path is None:
+                continue
+            effective_route = normalize_http_route(
+                listener_configs[config_ref],
+                listener_path,
+            )
+            if effective_route == MULESOFT_PUBLIC_ROUTE and methods == {"GET"}:
+                matches.append(flow_name)
+    if len(matches) != 1 or not matches[0] or len(matches[0]) > 500:
+        raise PolicyViolation("candidate must expose exactly one bounded public listener flow")
+    return matches[0]
+
+
+def _render_controller_behavior_suite(
+    template: bytes,
+    contract: _ControllerBehaviorContract,
+    flow_name: str,
+) -> bytes:
+    """Bind the immutable HTTP test template to a candidate-selected entry flow."""
+
+    if f"sha256:{hashlib.sha256(template).hexdigest()}" != contract.suite_sha256:
+        raise PolicyViolation("controller behavior template digest mismatch")
+    placeholder = contract.flow_name_placeholder.encode("utf-8")
+    if template.count(placeholder) != 1:
+        raise PolicyViolation("controller behavior template placeholder is invalid")
+    escaped_flow_name = xml_escape(flow_name, {'"': "&quot;"}).encode("utf-8")
+    rendered = template.replace(placeholder, escaped_flow_name)
+    try:
+        root = ElementTree.fromstring(rendered.decode("utf-8"))
+    except (ElementTree.ParseError, UnicodeError) as exc:
+        raise PolicyViolation("rendered controller behavior suite is invalid") from exc
+    enabled = root.findall(f".//{{{MUNIT}}}enable-flow-source")
+    if len(enabled) != 1 or enabled[0].attrib != {"value": flow_name}:
+        raise PolicyViolation("rendered controller suite did not bind the public listener flow")
+    return rendered
+
+
+def _reject_reserved_controller_test_identity(
+    candidate_root: Path,
+    contract: _ControllerBehaviorContract,
+) -> None:
+    """Prevent candidate-authored suites from impersonating injected evidence."""
+
+    reserved = {contract.suite_name, contract.test_name}
+    for relative_path in TARGET_FILES:
+        if "/src/test/munit/" not in relative_path or not relative_path.endswith(".xml"):
+            continue
+        path = candidate_root / relative_path
+        payload = _read_regular_file(
+            path,
+            max_bytes=MAX_XML_REPORT_BYTES,
+            role="candidate-authored MUnit suite",
+        )
+        try:
+            text = payload.decode("utf-8")
+            if _CONTROLLER_XML_GUARD.search(text):
+                raise PolicyViolation("candidate-authored MUnit suite has an unsafe declaration")
+            root = ElementTree.fromstring(text)
+        except (ElementTree.ParseError, UnicodeError) as exc:
+            raise PolicyViolation("candidate-authored MUnit suite is not safe XML") from exc
+        identities = (
+            *root.findall(f"{{{MUNIT}}}config"),
+            *root.findall(f"{{{MUNIT}}}test"),
+        )
+        if any(element.attrib.get("name") in reserved for element in identities):
+            raise PolicyViolation("candidate-authored MUnit suite reused a reserved controller ID")
 
 
 def _validate_controller_behavior_reports(
@@ -2611,15 +3001,17 @@ def _validate_controller_behavior_reports(
     artifacts: tuple[ArtifactDigest, ...],
     contract: _ControllerBehaviorContract,
     contract_binding_digest: str,
+    rendered_suite_sha256: str,
 ) -> _ControllerBehaviorReportBinding:
-    """Bind terminal JUnit evidence to both exact MUnit suites and test names."""
+    """Bind the reserved controller report and arbitrary candidate MUnit reports."""
 
     if len(reports) != len(artifacts):
         raise MuleSoftEvidenceError("MUnit report payload and artifact counts differ")
-    generated_identity = (_GENERATED_MUNIT_SUITE_NAME, _GENERATED_MUNIT_TEST_NAME)
-    controller_identity = (contract.suite_name, contract.test_name)
-    expected = {generated_identity, controller_identity}
-    artifact_by_identity: dict[tuple[str, str], ArtifactDigest] = {}
+    controller_report: ArtifactDigest | None = None
+    candidate_reports: list[ArtifactDigest] = []
+    candidate_suite_names: list[str] = []
+    candidate_test_count = 0
+    observed_suite_names: set[str] = set()
     for payload, artifact in zip(reports, artifacts, strict=True):
         if f"sha256:{hashlib.sha256(payload).hexdigest()}" != artifact.sha256:
             raise MuleSoftEvidenceError("MUnit report artifact digest does not match its payload")
@@ -2633,22 +3025,40 @@ def _validate_controller_behavior_reports(
         if root.tag.rsplit("}", 1)[-1] != "testsuite":
             raise MuleSoftEvidenceError("MUnit identity report must contain one direct suite")
         testcases = [child for child in root if child.tag.rsplit("}", 1)[-1] == "testcase"]
-        if len(testcases) != 1:
-            raise MuleSoftEvidenceError("MUnit identity report must contain one direct test")
-        identity = (root.attrib.get("name", ""), testcases[0].attrib.get("name", ""))
-        if identity not in expected or identity in artifact_by_identity:
-            raise MuleSoftEvidenceError("MUnit suite or test identity is unexpected or duplicated")
-        artifact_by_identity[identity] = artifact
-    if set(artifact_by_identity) != expected:
-        raise MuleSoftEvidenceError("MUnit evidence omitted a required behavior suite")
+        suite_name = root.attrib.get("name", "")
+        test_names = tuple(testcase.attrib.get("name", "") for testcase in testcases)
+        if (
+            not suite_name
+            or len(suite_name) > 512
+            or suite_name in observed_suite_names
+            or not test_names
+            or any(not name or len(name) > 512 for name in test_names)
+        ):
+            raise MuleSoftEvidenceError("MUnit suite or test identity is missing or duplicated")
+        observed_suite_names.add(suite_name)
+        if suite_name == contract.suite_name:
+            if controller_report is not None or test_names != (contract.test_name,):
+                raise MuleSoftEvidenceError("controller-owned MUnit report identity is invalid")
+            controller_report = artifact
+            continue
+        if contract.test_name in test_names:
+            raise MuleSoftEvidenceError("candidate MUnit report reused a reserved controller ID")
+        candidate_reports.append(artifact)
+        candidate_suite_names.append(suite_name)
+        candidate_test_count += len(test_names)
+    if controller_report is None:
+        raise MuleSoftEvidenceError("MUnit evidence omitted the controller behavior suite")
+    if not candidate_reports or candidate_test_count < 1:
+        raise MuleSoftEvidenceError("MUnit evidence omitted candidate-authored tests")
     return _ControllerBehaviorReportBinding(
         contract_binding_digest=contract_binding_digest,
-        controller_report=artifact_by_identity[controller_identity],
+        rendered_suite_sha256=rendered_suite_sha256,
+        controller_report=controller_report,
         controller_suite_name=contract.suite_name,
         controller_test_name=contract.test_name,
-        supplemental_report=artifact_by_identity[generated_identity],
-        supplemental_suite_name=_GENERATED_MUNIT_SUITE_NAME,
-        supplemental_test_name=_GENERATED_MUNIT_TEST_NAME,
+        candidate_reports=tuple(candidate_reports),
+        candidate_suite_names=tuple(candidate_suite_names),
+        candidate_test_count=candidate_test_count,
     )
 
 

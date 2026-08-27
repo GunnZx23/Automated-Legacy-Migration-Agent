@@ -5,14 +5,14 @@
       "page_id": "salesforce-visualforce-to-lwc",
       "title": "Salesforce Visualforce to LWC migration",
       "path": "pages/salesforce-visualforce-to-lwc.md",
-      "summary": "Behavior-preserving migration from a Visualforce Load-button interaction to a Lightning Web Component with an imperative Apex service.",
+      "summary": "Behavior-preserving Visualforce-to-LWC migration covering wire or imperative Account retrieval, explicit Contact loading, accessible states, semantic harness hooks, and observable stale-response protection.",
       "platforms": ["salesforce"],
       "source_version": "Salesforce API 67.0",
       "target_version": "Salesforce API 67.0",
       "status": "pilot",
       "owner": "capstone-project",
-      "last_verified": "2026-08-26",
-      "tags": ["visualforce", "lwc", "apex", "rerender", "migration"],
+      "last_verified": "2026-08-27",
+      "tags": ["visualforce", "lwc", "apex", "wire", "imperative", "rerender", "migration", "lwc_template_binding_invalid", "account-selector", "stale-response", "controller-jest"],
       "links": ["salesforce-apex-security", "salesforce-validation"],
       "sources": [
         {
@@ -30,6 +30,12 @@
         {
           "title": "Call Apex Methods Imperatively",
           "url": "https://developer.salesforce.com/docs/platform/lwc/guide/apex-call-imperative.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "HTML Template Directives",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/reference-directives.html",
           "publisher": "Salesforce",
           "authority": "official"
         }
@@ -79,14 +85,14 @@
       "page_id": "salesforce-apex-security",
       "title": "Salesforce Apex security for LWC services",
       "path": "pages/salesforce-apex-security.md",
-      "summary": "API 67 Apex defaults, explicit sharing and user-mode access, safe errors, class access, and LWS/CSP guardrails for LWC services.",
+      "summary": "Exact project Apex interface plus Salesforce sharing, user-mode data access, safe errors, class access, and LWS/CSP guardrails for LWC services.",
       "platforms": ["salesforce"],
       "source_version": "Salesforce API 67.0",
       "target_version": "Salesforce API 67.0",
       "status": "pilot",
       "owner": "capstone-project",
-      "last_verified": "2026-08-26",
-      "tags": ["apex", "security", "with-sharing", "user-mode", "lws", "csp"],
+      "last_verified": "2026-08-27",
+      "tags": ["apex", "security", "with-sharing", "user-mode", "auraenabled", "cacheable", "apex_public_interface_annotation_mismatch", "lws", "csp"],
       "links": ["salesforce-validation", "workflow-safety-gates"],
       "sources": [
         {
@@ -125,14 +131,14 @@
       "page_id": "salesforce-validation",
       "title": "Salesforce migration validation",
       "path": "pages/salesforce-validation.md",
-      "summary": "Evidence boundaries for local LWC Jest, Apex tests, manifest-scoped sandbox dry runs, and exact-job terminal reports.",
+      "summary": "Generation guidance for plain LWC JavaScript and executable Jest, inline synthetic data, root-cause-aware local validation, artifact repair boundaries, Apex tests, and sandbox evidence.",
       "platforms": ["salesforce"],
       "source_version": "Salesforce API 67.0",
       "target_version": "Salesforce API 67.0",
       "status": "pilot",
       "owner": "capstone-project",
-      "last_verified": "2026-08-26",
-      "tags": ["salesforce", "jest", "apex-test", "dry-run", "validation"],
+      "last_verified": "2026-08-27",
+      "tags": ["salesforce", "lwc", "standard-javascript", "typescript", "jest", "jest_unapproved_module_target", "injectglobals", "resetallmocks", "promise", "apex-test", "org-independent-test-data", "dry-run", "validation"],
       "links": ["workflow-safety-gates"],
       "sources": [
         {
@@ -151,6 +157,12 @@
           "title": "Test Lightning Web Components",
           "url": "https://developer.salesforce.com/docs/platform/lwc/guide/testing.html",
           "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Jest API",
+          "url": "https://jestjs.io/docs/api",
+          "publisher": "Jest",
           "authority": "official"
         },
         {
@@ -285,14 +297,14 @@
       "page_id": "workflow-sequential-correction",
       "title": "Evidence-grounded sequential planning and correction",
       "path": "pages/workflow-sequential-correction.md",
-      "summary": "A single evidence-supported plan with bounded correction; ReAct is research inspiration, not a technical standard.",
+      "summary": "A single evidence-supported plan with diagnostic-driven Wiki retrieval and a digest-bound, delta-only bounded correction; ReAct is research inspiration, not a technical standard.",
       "platforms": [],
       "source_version": "workflow 1.0",
       "target_version": "workflow 1.0",
       "status": "pilot",
       "owner": "capstone-project",
       "last_verified": "2026-08-26",
-      "tags": ["react", "sequential-correction", "architect", "planning", "human-in-the-loop"],
+      "tags": ["react", "sequential-correction", "diagnostic-retrieval", "digest-bound", "candidate-delta", "unchanged-resubmission", "architect", "planning", "human-in-the-loop"],
       "links": ["workflow-safety-gates"],
       "sources": [
         {

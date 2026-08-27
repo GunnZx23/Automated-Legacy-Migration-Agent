@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -20,18 +21,16 @@ from legacy_migration_agent.agent_runtime.agent_definitions import (
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectContext,
     ArchitectManifestProposal,
+    ArchitectModelContext,
+    ArchitectSemanticDecision,
 )
 from legacy_migration_agent.agent_runtime.model_workflow import ModelAgentWorkflowRoles
 from legacy_migration_agent.contracts import (
     ApprovalAction,
-    DependencyEvidence,
-    MigrationManifest,
     MigrationRequest,
     MigrationTarget,
     PlanningIntervention,
     Platform,
-    TransformationStep,
-    ValidationCommand,
 )
 from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
@@ -40,7 +39,7 @@ from legacy_migration_agent.core.run_session import (
     AgentRunSession,
 )
 from legacy_migration_agent.core.scope_policy import MigrationScopePolicy, PlatformAdapter
-from legacy_migration_agent.core.workspace import content_revision
+from legacy_migration_agent.core.workspace import SnapshotEntry, TreeSnapshot, content_revision
 from legacy_migration_agent.graphs.dependency_graph import (
     SALESFORCE_ANALYZER_VERSION,
     build_salesforce_dependency_graph,
@@ -51,11 +50,14 @@ from legacy_migration_agent.graphs.mulesoft_dependency_graph import (
     MULESOFT_ANALYZER_VERSION,
     build_mulesoft_dependency_graph,
 )
+from legacy_migration_agent.platforms.mulesoft_runtime import MULESOFT_PLATFORM_ADAPTER
 from legacy_migration_agent.platforms.platform_runtime import (
     PlatformGraphBuilder,
     PlatformRuntimeConfig,
     RevisionBoundArchitectContextFactory,
+    _architect_source_file_evidence,
 )
+from legacy_migration_agent.platforms.salesforce_runtime import SALESFORCE_PLATFORM_ADAPTER
 from legacy_migration_agent.workflow import (
     ApprovalSelection,
     ManifestApproval,
@@ -65,7 +67,7 @@ from legacy_migration_agent.workflow import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WIKI_ROOT = PROJECT_ROOT / "knowledge/wiki"
 AGENTS_ROOT = PROJECT_ROOT / "agents"
-AS_OF = date(2026, 8, 26)
+AS_OF = date(2026, 8, 27)
 SF_FIXTURE = PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input"
 SF_ENTRY = "force-app/main/default/pages/LegacyAccountContactExplorer.page"
 MULE_FIXTURE = PROJECT_ROOT / "fixtures/mulesoft/customer-status-api/input"
@@ -140,42 +142,19 @@ class ArchitectManifestModel:
         self.calls.append(output_type.__name__)
         if output_type is not ArchitectManifestProposal:
             raise AssertionError("Engineer and Validator must remain unreachable")
-        context = ArchitectContext.model_validate(input_value)
-        output_path = f"generated/{context.request.platform.value}.txt"
-        manifest = MigrationManifest(
-            manifest_id="durable-session-manifest",
-            request_id=context.request.request_id,
-            platform=context.request.platform,
-            base_revision=context.request.base_revision,
-            approved_paths=(output_path,),
-            dependencies=(
-                DependencyEvidence(
-                    path=context.request.target.entry_path,
-                    relation="migration source",
-                    source="session-bound test",
-                ),
-            ),
-            transformations=(
-                TransformationStep(
-                    step_id="create-output",
-                    description="Create the approved generated output.",
-                    input_paths=(context.request.target.entry_path,),
-                    output_paths=(output_path,),
-                ),
-            ),
-            validation_plan=(
-                ValidationCommand(
-                    check_id="local-check",
-                    command_id="local-check",
-                    purpose="Exercise the durable session approval boundary.",
-                ),
-            ),
-            required_approvals=(ApprovalAction.APPROVE_MANIFEST,),
-        )
+        context = ArchitectModelContext.model_validate(input_value)
         return ArchitectManifestProposal(
-            manifest=manifest,
-            scope_policy_digest=context.platform_adapter.scope_policy_digest,
-            public_decisions=("Propose only the policy-approved generated output.",),
+            semantic_decisions=(
+                ArchitectSemanticDecision(
+                    decision_id="bounded-generated-output",
+                    category="target_architecture",
+                    summary="Propose only the policy-approved generated output.",
+                    evidence_ids=(
+                        context.dependency_graph.nodes[0].node_id,
+                        context.wiki_trace.hits[0].page_id,
+                    ),
+                ),
+            ),
             cited_graph_nodes=(context.dependency_graph.nodes[0].node_id,),
             cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
         )
@@ -199,6 +178,7 @@ def _adapter(platform: Platform) -> PlatformAdapter:
         allowed_validation_command_ids=("local-check",),
         required_validation_command_ids=("local-check",),
         max_changed_files=1,
+        required_approval_actions=(ApprovalAction.APPROVE_MANIFEST,),
     )
     return PlatformAdapter.bind(adapter_id=f"{platform.value}-runtime-test", policy=policy)
 
@@ -271,6 +251,7 @@ def _factory(
     runtime: PlatformRuntimeConfig | None = None,
     graph_store: GraphSnapshotStore | None = None,
     wiki_root: Path = WIKI_ROOT,
+    wiki_max_primary_hits: int = 3,
 ) -> RevisionBoundArchitectContextFactory:
     return RevisionBoundArchitectContextFactory.for_session(
         case.session,
@@ -283,6 +264,7 @@ def _factory(
         wiki_query=case.query,
         wiki_as_of=AS_OF,
         platform_adapter=case.adapter,
+        wiki_max_primary_hits=wiki_max_primary_hits,
     )
 
 
@@ -340,6 +322,14 @@ def test_both_platforms_reuse_exact_cache_and_invalidate_on_analyzer_change(
     assert first == second
     assert counter.calls == 1
     assert first.dependency_graph.platform is platform
+    assert tuple(item.path for item in first.model_context.source_files) == (
+        case.adapter.scope_policy.required_source_input_paths
+    )
+    source_bytes = (case.source / case.entry).read_bytes()
+    assert first.model_context.source_files[0].content == source_bytes.decode("utf-8")
+    assert first.model_context.source_files[0].sha256 == (
+        f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
+    )
     assert first.wiki_trace.hits
     assert tuple(case.session.evidence_dir.glob("indexes/graph-*.json"))
 
@@ -353,6 +343,120 @@ def test_both_platforms_reuse_exact_cache_and_invalidate_on_analyzer_change(
     assert isinstance(changed, ArchitectContext)
     assert changed_counter.calls == 1
     assert len(tuple(case.session.evidence_dir.glob("indexes/graph-*.json"))) == 2
+
+
+@pytest.mark.parametrize(
+    ("platform", "production_adapter"),
+    (
+        (Platform.SALESFORCE, SALESFORCE_PLATFORM_ADAPTER),
+        (Platform.MULESOFT, MULESOFT_PLATFORM_ADAPTER),
+    ),
+)
+def test_real_platform_source_inventory_reaches_architect_exactly(
+    tmp_path: Path,
+    platform: Platform,
+    production_adapter: PlatformAdapter,
+) -> None:
+    case = _case(tmp_path, platform)
+    factory = RevisionBoundArchitectContextFactory.for_session(
+        case.session,
+        case.request,
+        case.registry,
+        graph_store=case.graph_store,
+        runtime=case.runtime,
+        entry_paths=(case.entry,),
+        wiki_root=WIKI_ROOT,
+        wiki_query=case.query,
+        wiki_as_of=AS_OF,
+        platform_adapter=production_adapter,
+    )
+
+    context = factory(case.request)
+
+    assert isinstance(context, ArchitectContext)
+    expected_paths = production_adapter.scope_policy.required_source_input_paths
+    assert tuple(item.path for item in context.model_context.source_files) == expected_paths
+    for item in context.model_context.source_files:
+        source_bytes = (case.source / item.path).read_bytes()
+        assert item.content == source_bytes.decode("utf-8")
+        assert item.sha256 == f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    (
+        (b"\xff\xfe", "not UTF-8"),
+        (b"legacy\x00source", "binary"),
+        (b"x" * 32_001, "prompt bound"),
+    ),
+)
+def test_architect_source_evidence_fails_closed_on_unsafe_file_content(
+    content: bytes,
+    message: str,
+) -> None:
+    snapshot = TreeSnapshot(
+        entries=(SnapshotEntry(path="legacy.txt", content=content, mode=0o644),),
+        directories=(),
+        revision="sha256:" + "0" * 64,
+    )
+
+    with pytest.raises(PolicyViolation, match=message):
+        _architect_source_file_evidence(snapshot, ("legacy.txt",))
+
+
+def test_architect_source_evidence_fails_closed_on_missing_or_aggregate_oversize() -> None:
+    empty = TreeSnapshot(entries=(), directories=(), revision="sha256:" + "0" * 64)
+    with pytest.raises(PolicyViolation, match="missing controller-required inputs"):
+        _architect_source_file_evidence(empty, ("missing.txt",))
+
+    entries = tuple(
+        SnapshotEntry(path=f"source-{index}.txt", content=b"x" * 32_000, mode=0o644)
+        for index in range(9)
+    )
+    oversized = TreeSnapshot(
+        entries=entries,
+        directories=(),
+        revision="sha256:" + "1" * 64,
+    )
+    with pytest.raises(PolicyViolation, match="total prompt bound"):
+        _architect_source_file_evidence(
+            oversized,
+            tuple(entry.path for entry in entries),
+        )
+
+
+def test_targeted_correction_wiki_retrieval_is_version_bound_and_fails_without_hits(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path, Platform.SALESFORCE)
+    factory = _factory(case, wiki_max_primary_hits=1)
+    diagnostic_id = "apex_public_interface_annotation_mismatch"
+
+    trace = factory.retrieve_correction_wiki(
+        case.request,
+        f"{diagnostic_id} salesforce correction validation",
+    )
+
+    assert trace.query == f"{diagnostic_id} salesforce correction validation"
+    assert trace.platform is Platform.SALESFORCE
+    assert trace.source_version == case.request.target.source_version
+    assert trace.target_version == case.request.target.target_version
+    assert tuple(hit.page_id for hit in trace.hits) == ("salesforce-apex-security",)
+    assert diagnostic_id in trace.hits[0].selected_content
+    assert trace.max_primary_hits == 1
+    assert trace.expand_links is False
+
+    with pytest.raises(PolicyViolation, match="no eligible curated page"):
+        factory.retrieve_correction_wiki(
+            case.request,
+            "diagnostic_identifier_that_is_not_curated",
+        )
+
+    with pytest.raises(PolicyViolation, match="must contain at least one exact diagnostic ID"):
+        factory.retrieve_correction_wiki(
+            case.request,
+            "salesforce correction validation",
+        )
 
 
 def test_unresolved_graph_stops_workflow_before_wiki_or_model(

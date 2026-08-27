@@ -1,0 +1,276 @@
+{
+  "$defs": {
+    "PilotCellResult": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "cell_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "evidence_receipt_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Receipt Digest"
+        },
+        "evidence_receipt_path": {
+          "anyOf": [
+            {
+              "maxLength": 240,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Receipt Path"
+        },
+        "reason": {
+          "$ref": "#/$defs/PilotResultReason"
+        },
+        "status": {
+          "$ref": "#/$defs/ResultStatus"
+        }
+      },
+      "required": [
+        "cell_id",
+        "case_id",
+        "status",
+        "reason"
+      ],
+      "title": "PilotCellResult",
+      "type": "object"
+    },
+    "PilotEvaluationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_cells_measured": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Agent Cells Measured",
+          "type": "integer"
+        },
+        "agent_cells_planned": {
+          "const": 2,
+          "default": 2,
+          "title": "Agent Cells Planned",
+          "type": "integer"
+        },
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "external_platform_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "External Platform Evaluated",
+          "type": "boolean"
+        },
+        "measured_cells": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Measured Cells",
+          "type": "integer"
+        },
+        "model_quality_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "Model Quality Evaluated",
+          "type": "boolean"
+        },
+        "passed": {
+          "const": false,
+          "default": false,
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "planned_cells": {
+          "const": 2,
+          "default": 2,
+          "title": "Planned Cells",
+          "type": "integer"
+        },
+        "recorded_cells": {
+          "const": 2,
+          "default": 2,
+          "title": "Recorded Cells",
+          "type": "integer"
+        },
+        "status_counts": {
+          "$ref": "#/$defs/StatusCounts"
+        }
+      },
+      "required": [
+        "measured_cells",
+        "status_counts",
+        "agent_cells_measured",
+        "complete"
+      ],
+      "title": "PilotEvaluationSummary",
+      "type": "object"
+    },
+    "PilotResultReason": {
+      "enum": [
+        "awaiting_user_qwen_run",
+        "verified_agent_run_status"
+      ],
+      "title": "PilotResultReason",
+      "type": "string"
+    },
+    "ResultStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "decision_required",
+        "unavailable",
+        "not_performed"
+      ],
+      "title": "ResultStatus",
+      "type": "string"
+    },
+    "StatusCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "decision_required": {
+          "minimum": 0,
+          "title": "Decision Required",
+          "type": "integer"
+        },
+        "failed": {
+          "minimum": 0,
+          "title": "Failed",
+          "type": "integer"
+        },
+        "not_performed": {
+          "minimum": 0,
+          "title": "Not Performed",
+          "type": "integer"
+        },
+        "succeeded": {
+          "minimum": 0,
+          "title": "Succeeded",
+          "type": "integer"
+        },
+        "unavailable": {
+          "minimum": 0,
+          "title": "Unavailable",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "succeeded",
+        "failed",
+        "decision_required",
+        "unavailable",
+        "not_performed"
+      ],
+      "title": "StatusCounts",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cells": {
+      "items": {
+        "$ref": "#/$defs/PilotCellResult"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Cells",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 3,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "parent_results_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Parent Results Digest"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "const": "legacy-migration-pilot-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "results_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Results Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_sequence": {
+      "maximum": 16,
+      "minimum": 1,
+      "title": "Snapshot Sequence",
+      "type": "integer"
+    },
+    "snapshot_status": {
+      "enum": [
+        "not_performed",
+        "partially_measured",
+        "complete"
+      ],
+      "title": "Snapshot Status",
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/PilotEvaluationSummary"
+    }
+  },
+  "required": [
+    "results_id",
+    "registry_id",
+    "registry_digest",
+    "snapshot_sequence",
+    "snapshot_status",
+    "cells",
+    "summary",
+    "limitations"
+  ],
+  "title": "PilotEvaluationResults",
+  "type": "object"
+}

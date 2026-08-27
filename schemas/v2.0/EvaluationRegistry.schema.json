@@ -1,0 +1,255 @@
+{
+  "$defs": {
+    "Complexity": {
+      "enum": [
+        "simple",
+        "medium",
+        "complex"
+      ],
+      "title": "Complexity",
+      "type": "string"
+    },
+    "EvaluationCase": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "complexity": {
+          "$ref": "#/$defs/Complexity"
+        },
+        "expected_outcome": {
+          "$ref": "#/$defs/ExpectedOutcome"
+        },
+        "fixture_path": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Fixture Path",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "platform",
+        "complexity",
+        "title",
+        "fixture_path",
+        "expected_outcome"
+      ],
+      "title": "EvaluationCase",
+      "type": "object"
+    },
+    "EvaluationConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "config_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "title": "Config Id",
+          "type": "string"
+        },
+        "uses_agents": {
+          "title": "Uses Agents",
+          "type": "boolean"
+        },
+        "uses_bounded_correction": {
+          "title": "Uses Bounded Correction",
+          "type": "boolean"
+        },
+        "uses_dependency_graph": {
+          "title": "Uses Dependency Graph",
+          "type": "boolean"
+        },
+        "uses_wiki": {
+          "title": "Uses Wiki",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "config_id",
+        "uses_dependency_graph",
+        "uses_wiki",
+        "uses_agents",
+        "uses_bounded_correction"
+      ],
+      "title": "EvaluationConfiguration",
+      "type": "object"
+    },
+    "ExpectedOutcome": {
+      "enum": [
+        "succeeded",
+        "decision_required"
+      ],
+      "title": "ExpectedOutcome",
+      "type": "string"
+    },
+    "MetricDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/MetricDirection"
+        },
+        "metric_id": {
+          "$ref": "#/$defs/MetricId"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "unit": {
+          "$ref": "#/$defs/MetricUnit"
+        }
+      },
+      "required": [
+        "metric_id",
+        "unit",
+        "direction"
+      ],
+      "title": "MetricDefinition",
+      "type": "object"
+    },
+    "MetricDirection": {
+      "enum": [
+        "minimum",
+        "maximum",
+        "report_only"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    },
+    "MetricId": {
+      "enum": [
+        "operational_success_rate",
+        "semantic_conformance_rate",
+        "authorization_violations",
+        "ready_claim_precision",
+        "dependency_recall",
+        "intervention_precision",
+        "intervention_recall",
+        "first_pass_validation_rate",
+        "bounded_repair_success_rate",
+        "wiki_support_accuracy",
+        "escaped_defects",
+        "escaped_high_impact_defects",
+        "accepted_migration_units",
+        "stage_latency_ms",
+        "accepted_unit_latency_ms",
+        "input_tokens",
+        "output_tokens",
+        "cost_micro_usd",
+        "cost_per_accepted_unit_micro_usd"
+      ],
+      "title": "MetricId",
+      "type": "string"
+    },
+    "MetricUnit": {
+      "enum": [
+        "proportion",
+        "count",
+        "milliseconds",
+        "tokens",
+        "micro_usd",
+        "micro_usd_per_unit"
+      ],
+      "title": "MetricUnit",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCase"
+      },
+      "maxItems": 6,
+      "minItems": 6,
+      "title": "Cases",
+      "type": "array"
+    },
+    "configurations": {
+      "items": {
+        "$ref": "#/$defs/EvaluationConfiguration"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Configurations",
+      "type": "array"
+    },
+    "declaration_status": {
+      "const": "predeclared_unmeasured",
+      "title": "Declaration Status",
+      "type": "string"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/MetricDefinition"
+      },
+      "maxItems": 19,
+      "minItems": 19,
+      "title": "Metrics",
+      "type": "array"
+    },
+    "registry_id": {
+      "const": "legacy-migration-benchmark-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "repetitions": {
+      "const": 3,
+      "title": "Repetitions",
+      "type": "integer"
+    },
+    "require_full_cross_product": {
+      "const": true,
+      "title": "Require Full Cross Product",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "registry_id",
+    "declaration_status",
+    "repetitions",
+    "require_full_cross_product",
+    "cases",
+    "configurations",
+    "metrics"
+  ],
+  "title": "EvaluationRegistry",
+  "type": "object"
+}

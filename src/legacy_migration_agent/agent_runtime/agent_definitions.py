@@ -52,8 +52,25 @@ class AgentPermissions(StrictModel):
 class AgentModelBehavior(StrictModel):
     structured_output: Literal[True]
     private_chain_of_thought: Literal[False]
-    tools: Literal["none"]
+    native_tools: tuple[()] = ()
+    structured_actions: tuple[str, ...] = Field(min_length=1, max_length=3)
     max_response_chars: int = Field(ge=1_000, le=250_000)
+
+    @field_validator("structured_actions")
+    @classmethod
+    def validate_structured_actions(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("structured agent actions must be unique")
+        if any(
+            not value
+            or len(value) > 120
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789_.-" for character in value
+            )
+            for value in values
+        ):
+            raise ValueError("structured agent actions must use bounded public identifiers")
+        return values
 
 
 class AgentDefinitionHeader(StrictModel):
@@ -145,7 +162,7 @@ _PERMISSIONS: Mapping[AgentRole, AgentPermissions] = MappingProxyType(
 
 _INPUT_CONTRACTS: Mapping[AgentRole, tuple[str, ...]] = MappingProxyType(
     {
-        AgentRole.ARCHITECT: ("ArchitectContext", "ArchitectConversationContext"),
+        AgentRole.ARCHITECT: ("ArchitectModelContext", "ArchitectConversationContext"),
         AgentRole.ENGINEER: ("EngineerWorkspaceContext",),
         AgentRole.VALIDATOR: ("ValidatorEvidenceContext",),
     }
@@ -155,15 +172,27 @@ _OUTPUT_CONTRACTS: Mapping[AgentRole, str] = MappingProxyType(
     {
         AgentRole.ARCHITECT: "ArchitectManifestProposal|ArchitectConversationReply",
         AgentRole.ENGINEER: "EngineerModelOutcome",
-        AgentRole.VALIDATOR: "ValidatorAdvisory",
+        AgentRole.VALIDATOR: "ValidatorModelAdvisory",
     }
 )
 
 _VERSIONS: Mapping[AgentRole, str] = MappingProxyType(
     {
-        AgentRole.ARCHITECT: "architect/v3",
-        AgentRole.ENGINEER: "engineer/v11",
-        AgentRole.VALIDATOR: "validator/v1",
+        AgentRole.ARCHITECT: "architect/v8",
+        AgentRole.ENGINEER: "engineer/v21",
+        AgentRole.VALIDATOR: "validator/v5",
+    }
+)
+
+_STRUCTURED_ACTIONS: Mapping[AgentRole, tuple[str, ...]] = MappingProxyType(
+    {
+        AgentRole.ARCHITECT: (
+            "dependency_graph.select_node_ids",
+            "llm_wiki.select_page_ids",
+            "migration_plan.propose_semantics",
+        ),
+        AgentRole.ENGINEER: ("candidate.propose_file_updates",),
+        AgentRole.VALIDATOR: ("validation.review_evidence",),
     }
 )
 
@@ -312,6 +341,10 @@ def _validate_role_contract(
         raise AgentDefinitionError(f"incorrect input contract in {filename}")
     if header.output_contract != _OUTPUT_CONTRACTS[expected_role]:
         raise AgentDefinitionError(f"incorrect output contract in {filename}")
+    if header.model_behavior.native_tools:
+        raise AgentDefinitionError(f"native model tools are not supported in {filename}")
+    if header.model_behavior.structured_actions != _STRUCTURED_ACTIONS[expected_role]:
+        raise AgentDefinitionError(f"incorrect structured action contract in {filename}")
 
 
 def _validate_prompt(prompt: str, role: AgentRole, filename: str) -> None:

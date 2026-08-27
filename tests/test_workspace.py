@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from salesforce_candidate_factory import salesforce_candidate_outputs
 
 from legacy_migration_agent.core.workspace import (
     IsolatedWorkspace,
@@ -224,12 +225,12 @@ def test_source_mutation_is_detected_and_never_hidden_by_workspace_cleanup(
     assert (source / "base.txt").read_text(encoding="utf-8") == "externally changed\n"
 
 
-def test_selected_real_fixture_outputs_create_an_additive_migration(
+def test_synthetic_candidate_outputs_create_an_additive_migration(
     tmp_path: Path,
 ) -> None:
     fixture = Path(__file__).parents[1] / "fixtures" / "salesforce" / "account-contact-explorer"
     source = fixture / "input"
-    expected = fixture / "expected"
+    outputs = salesforce_candidate_outputs()
     controller = "force-app/main/default/classes/AccountContactExplorerController.cls"
     component = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
     permission_set = (
@@ -244,7 +245,7 @@ def test_selected_real_fixture_outputs_create_an_additive_migration(
         expected_revision=source_before.revision,
     ) as workspace:
         for path in (controller, component, permission_set):
-            workspace.write_bytes(path, (expected / path).read_bytes())
+            workspace.write_bytes(path, outputs[path])
         changes = workspace.audit_changes()
         assert changes.added_paths == (controller, component)
         assert changes.modified_paths == (permission_set,)

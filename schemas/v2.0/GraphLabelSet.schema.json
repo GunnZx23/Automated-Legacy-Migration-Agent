@@ -1,0 +1,146 @@
+{
+  "$defs": {
+    "EdgeKind": {
+      "description": "Relationships currently emitted by the deterministic graph analyzers.",
+      "enum": [
+        "visualforce_controller",
+        "visualforce_extension",
+        "visualforce_standard_controller",
+        "apex_class_reference",
+        "apex_page_reference",
+        "soql_object",
+        "soql_field",
+        "lwc_apex_import",
+        "lwc_schema_import",
+        "permission_class_access",
+        "permission_page_access",
+        "permission_object_access",
+        "permission_field_access",
+        "flow_reference",
+        "http_listener_config_reference",
+        "connector_config_reference",
+        "configuration_properties_reference",
+        "property_reference",
+        "dataweave_variable_reference",
+        "dataweave_module_reference",
+        "munit_flow_reference",
+        "munit_suite_test",
+        "maven_plugin",
+        "maven_dependency",
+        "dynamic_reference"
+      ],
+      "title": "EdgeKind",
+      "type": "string"
+    },
+    "GraphEdgeLabel": {
+      "additionalProperties": false,
+      "description": "One expected resolved edge, expressed in platform-visible names.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EdgeKind"
+        },
+        "source": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "target": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source",
+        "target"
+      ],
+      "title": "GraphEdgeLabel",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Versioned fixture labels with an explicit human-review status.",
+  "properties": {
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/GraphEdgeLabel"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "title": "Edges",
+      "type": "array"
+    },
+    "fixture_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Fixture Id",
+      "type": "string"
+    },
+    "graph": {
+      "enum": [
+        "source",
+        "target"
+      ],
+      "title": "Graph",
+      "type": "string"
+    },
+    "label_file_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Label File Digest",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "review_status": {
+      "enum": [
+        "unreviewed_initial",
+        "initial_label_set",
+        "independently_reviewed"
+      ],
+      "title": "Review Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fixture_id",
+    "platform",
+    "graph",
+    "review_status",
+    "label_file_digest",
+    "edges"
+  ],
+  "title": "GraphLabelSet",
+  "type": "object"
+}

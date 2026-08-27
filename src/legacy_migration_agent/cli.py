@@ -89,13 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     agent_request.add_argument("--project-root", type=Path, default=Path("."))
     agent_request.add_argument("--request-id", required=True)
-    agent_request.add_argument(
-        "--platform",
-        choices=[platform.value for platform in Platform],
-        required=True,
-    )
-    agent_request.add_argument("--source-root", required=True)
-    agent_request.add_argument("--description", required=True)
+    agent_request.add_argument("--scenario-id", required=True)
     agent_request.add_argument("--requested-at", type=datetime.fromisoformat, required=True)
     agent_request.add_argument("--output", required=True)
 
@@ -104,9 +98,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="start a supported three-agent Salesforce or MuleSoft run",
     )
     _add_agent_run_identity_arguments(agent_start)
-    agent_start.add_argument("--source-root", required=True)
+    agent_start.add_argument("--scenario-id", required=True)
     agent_start.add_argument("--request", type=Path, required=True)
-    agent_start.add_argument("--as-of", type=date.fromisoformat, required=True)
     _add_live_model_arguments(agent_start, required=True)
 
     agent_resume = subparsers.add_parser(
@@ -208,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pilot_run = subparsers.add_parser(
         "evaluation-pilot-run-local",
-        help="measure the two provider-free local pilot cells and write receipts",
+        help="write the unmeasured two-cell Qwen pilot baseline without invoking a provider",
     )
     pilot_run.add_argument("--project-root", type=Path, default=Path("."))
     pilot_run.add_argument("--registry", type=Path, required=True)
@@ -216,7 +209,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pilot_verify = subparsers.add_parser(
         "evaluation-pilot-verify",
-        help="verify and re-execute local claims in one pilot snapshot",
+        help="verify agent-run receipts and artifact bindings in one pilot snapshot",
     )
     pilot_verify.add_argument("--project-root", type=Path, default=Path("."))
     pilot_verify.add_argument("--registry", type=Path, required=True)
@@ -245,7 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument(
         "--open-browser",
         action="store_true",
-        help="open the local agent UI after the server starts",
+        help="open the local agent UI in the system default browser after startup",
     )
     ui.add_argument(
         "--ollama-model",
@@ -504,14 +497,19 @@ def _controlled_error_namespace(command: str) -> str:
 def _dispatch_controlled_command(args: argparse.Namespace) -> int:
     if args.command == "agent-request-create":
         from legacy_migration_agent.application.agent_run import prepare_agent_run_request
+        from legacy_migration_agent.application.migration_scenarios import (
+            migration_launch_contract,
+        )
         from legacy_migration_agent.core.integrity import ArtifactStore
 
+        try:
+            launch_contract = migration_launch_contract(args.scenario_id)
+        except KeyError:
+            raise ValueError("CLI scenario identity is not supported") from None
         request = prepare_agent_run_request(
             args.project_root,
             request_id=args.request_id,
-            platform=Platform(args.platform),
-            source_root=args.source_root,
-            description=args.description,
+            launch_contract=launch_contract,
             requested_at=args.requested_at,
         )
         destination = ArtifactStore(args.project_root).write_json(args.output, request)
@@ -519,6 +517,7 @@ def _dispatch_controlled_command(args: argparse.Namespace) -> int:
             json.dumps(
                 {
                     "request_id": request.request_id,
+                    "scenario_id": launch_contract.scenario_id,
                     "platform": request.platform.value,
                     "base_revision": request.base_revision,
                     "output": str(destination),
@@ -531,9 +530,16 @@ def _dispatch_controlled_command(args: argparse.Namespace) -> int:
         return 0
     if args.command == "agent-run-start":
         from legacy_migration_agent.application.agent_run import start_agent_run
+        from legacy_migration_agent.application.migration_scenarios import (
+            migration_launch_contract,
+        )
         from legacy_migration_agent.contracts import MigrationRequest
 
         canonical_request = MigrationRequest.model_validate(_read_json(args.request))
+        try:
+            launch_contract = migration_launch_contract(args.scenario_id)
+        except KeyError:
+            raise ValueError("CLI scenario identity is not supported") from None
         models = _live_models_from_args(args, required=True)
         assert models is not None
         result = start_agent_run(
@@ -541,10 +547,9 @@ def _dispatch_controlled_command(args: argparse.Namespace) -> int:
             args.run_dir,
             run_id=args.run_id,
             thread_id=args.thread_id,
-            source_root=args.source_root,
+            launch_contract=launch_contract,
             request=canonical_request,
             models=models,
-            wiki_as_of=args.as_of,
         )
         return _emit_agent_status(result)
     if args.command == "agent-run-resume":

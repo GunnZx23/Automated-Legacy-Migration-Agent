@@ -27,9 +27,9 @@ def test_project_registry_contains_exactly_three_versioned_domain_agents() -> No
 
     assert tuple(definition.role for definition in registry.definitions) == tuple(AgentRole)
     assert tuple(definition.version for definition in registry.definitions) == (
-        "architect/v3",
-        "engineer/v11",
-        "validator/v1",
+        "architect/v8",
+        "engineer/v21",
+        "validator/v5",
     )
     assert all("Visualforce" in definition.system_prompt for definition in registry.definitions)
     assert all("Mule 3" in definition.system_prompt for definition in registry.definitions)
@@ -37,13 +37,28 @@ def test_project_registry_contains_exactly_three_versioned_domain_agents() -> No
     assert registry.get("engineer").header.output_contract == "EngineerModelOutcome"
     assert registry.get("architect").header.permissions.isolated_workspace_write is False
     assert registry.get("architect").header.input_contracts == (
-        "ArchitectContext",
+        "ArchitectModelContext",
         "ArchitectConversationContext",
     )
     assert registry.get("architect").header.output_contract == (
         "ArchitectManifestProposal|ArchitectConversationReply"
     )
     assert registry.get("validator").header.permissions.command_execution is False
+    assert registry.get("validator").header.output_contract == "ValidatorModelAdvisory"
+    assert all(
+        not definition.header.model_behavior.native_tools for definition in registry.definitions
+    )
+    assert registry.get("architect").header.model_behavior.structured_actions == (
+        "dependency_graph.select_node_ids",
+        "llm_wiki.select_page_ids",
+        "migration_plan.propose_semantics",
+    )
+    assert registry.get("engineer").header.model_behavior.structured_actions == (
+        "candidate.propose_file_updates",
+    )
+    assert registry.get("validator").header.model_behavior.structured_actions == (
+        "validation.review_evidence",
+    )
     assert all(
         definition.definition_digest.startswith("sha256:") for definition in registry.definitions
     )
@@ -76,6 +91,20 @@ def test_registry_rejects_unsafe_permission_declaration(tmp_path: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
     with pytest.raises(AgentDefinitionError, match="unsafe or incorrect permissions"):
+        load_agent_registry(root)
+
+
+def test_registry_rejects_native_model_tools(tmp_path: Path) -> None:
+    root = copy_registry(tmp_path)
+    path = root / "architect.md"
+    text = path.read_text(encoding="utf-8").replace(
+        "  native_tools: []",
+        "  native_tools: [dependency_graph.read]",
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(AgentDefinitionError, match="front matter|native model tools"):
         load_agent_registry(root)
 
 

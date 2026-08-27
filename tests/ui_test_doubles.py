@@ -9,19 +9,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
+from mulesoft_candidate_factory import mulesoft_target_outputs
 from pydantic import BaseModel
+from salesforce_candidate_factory import salesforce_candidate_text_outputs
 
 from legacy_migration_agent.agent_runtime.model_agents import (
-    ArchitectContext,
     ArchitectConversationContext,
     ArchitectConversationReply,
     ArchitectManifestProposal,
+    ArchitectModelContext,
+    ArchitectSemanticDecision,
     EngineerFilePlan,
+    EngineerFilePlanOutcome,
     EngineerFileUpdate,
     EngineerModelOutcome,
     EngineerWorkspaceContext,
-    ValidatorAdvisory,
     ValidatorEvidenceContext,
+    ValidatorModelAdvisory,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
     LiveModelApproval,
@@ -30,13 +34,7 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     OutputModel,
 )
 from legacy_migration_agent.contracts import (
-    ApprovalAction,
-    DependencyEvidence,
-    EnvironmentKind,
-    MigrationManifest,
     Platform,
-    TransformationStep,
-    ValidationCommand,
 )
 from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.platforms.local_checks import SALESFORCE_AGENT_OUTPUT_PATHS
@@ -53,11 +51,6 @@ from legacy_migration_agent.platforms.salesforce_runtime import (
 )
 
 LOCAL_MODEL_REVISION = "sha256:" + "a" * 64
-
-_EXPECTED_ROOTS = {
-    Platform.SALESFORCE: "fixtures/salesforce/account-contact-explorer/expected",
-    Platform.MULESOFT: "fixtures/mulesoft/customer-status-api/expected",
-}
 
 _APPROVED_PATHS = {
     Platform.SALESFORCE: SALESFORCE_AGENT_OUTPUT_PATHS,
@@ -85,58 +78,31 @@ def fixture_model_response(
     if not system_prompt.strip():
         raise ValueError("the test double requires a nonempty agent prompt")
     if output_type is ArchitectManifestProposal:
-        context = ArchitectContext.model_validate(input_value)
-        platform = context.request.platform
-        dependencies = tuple(
-            DependencyEvidence(
-                path=edge.provenance[0].path,
-                relation=edge.kind.value,
-                source=f"dependency-graph:{edge.source_id}->{edge.target_id}",
-                resolved=edge.resolved,
-            )
-            for edge in context.dependency_graph.edges
-            if edge.resolved
-        )
-        if not dependencies:
-            raise ValueError("the fixture dependency graph must contain a resolved relationship")
-        manifest = MigrationManifest(
-            manifest_id=f"ui-test-{context.request.platform.value}-manifest-v1",
-            request_id=context.request.request_id,
-            platform=context.request.platform,
-            base_revision=context.request.base_revision,
-            approved_paths=_APPROVED_PATHS[platform],
-            dependencies=dependencies,
-            transformations=(
-                TransformationStep(
-                    step_id=f"migrate-{context.request.platform.value}-bounded-slice",
-                    description="Create the complete additive target slice within the fixed scope.",
-                    input_paths=_INPUT_PATHS[platform],
-                    output_paths=_APPROVED_PATHS[platform],
-                ),
-            ),
-            validation_plan=tuple(
-                ValidationCommand(
-                    check_id=f"check-{command_id}",
-                    command_id=command_id,
-                    purpose="Run one controller-owned validation check.",
-                    environment=EnvironmentKind.LOCAL,
-                    required=True,
-                )
-                for command_id in _VALIDATION_COMMAND_IDS[platform]
-            ),
-            implementation_contract=(
-                context.platform_adapter.scope_policy.required_implementation_contract
-            ),
-            required_approvals=(ApprovalAction.APPROVE_MANIFEST,),
+        context = ArchitectModelContext.model_validate(input_value)
+        evidence_ids = (
+            context.dependency_graph.nodes[0].node_id,
+            context.wiki_trace.hits[0].page_id,
         )
         return cast(
             OutputModel,
             ArchitectManifestProposal(
-                manifest=manifest,
-                scope_policy_digest=context.platform_adapter.scope_policy_digest,
-                public_decisions=(
-                    "Use only the additive platform scope and controller-owned checks.",
-                    "Keep external runtime validation outside the local Agent UI boundary.",
+                semantic_decisions=(
+                    ArchitectSemanticDecision(
+                        decision_id="additive-platform-scope",
+                        category="target_architecture",
+                        summary=(
+                            "Use only the additive platform scope and controller-owned checks."
+                        ),
+                        evidence_ids=evidence_ids,
+                    ),
+                    ArchitectSemanticDecision(
+                        decision_id="external-validation-boundary",
+                        category="operational_constraint",
+                        summary=(
+                            "Keep external runtime validation outside the local Agent UI boundary."
+                        ),
+                        evidence_ids=evidence_ids,
+                    ),
                 ),
                 cited_graph_nodes=(context.dependency_graph.nodes[0].node_id,),
                 cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
@@ -154,51 +120,75 @@ def fixture_model_response(
                     missing_information=("Select a migration slice.",),
                 ),
             )
+        if context.scenario_id not in {
+            "salesforce-vf-to-lwc",
+            "mulesoft-mule3-to-mule4",
+        }:
+            raise ValueError("the selected test scenario is not supported")
         return cast(
             OutputModel,
             ArchitectConversationReply(
                 status="ready_to_launch",
                 assistant_message=(
-                    "I refined the bounded request. Use Generate migration plan when ready."
+                    "The selected scenario is ready for the Controller's canonical launch gate."
                 ),
-                refined_request=(
-                    "Migrate the selected synthetic source fixture additively while preserving "
-                    "the legacy entry point and validating the generated candidate locally."
+                advisory_summary=(
+                    "The selected bounded scenario uses an additive migration and local checks."
                 ),
             ),
         )
-    if output_type is EngineerModelOutcome:
+    if output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}:
         engineer_context = EngineerWorkspaceContext.model_validate(input_value)
         platform = engineer_context.request.platform
         if tuple(sorted(engineer_context.manifest.approved_paths)) != tuple(
             sorted(_APPROVED_PATHS[platform])
         ):
             raise ValueError("the test manifest differs from the fixed scenario output scope")
-        expected_root = project_root.joinpath(*_EXPECTED_ROOTS[platform].split("/"))
-        updates = tuple(
-            EngineerFileUpdate(
-                path=path,
-                content=expected_root.joinpath(*path.split("/")).read_text(encoding="utf-8"),
-            )
-            for path in sorted(_APPROVED_PATHS[platform])
-        )
-        return cast(
-            OutputModel,
-            EngineerModelOutcome.for_file_plan(
-                EngineerFilePlan(
-                    updates=updates,
-                    assumptions=(
-                        "The test supplies complete bytes for exactly the approved outputs.",
-                        "External platform and runtime checks remain outside this test boundary.",
-                    ),
+        if platform is Platform.MULESOFT:
+            output_text = {
+                relative_path: content.decode("utf-8")
+                for relative_path, content in mulesoft_target_outputs().items()
+            }
+        else:
+            output_text = salesforce_candidate_text_outputs()
+        if engineer_context.correction is None:
+            updates = tuple(
+                EngineerFileUpdate(
+                    path=relative_path,
+                    content=output_text[relative_path],
                 )
+                for relative_path in sorted(_APPROVED_PATHS[platform])
+            )
+        else:
+            prior = {
+                update.path: update.content
+                for update in engineer_context.correction.prior_file_plan.updates
+            }
+            updates = tuple(
+                EngineerFileUpdate(
+                    path=relative_path,
+                    content=prior[relative_path] + "\n",
+                )
+                for relative_path in engineer_context.correction.allowed_correction_paths
+            )
+        file_plan = EngineerFilePlan(
+            updates=updates,
+            assumptions=(
+                "The test supplies complete bytes for exactly the approved outputs.",
+                "External platform and runtime checks remain outside this test boundary.",
             ),
         )
-    if output_type is ValidatorAdvisory:
+        if output_type is EngineerFilePlanOutcome:
+            return cast(
+                OutputModel,
+                EngineerFilePlanOutcome(kind="file_plan", file_plan=file_plan),
+            )
+        return cast(OutputModel, EngineerModelOutcome.for_file_plan(file_plan))
+    if output_type is ValidatorModelAdvisory:
         context = ValidatorEvidenceContext.model_validate(input_value)
         return cast(
             OutputModel,
-            ValidatorAdvisory(
+            ValidatorModelAdvisory(
                 manifest_digest=context.manifest_digest,
                 change_set_digest=context.evidence.change_set_digest,
                 report_digest=context.evidence.report_digest,

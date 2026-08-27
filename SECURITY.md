@@ -28,12 +28,14 @@ production credentials, deployment, or autonomous Git actions.
 - Provider and controller failures cross a typed sanitization boundary before
   checkpoint or artifact persistence; raw SDK errors and stack traces are not
   public run evidence.
-- The agent UI binds only to loopback, accepts a bounded description for one
-  fixed synthetic platform slice plus a manifest decision, and validates
-  same-origin requests. The Ollama model is selected when the server starts;
-  the browser cannot select filesystem paths, validation commands, model
-  identifiers, provider endpoints, credentials, deployment targets, or
-  external actions.
+- The agent UI binds only to loopback and validates same-origin requests. The
+  browser selects a fixed scenario identity and may send advisory conversation
+  text, but launch authority comes only from that scenario's canonical,
+  controller-owned contract and an exact readiness token. Manifest, correction,
+  and final-review decisions remain separate typed gates. The Ollama model is
+  selected when the server starts; the browser cannot select filesystem paths,
+  validation commands, model identifiers, provider endpoints, credentials,
+  deployment targets, or external actions.
 - UI approval creates only an isolated local candidate. The downloadable ZIP
   contains approved candidate files; it does not mutate legacy source or grant
   commit, deployment, Salesforce org, or Mule runtime authority.
@@ -52,5 +54,6 @@ The disposable workspace and command policy are application-level controls,
 not an OS or container security boundary. Salesforce sandbox validation and
 Mule runtime execution require separately governed environments. The complete
 threat model, authority boundary, evidence interpretation, and remaining work
-are maintained in the README sections [Safety and authority](README.md#safety-and-authority)
-and [Limitations and next evidence](README.md#limitations-and-next-evidence).
+are maintained in the README sections
+[Security and limitations](README.md#security-and-limitations) and
+[Evaluation status](README.md#evaluation-status).

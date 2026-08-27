@@ -207,12 +207,15 @@ def test_check_result_diagnostics_are_optional_unique_identifiers():
         status=CheckStatus.FAILED,
         receipt=receipt(1),
         summary="A bounded Jest clause failed.",
-        diagnostic_ids=("jest_mock_not_reset", "jest_ordered_call_proof"),
+        diagnostic_ids=(
+            "candidate_jest_execution_failure",
+            "controller_jest_stale_response",
+        ),
     )
 
     assert result.diagnostic_ids == (
-        "jest_mock_not_reset",
-        "jest_ordered_call_proof",
+        "candidate_jest_execution_failure",
+        "controller_jest_stale_response",
     )
     assert (
         CheckResult(
@@ -229,7 +232,10 @@ def test_check_result_diagnostics_are_optional_unique_identifiers():
         CheckResult.model_validate(
             {
                 **result.model_dump(),
-                "diagnostic_ids": ("jest_mock_not_reset", "jest_mock_not_reset"),
+                "diagnostic_ids": (
+                    "candidate_jest_execution_failure",
+                    "candidate_jest_execution_failure",
+                ),
             }
         )
 
@@ -308,7 +314,7 @@ def test_implementation_intervention_is_digest_bound_and_non_authorizing():
         manifest_id="manifest-1",
         manifest_digest="sha256:" + "b" * 64,
         base_revision="abcdef0",
-        agent_version="engineer/v11",
+        agent_version="engineer/v12",
         agent_definition_digest="sha256:" + "c" * 64,
         input_evidence_digest=input_digest,
         reason="The frozen implementation evidence is incomplete.",

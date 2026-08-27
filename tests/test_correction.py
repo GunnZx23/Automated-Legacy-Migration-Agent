@@ -2,7 +2,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from legacy_migration_agent.agent_runtime.correction import CorrectionAction, CorrectionController
+from legacy_migration_agent.agent_runtime.correction import (
+    CorrectionAction,
+    CorrectionController,
+    correction_failure_ids,
+    implementation_failure_ids,
+    validation_failure_dependencies,
+)
 from legacy_migration_agent.contracts import (
     ChangeSet,
     CheckResult,
@@ -145,6 +151,83 @@ def failed_report(
     )
 
 
+def lwc_load_failure_artifacts() -> tuple[MigrationManifest, ChangeSet, ValidationReport]:
+    manifest, change_set, report = artifacts()
+    commands = (
+        ValidationCommand(
+            check_id="salesforce-candidate-contract",
+            command_id="salesforce-candidate-contract",
+            purpose="Validate the bounded generated Salesforce candidate.",
+        ),
+        ValidationCommand(
+            check_id="salesforce-lwc-jest",
+            command_id="salesforce-lwc-jest",
+            purpose="Run candidate-authored LWC Jest.",
+        ),
+        ValidationCommand(
+            check_id="salesforce-lwc-controller-jest",
+            command_id="salesforce-lwc-controller-jest",
+            purpose="Run controller-owned LWC Jest.",
+        ),
+    )
+    manifest = manifest.model_copy(update={"validation_plan": commands})
+    base_receipt = report.results[0].receipt
+    assert base_receipt is not None
+    summaries = (
+        (
+            "Candidate contract failed; "
+            "failure-code=salesforce_lwc_javascript_contract; "
+            "diagnostics=salesforce_lwc_javascript_contract; exit=1."
+        ),
+        (
+            "LWC Jest failed terminally suites=1 tests=0 failed-suites=1 "
+            "failed-tests=0; stdout=sha256:receipt."
+        ),
+        (
+            "Controller-owned LWC behavior Jest failed terminally suites=1 tests=0 "
+            "failed-suites=1 failed-tests=0; stdout=sha256:receipt."
+        ),
+    )
+    diagnostics = (
+        ("salesforce_lwc_javascript_contract",),
+        ("candidate_jest_execution_failure",),
+        ("controller_jest_execution_failure",),
+    )
+    results = tuple(
+        CheckResult(
+            check_id=command.check_id,
+            command_id=command.command_id,
+            required=True,
+            status=CheckStatus.FAILED,
+            receipt=base_receipt.model_copy(
+                update={
+                    "receipt_id": f"receipt-{command.check_id}",
+                    "tool_id": command.command_id,
+                    "exit_code": 1,
+                }
+            ),
+            summary=summary,
+            diagnostic_ids=diagnostic_ids,
+        )
+        for command, summary, diagnostic_ids in zip(
+            commands,
+            summaries,
+            diagnostics,
+            strict=True,
+        )
+    )
+    return (
+        manifest,
+        change_set,
+        report.model_copy(
+            update={
+                "results": results,
+                "disposition": ValidationDisposition.RECOVERABLE_FAILURE,
+            }
+        ),
+    )
+
+
 def test_ready_report_is_complete_without_retry():
     manifest, change_set, report = artifacts()
     decision = CorrectionController().evaluate(manifest, change_set, report)
@@ -201,6 +284,87 @@ def test_recoverable_failure_preserves_ordered_typed_diagnostics() -> None:
     )
 
 
+def test_lwc_load_failure_clusters_exact_zero_test_cascade_without_mutating_report() -> None:
+    manifest, change_set, report = lwc_load_failure_artifacts()
+    raw_report = report.model_dump(mode="json")
+    raw_digest = artifact_digest(report)
+
+    dependencies = validation_failure_dependencies(report)
+    decision = CorrectionController().evaluate(manifest, change_set, report)
+
+    assert dependencies == {
+        "salesforce-lwc-jest": "salesforce-candidate-contract",
+        "salesforce-lwc-controller-jest": "salesforce-candidate-contract",
+    }
+    assert correction_failure_ids(report) == (
+        "salesforce-candidate-contract",
+        "salesforce_lwc_javascript_contract",
+    )
+    assert implementation_failure_ids(report) == (
+        "salesforce-candidate-contract",
+        "salesforce_lwc_javascript_contract",
+    )
+    assert decision.failed_check_ids == correction_failure_ids(report)
+    assert report.model_dump(mode="json") == raw_report
+    assert artifact_digest(report) == raw_digest
+    assert tuple(result.status for result in report.results) == (
+        CheckStatus.FAILED,
+        CheckStatus.FAILED,
+        CheckStatus.FAILED,
+    )
+
+
+def test_lwc_load_failure_does_not_cluster_partial_or_nonzero_test_evidence() -> None:
+    _manifest, _change_set, report = lwc_load_failure_artifacts()
+    candidate_jest = report.results[1].model_copy(
+        update={
+            "summary": (
+                "LWC Jest failed terminally suites=1 tests=1 failed-suites=1 "
+                "failed-tests=1; stdout=sha256:receipt."
+            )
+        }
+    )
+    report = report.model_copy(
+        update={"results": (report.results[0], candidate_jest, report.results[2])}
+    )
+
+    assert validation_failure_dependencies(report) == {}
+    assert correction_failure_ids(report) == (
+        "salesforce-candidate-contract",
+        "salesforce_lwc_javascript_contract",
+        "salesforce-lwc-jest",
+        "candidate_jest_execution_failure",
+        "salesforce-lwc-controller-jest",
+        "controller_jest_execution_failure",
+    )
+
+
+def test_zero_test_results_remain_independent_without_javascript_or_template_root() -> None:
+    _manifest, _change_set, report = lwc_load_failure_artifacts()
+    unrelated_root = report.results[0].model_copy(
+        update={
+            "summary": (
+                "Candidate contract failed; failure-code=salesforce_lwc_styles_contract; "
+                "diagnostics=salesforce_lwc_styles_contract; exit=1."
+            ),
+            "diagnostic_ids": ("salesforce_lwc_styles_contract",),
+        }
+    )
+    report = report.model_copy(
+        update={"results": (unrelated_root, report.results[1], report.results[2])}
+    )
+
+    assert validation_failure_dependencies(report) == {}
+    assert correction_failure_ids(report) == (
+        "salesforce-candidate-contract",
+        "salesforce_lwc_styles_contract",
+        "salesforce-lwc-jest",
+        "candidate_jest_execution_failure",
+        "salesforce-lwc-controller-jest",
+        "controller_jest_execution_failure",
+    )
+
+
 def test_environment_unavailable_stops_without_consuming_retry():
     manifest, change_set, _ = artifacts()
     decision = CorrectionController().evaluate(
@@ -252,6 +416,52 @@ def test_controller_toolchain_failure_does_not_offer_engineer_retry() -> None:
     assert decision.action is CorrectionAction.STOP_ENVIRONMENT
     assert decision.next_attempt is None
     assert decision.failed_check_ids == (toolchain_id,)
+
+
+@pytest.mark.parametrize(
+    "diagnostic_id",
+    ("salesforce_candidate_inventory", "salesforce_candidate_unclassified"),
+)
+def test_structurally_invalid_candidate_does_not_offer_impossible_engineer_retry(
+    diagnostic_id: str,
+) -> None:
+    manifest, change_set, report = artifacts()
+    command_id = "salesforce-candidate-contract"
+    manifest = manifest.model_copy(
+        update={
+            "validation_plan": (
+                ValidationCommand(
+                    check_id=command_id,
+                    command_id=command_id,
+                    purpose="Validate the bounded generated Salesforce candidate.",
+                ),
+            )
+        }
+    )
+    original = report.results[0]
+    assert original.receipt is not None
+    failed = CheckResult(
+        check_id=command_id,
+        command_id=command_id,
+        required=True,
+        status=CheckStatus.FAILED,
+        receipt=original.receipt.model_copy(update={"tool_id": command_id, "exit_code": 1}),
+        summary=f"Candidate contract failed; failure-code={diagnostic_id}; exit=1.",
+        diagnostic_ids=(diagnostic_id,),
+    )
+    report = report.model_copy(
+        update={
+            "results": (failed,),
+            "disposition": ValidationDisposition.RECOVERABLE_FAILURE,
+        }
+    )
+
+    assert implementation_failure_ids(report) == ()
+    decision = CorrectionController().evaluate(manifest, change_set, report)
+    assert decision.action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL
+    assert decision.next_attempt is None
+    assert decision.requires_new_manifest_approval is True
+    assert decision.requires_new_manifest_digest is True
 
 
 def test_invalid_plan_requires_new_manifest_approval():

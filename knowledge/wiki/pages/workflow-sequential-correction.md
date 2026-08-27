@@ -12,5 +12,22 @@ After the Engineer and Validator complete, classify the terminal report. One
 recoverable implementation failure may request a same-manifest retry. An
 invalid plan requires a new manifest digest and a new human approval. An
 unavailable environment or an exhausted attempt budget stops visibly. The
-current reference workflow records the correction outcome for human review; it
-does not autonomously execute a retry, replan, commit, or deployment.
+current workflow never authorizes a retry, replan, commit, or deployment merely
+because validation failed.
+
+A proposed second attempt is a correction of the existing candidate, not a
+fresh migration. Before invoking the Engineer, derive a bounded Wiki query from
+the controller-owned diagnostic IDs, retrieve the directly relevant curated
+page, and record a digest-bound trace containing the query, catalog digest,
+selected page and excerpt digests, prior-candidate digest, and correction-request
+digest. Fail closed when retrieval returns no relevant hit; do not ask the same
+model to guess from the same unchanged context.
+
+After exact human approval, give the Engineer the prior candidate, failed check
+summaries, and retrieved correction evidence. It should update only the files
+needed for those diagnostics while carrying all other candidate files forward
+unchanged. Require a nonempty changed-file delta against attempt one and reject
+an unchanged resubmission. Bind attempt-two evidence to both candidate digests,
+then rerun the required dependent checks so a narrow patch cannot hide a
+regression. Tie resolution is deterministic by Wiki score and stable page ID;
+ambiguous or conflicting guidance returns to human review.

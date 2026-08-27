@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "CheckStatus": {
+      "enum": [
+        "passed",
+        "failed",
+        "unavailable",
+        "nonterminal"
+      ],
+      "title": "CheckStatus",
+      "type": "string"
+    },
+    "SalesforceAvailabilityReason": {
+      "enum": [
+        "authentication",
+        "network",
+        "tool_unavailable"
+      ],
+      "title": "SalesforceAvailabilityReason",
+      "type": "string"
+    },
+    "SalesforcePlatformStatus": {
+      "enum": [
+        "queued",
+        "pending",
+        "in_progress",
+        "submitted",
+        "canceling",
+        "succeeded",
+        "passed",
+        "failed",
+        "canceled",
+        "aborted",
+        "unavailable"
+      ],
+      "title": "SalesforcePlatformStatus",
+      "type": "string"
+    },
+    "SalesforceTestLevel": {
+      "description": "Salesforce Metadata API test levels accepted by current CLI commands.",
+      "enum": [
+        "NoTestRun",
+        "RunSpecifiedTests",
+        "RunLocalTests",
+        "RunAllTestsInOrg",
+        "RunRelevantTests"
+      ],
+      "title": "SalesforceTestLevel",
+      "type": "string"
+    },
+    "SalesforceValidationCommand": {
+      "description": "The two report commands whose JSON contracts this adapter understands.",
+      "enum": [
+        "sf_project_deploy_report",
+        "sf_apex_get_test"
+      ],
+      "title": "SalesforceValidationCommand",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict, sanitized evidence derived from one completed local process.",
+  "properties": {
+    "availability_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SalesforceAvailabilityReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "check_status": {
+      "$ref": "#/$defs/CheckStatus"
+    },
+    "command": {
+      "$ref": "#/$defs/SalesforceValidationCommand"
+    },
+    "command_exit_code": {
+      "maximum": 255,
+      "minimum": -255,
+      "title": "Command Exit Code",
+      "type": "integer"
+    },
+    "component_failures": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Component Failures"
+    },
+    "evidence_binding": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Evidence Binding",
+      "type": "string"
+    },
+    "job_id": {
+      "title": "Job Id",
+      "type": "string"
+    },
+    "local_process_exited": {
+      "const": true,
+      "default": true,
+      "title": "Local Process Exited",
+      "type": "boolean"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "org_alias": {
+      "title": "Org Alias",
+      "type": "string"
+    },
+    "platform_status": {
+      "$ref": "#/$defs/SalesforcePlatformStatus"
+    },
+    "platform_terminal": {
+      "title": "Platform Terminal",
+      "type": "boolean"
+    },
+    "test_level": {
+      "$ref": "#/$defs/SalesforceTestLevel"
+    },
+    "tests_completed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tests Completed"
+    },
+    "tests_failed": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tests Failed"
+    },
+    "tests_total": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tests Total"
+    }
+  },
+  "required": [
+    "command",
+    "org_alias",
+    "job_id",
+    "manifest_digest",
+    "test_level",
+    "command_exit_code",
+    "platform_status",
+    "check_status",
+    "platform_terminal",
+    "evidence_binding"
+  ],
+  "title": "SalesforceValidationEvidence",
+  "type": "object"
+}

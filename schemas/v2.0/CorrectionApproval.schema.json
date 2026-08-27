@@ -1,0 +1,108 @@
+{
+  "$defs": {
+    "CorrectionAction": {
+      "enum": [
+        "complete",
+        "retry_implementation",
+        "replan_with_new_approval",
+        "stop_environment",
+        "stop_exhausted"
+      ],
+      "title": "CorrectionAction",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Explicit human authorization for one exact bounded retry.\n\nThis approval cannot authorize a replan, scope expansion, external action,\nor a third attempt.  It is deliberately bound to the previous terminal\nevidence and to the already approved manifest bytes.",
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/CorrectionAction"
+    },
+    "authorized_attempt": {
+      "minimum": 2,
+      "title": "Authorized Attempt",
+      "type": "integer"
+    },
+    "base_revision": {
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "change_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Change Set Digest",
+      "type": "string"
+    },
+    "comment": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Comment",
+      "type": "string"
+    },
+    "completed_attempt": {
+      "minimum": 1,
+      "title": "Completed Attempt",
+      "type": "integer"
+    },
+    "correction_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Correction Id",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "manifest_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Manifest Id",
+      "type": "string"
+    },
+    "report_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Report Digest",
+      "type": "string"
+    },
+    "report_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "reviewer": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Reviewer",
+      "type": "string"
+    }
+  },
+  "required": [
+    "correction_id",
+    "request_id",
+    "manifest_id",
+    "manifest_digest",
+    "report_id",
+    "report_digest",
+    "change_set_digest",
+    "base_revision",
+    "completed_attempt",
+    "authorized_attempt",
+    "action",
+    "reviewer"
+  ],
+  "title": "CorrectionApproval",
+  "type": "object"
+}

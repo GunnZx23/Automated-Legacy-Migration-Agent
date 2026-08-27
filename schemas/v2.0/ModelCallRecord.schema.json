@@ -1,0 +1,210 @@
+{
+  "$defs": {
+    "LiveModelApproval": {
+      "additionalProperties": false,
+      "description": "Explicit operator gate for sending capstone context to a live provider.",
+      "properties": {
+        "allow_live_api": {
+          "const": true,
+          "title": "Allow Live Api",
+          "type": "boolean"
+        },
+        "allow_prompt_data_sharing": {
+          "const": true,
+          "title": "Allow Prompt Data Sharing",
+          "type": "boolean"
+        },
+        "approved_by": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Approved By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "allow_live_api",
+        "allow_prompt_data_sharing",
+        "approved_by"
+      ],
+      "title": "LiveModelApproval",
+      "type": "object"
+    },
+    "ModelUsageEvidence": {
+      "additionalProperties": false,
+      "description": "Sanitized provider telemetry for one completed structured response.",
+      "properties": {
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "latency_ms": {
+          "minimum": 0,
+          "title": "Latency Ms",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "provider_usage_reported": {
+          "title": "Provider Usage Reported",
+          "type": "boolean"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        }
+      },
+      "required": [
+        "latency_ms",
+        "provider_usage_reported"
+      ],
+      "title": "ModelUsageEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Digest-only public evidence for one structured model invocation.",
+  "properties": {
+    "agent_definition_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Agent Definition Digest",
+      "type": "string"
+    },
+    "agent_version": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Agent Version",
+      "type": "string"
+    },
+    "execution_boundary": {
+      "anyOf": [
+        {
+          "enum": [
+            "offline_recorded",
+            "remote_no_store",
+            "local_loopback"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Explicit invocation boundary. Missing only on legacy records, where live_invocation determines remote versus offline semantics.",
+      "title": "Execution Boundary"
+    },
+    "input_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Input Digest",
+      "type": "string"
+    },
+    "live_approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LiveModelApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "live_invocation": {
+      "title": "Live Invocation",
+      "type": "boolean"
+    },
+    "model_id": {
+      "maxLength": 300,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "model_revision": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Provider revision observed around the completed call when the configured model ID is mutable.",
+      "title": "Model Revision"
+    },
+    "output_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Output Digest",
+      "type": "string"
+    },
+    "provider": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Provider",
+      "type": "string"
+    },
+    "store_false_sent": {
+      "title": "Store False Sent",
+      "type": "boolean"
+    },
+    "system_prompt_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "System Prompt Digest",
+      "type": "string"
+    },
+    "usage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModelUsageEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "provider",
+    "model_id",
+    "agent_version",
+    "agent_definition_digest",
+    "live_invocation",
+    "store_false_sent",
+    "system_prompt_digest",
+    "input_digest",
+    "output_digest"
+  ],
+  "title": "ModelCallRecord",
+  "type": "object"
+}

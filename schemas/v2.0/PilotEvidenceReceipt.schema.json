@@ -1,0 +1,404 @@
+{
+  "$defs": {
+    "PilotAgentRunObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_model_calls": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Completed Model Calls",
+          "type": "integer"
+        },
+        "completed_model_latency_ms": {
+          "minimum": 0,
+          "title": "Completed Model Latency Ms",
+          "type": "integer"
+        },
+        "completed_role_calls": {
+          "items": {
+            "enum": [
+              "architect",
+              "engineer-1",
+              "validator-1",
+              "engineer-2",
+              "validator-2"
+            ],
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Completed Role Calls",
+          "type": "array"
+        },
+        "execution_attempt": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Execution Attempt",
+          "type": "integer"
+        },
+        "external_platform_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "External Platform Evaluated",
+          "type": "boolean"
+        },
+        "human_acceptance_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "Human Acceptance Evaluated",
+          "type": "boolean"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "manifest_gate_performed": {
+          "title": "Manifest Gate Performed",
+          "type": "boolean"
+        },
+        "model_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "model_quality_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "Model Quality Evaluated",
+          "type": "boolean"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "provider_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "run_status_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Run Status Digest",
+          "type": "string"
+        },
+        "semantic_conformance_evaluated": {
+          "const": false,
+          "default": false,
+          "title": "Semantic Conformance Evaluated",
+          "type": "boolean"
+        },
+        "terminal_disposition": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Terminal Disposition",
+          "type": "string"
+        },
+        "thread_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Thread Id",
+          "type": "string"
+        },
+        "token_usage_complete": {
+          "title": "Token Usage Complete",
+          "type": "boolean"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        },
+        "workflow_status": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Workflow Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "thread_id",
+        "request_id",
+        "request_digest",
+        "provider_id",
+        "model_id",
+        "workflow_status",
+        "terminal_disposition",
+        "execution_attempt",
+        "run_status_digest",
+        "manifest_gate_performed",
+        "completed_role_calls",
+        "completed_model_calls",
+        "completed_model_latency_ms",
+        "token_usage_complete"
+      ],
+      "title": "PilotAgentRunObservation",
+      "type": "object"
+    },
+    "PilotArtifactBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_kind": {
+          "enum": [
+            "tree",
+            "file"
+          ],
+          "title": "Artifact Kind",
+          "type": "string"
+        },
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "source_tree",
+            "fixture_contract",
+            "run_evidence"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "artifact_kind",
+        "digest"
+      ],
+      "title": "PilotArtifactBinding",
+      "type": "object"
+    },
+    "PilotBoundaryState": {
+      "enum": [
+        "not_invoked",
+        "invoked",
+        "unknown"
+      ],
+      "title": "PilotBoundaryState",
+      "type": "string"
+    },
+    "PilotClaim": {
+      "enum": [
+        "agent_workflow_reached_ready_for_human_review",
+        "agent_workflow_terminal_failure_observed",
+        "agent_workflow_decision_required_observed",
+        "agent_workflow_environment_unavailable_observed"
+      ],
+      "title": "PilotClaim",
+      "type": "string"
+    },
+    "PilotEvidenceKind": {
+      "enum": [
+        "agent_run"
+      ],
+      "title": "PilotEvidenceKind",
+      "type": "string"
+    },
+    "PilotExecutionBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "authentication": {
+          "$ref": "#/$defs/PilotBoundaryState"
+        },
+        "external_authority_granted": {
+          "const": false,
+          "default": false,
+          "title": "External Authority Granted",
+          "type": "boolean"
+        },
+        "external_platform": {
+          "$ref": "#/$defs/PilotBoundaryState"
+        },
+        "human_gate": {
+          "$ref": "#/$defs/PilotBoundaryState"
+        },
+        "provider": {
+          "$ref": "#/$defs/PilotBoundaryState"
+        },
+        "subprocess": {
+          "$ref": "#/$defs/PilotBoundaryState"
+        }
+      },
+      "required": [
+        "provider",
+        "external_platform",
+        "authentication",
+        "subprocess",
+        "human_gate"
+      ],
+      "title": "PilotExecutionBoundary",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "ResultStatus": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "decision_required",
+        "unavailable",
+        "not_performed"
+      ],
+      "title": "ResultStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "agent_run_observation": {
+      "$ref": "#/$defs/PilotAgentRunObservation"
+    },
+    "bindings": {
+      "items": {
+        "$ref": "#/$defs/PilotArtifactBinding"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Bindings",
+      "type": "array"
+    },
+    "boundary": {
+      "$ref": "#/$defs/PilotExecutionBoundary"
+    },
+    "case_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "cell_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/PilotClaim"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Claims",
+      "type": "array"
+    },
+    "evidence_kind": {
+      "$ref": "#/$defs/PilotEvidenceKind"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 2,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "receipt_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "const": "legacy-migration-pilot-v1",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ResultStatus"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "registry_id",
+    "registry_digest",
+    "cell_id",
+    "case_id",
+    "platform",
+    "evidence_kind",
+    "status",
+    "claims",
+    "bindings",
+    "boundary",
+    "agent_run_observation",
+    "limitations"
+  ],
+  "title": "PilotEvidenceReceipt",
+  "type": "object"
+}

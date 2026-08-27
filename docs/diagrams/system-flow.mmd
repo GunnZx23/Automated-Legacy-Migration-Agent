@@ -1,12 +1,15 @@
 flowchart TB
     S[Immutable source snapshot] --> G[Revision-bound dependency graph]
-    K[Curated versioned Agentic LLM Wiki] --> A[Architect model]
+    S -->|exact bounded source files| A[Architect model]
+    K[Curated versioned Agentic LLM Wiki] --> T[Persisted Architect RetrievalTrace and digest]
+    T --> A
     G --> A
     A --> P[ArchitectManifestProposal]
     P --> C[Controller policy and canonical manifest]
     C --> I{Exact human manifest interrupt}
     I -->|reject or modify| X[Safe stop; no candidate]
-    I -->|approve digest| E[Engineer model returns full-file plan]
+    I -->|approve digest| E[Engineer attempt one returns full eleven-file plan]
+    T -->|exact planning handoff| E
     E --> W[Controller applies exact paths in isolated workspace]
     W --> D[Disk-derived ChangeSet]
     D --> V[Controller-owned allowlisted validation]
@@ -14,8 +17,13 @@ flowchart TB
     R --> Q[Validator evidence-only advisory]
     Q --> B{Controller evidence classification}
     B -->|ready for human review| H[Independent final-review stop]
-    B -->|recoverable attempt one| C2{Separate exact correction approval}
-    C2 -->|approved attempt two| E
+    B -->|recoverable attempt one| CT[Separate targeted correction RetrievalTrace and digest]
+    CT --> C2{Separate exact correction approval}
+    C2 -->|approved attempt two| E2[Engineer returns changed-file delta only]
+    T -.->|baseline trace retained| E2
+    CT --> E2
+    E2 --> W2[Overlay delta on immutable prior plan]
+    W2 --> D
     C2 -->|not approved| X2[Safe stop; retry not executed]
     B -->|plan invalid| N[Stop; new Architect request and manifest required]
     B -->|environment unavailable or retry exhausted| U[Stop with unavailable or failed evidence]

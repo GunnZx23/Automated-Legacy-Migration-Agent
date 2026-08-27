@@ -5,31 +5,10 @@
   "require_full_completion": false,
   "cases": [
     {
-      "case_id": "salesforce-static-fixture-contract",
-      "platform": "salesforce",
-      "evaluation_mode": "local_static",
-      "source_path": "fixtures/salesforce/account-contact-explorer/input",
-      "candidate_path": "fixtures/salesforce/account-contact-explorer/expected",
-      "fixture_contract_path": "fixtures/salesforce/account-contact-explorer/fixture.yaml",
-      "expected_provider_id": null,
-      "expected_model_id": null
-    },
-    {
-      "case_id": "mulesoft-static-fixture-contract",
-      "platform": "mulesoft",
-      "evaluation_mode": "local_static",
-      "source_path": "fixtures/mulesoft/customer-status-api/input",
-      "candidate_path": "fixtures/mulesoft/customer-status-api/expected",
-      "fixture_contract_path": "fixtures/mulesoft/customer-status-api/fixture.yaml",
-      "expected_provider_id": null,
-      "expected_model_id": null
-    },
-    {
       "case_id": "salesforce-qwen-end-to-end",
       "platform": "salesforce",
       "evaluation_mode": "agent_run",
       "source_path": "fixtures/salesforce/account-contact-explorer/input",
-      "candidate_path": null,
       "fixture_contract_path": "fixtures/salesforce/account-contact-explorer/fixture.yaml",
       "expected_provider_id": "ollama",
       "expected_model_id": "qwen3.8:latest"
@@ -39,7 +18,6 @@
       "platform": "mulesoft",
       "evaluation_mode": "agent_run",
       "source_path": "fixtures/mulesoft/customer-status-api/input",
-      "candidate_path": null,
       "fixture_contract_path": "fixtures/mulesoft/customer-status-api/fixture.yaml",
       "expected_provider_id": "ollama",
       "expected_model_id": "qwen3.8:latest"

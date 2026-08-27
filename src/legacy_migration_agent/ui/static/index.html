@@ -40,8 +40,9 @@
           <p class="eyebrow">Conversation-led migration</p>
           <h1 id="hero-title">Turn a legacy slice into reviewable code.</h1>
           <p class="hero-copy">
-            Ask the agent to migrate a bounded legacy system. Work with the Architect, approve an
-            exact plan, then inspect the Engineer's isolated candidate and the Validator's evidence.
+            Ask the agent to migrate a bounded legacy system. Review the Architect's semantic
+            recommendation, approve the Controller-expanded manifest, then inspect the Engineer's
+            isolated candidate, Controller-owned checks, and Validator advisory.
           </p>
         </div>
         <div class="boundary-card" role="note">
@@ -81,7 +82,7 @@
           <p id="transcript-note" class="transcript-note">
             Model prose is advisory. This transcript shows public structured outputs and harness
             events. Private reasoning is not requested or shown. Chat with the Architect first,
-            then explicitly start a human-gated migration when the request is ready.
+            then explicitly start a human-gated migration when the selected scenario is ready.
           </p>
 
           <div
@@ -117,20 +118,6 @@
             </div>
           </div>
 
-          <section id="launch-preview" class="launch-preview" aria-labelledby="launch-preview-title" hidden>
-            <div class="launch-preview-heading">
-              <div>
-                <p class="step-label">Ready for explicit launch</p>
-                <h3 id="launch-preview-title">Refined request to launch</h3>
-              </div>
-              <span id="launch-preview-platform" class="boundary-tag"></span>
-            </div>
-            <p id="launch-preview-request" class="launch-preview-request"></p>
-            <p class="launch-preview-help">
-              Review this exact text before starting the migration. Keep chatting if it needs correction.
-            </p>
-          </section>
-
           <form id="request-form" class="composer">
             <fieldset>
               <legend>Optional target and example</legend>
@@ -156,13 +143,6 @@
                   Ask a question or describe the legacy system. Enter sends; Shift+Enter adds a line.
                 </p>
                 <div class="composer-actions">
-                  <button
-                    id="launch-button"
-                    class="button launch-button"
-                    type="button"
-                    title="Generate a digest-bound migration plan from the refined request"
-                    hidden
-                  >Start migration</button>
                   <button id="send-button" class="button button-primary send-button" type="submit" disabled>
                     <span class="button-label">Send</span>
                     <span class="send-icon" aria-hidden="true">↑</span>
@@ -186,22 +166,22 @@
             <ol id="harness-stages" class="harness-stages" aria-label="Migration workflow stages">
               <li class="harness-stage is-ready" data-stage="architect">
                 <span class="stage-marker" aria-hidden="true">01</span>
-                <div><strong>Architect</strong><span>Graph scan + LLM Wiki retrieval</span></div>
+                <div><strong>Controller → Architect</strong><span>Exact source + graph/Wiki evidence → semantic recommendation</span></div>
                 <em>Ready</em>
               </li>
               <li class="harness-stage is-ready" data-stage="approval">
                 <span class="stage-marker" aria-hidden="true">02</span>
-                <div><strong>Approval gate</strong><span>Digest-bound human decision</span></div>
+                <div><strong>Manifest approval</strong><span>Controller expansion + digest-bound human decision</span></div>
                 <em>Waiting</em>
               </li>
               <li class="harness-stage is-ready" data-stage="engineer">
                 <span class="stage-marker" aria-hidden="true">03</span>
-                <div><strong>Engineer</strong><span>Isolated candidate workspace</span></div>
+                <div><strong>Engineer</strong><span>Proposes isolated file content</span></div>
                 <em>Waiting</em>
               </li>
               <li class="harness-stage is-ready" data-stage="validator">
                 <span class="stage-marker" aria-hidden="true">04</span>
-                <div><strong>Validator</strong><span>Deterministic checks + evidence</span></div>
+                <div><strong>Controller checks + Validator</strong><span>Authoritative checks → non-authoritative advisory</span></div>
                 <em>Waiting</em>
               </li>
             </ol>
@@ -212,7 +192,7 @@
               <p id="failure-guidance"></p>
               <dl id="failure-facts"></dl>
               <button id="focus-request-button" class="diagnostic-action" type="button">
-                Refine and start a new run
+                Discuss and start a new run
               </button>
             </div>
 
@@ -248,7 +228,7 @@
               <section id="model-activity-section" class="model-activity-section" hidden>
                 <div class="model-activity-heading">
                   <div>
-                    <span class="diagnostic-label">Public reasoning trace</span>
+                    <span class="diagnostic-label">Public model activity</span>
                     <h3>Typed model activity</h3>
                   </div>
                   <span id="model-call-count"></span>
@@ -262,12 +242,12 @@
 
               <details class="evidence-disclosure" open>
                 <summary>
-                  <span>Dependency &amp; retrieval evidence</span>
-                  <small>Inspectable inputs</small>
+                  <span>Controller evidence preparation</span>
+                  <small>Exact source + dependency graph + Wiki inputs</small>
                 </summary>
                 <div class="evidence-content">
                   <p id="graph-summary" class="muted">Evidence will appear here.</p>
-                  <h3>LLM Wiki retrieval</h3>
+                  <h3>Controller-retrieved LLM Wiki evidence</h3>
                   <ul id="wiki-hits" class="wiki-list empty-list">
                     <li>No retrieval evidence yet</li>
                   </ul>
@@ -276,12 +256,12 @@
 
               <details class="evidence-disclosure">
                 <summary>
-                  <span id="manifest-paths-title">Proposed manifest paths</span>
+                  <span id="manifest-paths-title">Controller-expanded manifest paths</span>
                   <small>Scope boundary</small>
                 </summary>
                 <div class="evidence-content">
                   <ul id="manifest-paths" class="path-list empty-list">
-                    <li>Available after Architect analysis</li>
+                    <li>Available after Controller manifest expansion</li>
                   </ul>
                 </div>
               </details>
@@ -345,6 +325,7 @@
                     <span aria-hidden="true">↳</span> Save candidate to output/
                   </button>
                 </div>
+                <p id="candidate-review-status" class="candidate-review-status" role="status"></p>
                 <p id="export-status" class="export-status" role="status" hidden></p>
               </div>
             </div>

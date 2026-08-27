@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "SalesforceTestLevel": {
+      "description": "Salesforce Metadata API test levels accepted by current CLI commands.",
+      "enum": [
+        "NoTestRun",
+        "RunSpecifiedTests",
+        "RunLocalTests",
+        "RunAllTestsInOrg",
+        "RunRelevantTests"
+      ],
+      "title": "SalesforceTestLevel",
+      "type": "string"
+    },
+    "SalesforceValidationCommand": {
+      "description": "The two report commands whose JSON contracts this adapter understands.",
+      "enum": [
+        "sf_project_deploy_report",
+        "sf_apex_get_test"
+      ],
+      "title": "SalesforceValidationCommand",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Caller-owned identity and artifact binding for one report command.",
+  "properties": {
+    "command": {
+      "$ref": "#/$defs/SalesforceValidationCommand"
+    },
+    "job_id": {
+      "maxLength": 18,
+      "minLength": 15,
+      "title": "Job Id",
+      "type": "string"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "org_alias": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Org Alias",
+      "type": "string"
+    },
+    "test_level": {
+      "$ref": "#/$defs/SalesforceTestLevel"
+    }
+  },
+  "required": [
+    "command",
+    "org_alias",
+    "job_id",
+    "manifest_digest",
+    "test_level"
+  ],
+  "title": "SalesforceValidationContext",
+  "type": "object"
+}

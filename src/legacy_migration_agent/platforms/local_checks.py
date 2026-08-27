@@ -45,7 +45,7 @@ LWC_JEST_TOOLCHAIN_DIGESTS = {
     "jest.config.js": "sha256:e936811245d9d04f6db2157d85ea0cb5b4a62433be47ac7a86bf99cc277ecfdb",
     LWC_JEST_SETUP_PATH: "sha256:55ccbb4ec76acbfca5ee8e18d26ef5dcfa1eaa812a31648b38f2c2443e38e745",
     LWC_CONTROLLER_TEST_PATH: (
-        "sha256:94227c924960d13d73acada1fa3923db7faa9cc3f193b3e305cd76b8b4f5c0bf"
+        "sha256:cfac8b033bc470163fec5eb9498a602752c3070349647a206a35c4bd297fdf08"
     ),
 }
 
@@ -61,11 +61,23 @@ LWC_JAVASCRIPT_PATH = f"{LWC_ROOT}/accountContactExplorer.js"
 LWC_CSS_PATH = f"{LWC_ROOT}/accountContactExplorer.css"
 LWC_METADATA_PATH = f"{LWC_ROOT}/accountContactExplorer.js-meta.xml"
 LWC_TEST_PATH = f"{LWC_ROOT}/__tests__/accountContactExplorer.test.js"
-LWC_ACCOUNTS_DATA_PATH = f"{LWC_ROOT}/__tests__/data/accounts.json"
-LWC_CONTACTS_DATA_PATH = f"{LWC_ROOT}/__tests__/data/contacts.json"
 PERMISSION_SET_PATH = (
     "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml"
 )
+LWC_SEMANTIC_DATA_ROLES: Final[frozenset[str]] = frozenset(
+    {"account-selector", "load-contacts", "contact-results"}
+)
+LWC_SEMANTIC_DATA_STATES: Final[frozenset[str]] = frozenset({"loading", "empty"})
+_LWC_SIMPLE_BINDING_BODY_PATTERN: Final = (
+    r"[A-Za-z_$][A-Za-z0-9_$]{0,63}"
+    r"(?:\.[A-Za-z_$][A-Za-z0-9_$]{0,63}){0,7}"
+)
+_LWC_SEMANTIC_BINDING_PATTERN: Final = rf"\{{\s*{_LWC_SIMPLE_BINDING_BODY_PATTERN}\s*\}}"
+
+APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: Final = "apex_public_interface_annotation_mismatch"
+APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: Final = "apex_controlled_query_error_missing"
+JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: Final = "jest_unapproved_module_target"
+LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: Final = "lwc_template_binding_invalid"
 
 # This is the complete model-writable Salesforce scope. Dependency manifests,
 # dependency locks, and Jest configuration are deliberately absent.
@@ -82,41 +94,20 @@ SALESFORCE_AGENT_OUTPUT_PATHS = tuple(
             LWC_CSS_PATH,
             LWC_METADATA_PATH,
             LWC_TEST_PATH,
-            LWC_ACCOUNTS_DATA_PATH,
-            LWC_CONTACTS_DATA_PATH,
             PERMISSION_SET_PATH,
         )
     )
 )
 
-# Human-reviewable acceptance requirements derived from the deterministic
-# candidate checks below. These describe required behavior and syntax without
-# exposing reviewed target bytes or granting the model any execution authority.
-SALESFORCE_REQUIRED_LWC_BEHAVIOR_TITLES: Final[tuple[str, ...]] = (
-    "renders a blank option followed by wired accounts",
-    "renders a controlled account wire error",
-    "keeps Load disabled until an account is selected",
-    "loads contacts only after the explicit button click",
-    "shows loading state and disables Load while contacts are pending",
-    "ignores a stale response after the selected account changes",
-    "warns and disables Load when the selection is cleared",
-    "renders an empty state after a successful empty result",
-    "renders a controlled contacts error",
-    "uses a safe fallback instead of exposing a generic technical error",
-)
-SALESFORCE_REQUIRED_LWC_BEHAVIORS: Final[frozenset[str]] = frozenset(
-    SALESFORCE_REQUIRED_LWC_BEHAVIOR_TITLES
-)
+# These names belong only to the controller-owned independent behavior suite.
+# Candidate-authored test titles are intentionally unconstrained.
 SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES: Final[tuple[str, ...]] = (
     "controller: renders account options from the wire adapter",
     "controller: renders a safe account-wire failure",
     "controller: enables Load only after account selection",
     "controller: invokes contacts only after the Load action",
     "controller: exposes loading state while contacts are pending",
-    "controller: hides prior empty state during a new request",
     "controller: ignores a response made stale by account change",
-    "controller: ignores an older overlapping Load for the same account",
-    "controller: ignores an older same-account rejection while the current request is pending",
     "controller: clears results and disables Load for blank selection",
     "controller: renders empty state only after an empty success",
     "controller: renders a safe contacts failure",
@@ -131,10 +122,7 @@ SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE: Final[dict[str, str]] = {
             "controller_jest_selection_gate",
             "controller_jest_explicit_load",
             "controller_jest_loading_state",
-            "controller_jest_refresh_state",
             "controller_jest_stale_response",
-            "controller_jest_same_account_overlap",
-            "controller_jest_stale_error",
             "controller_jest_blank_selection",
             "controller_jest_empty_state",
             "controller_jest_contacts_error",
@@ -142,178 +130,94 @@ SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE: Final[dict[str, str]] = {
         strict=True,
     )
 }
+SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: Final = (
+    "controller_jest_execution_failure"
+)
 SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
-    SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE.values()
+    {
+        *SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE.values(),
+        SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
+    }
 )
 
 SALESFORCE_IMPLEMENTATION_CONTRACT = (
     (
-        "Create API 67.0 `public with sharing class AccountContactExplorerController` with "
-        "`@TestVisible` immediately above each exact private declaration `private static final "
-        "Integer MAX_ACCOUNTS = 50` and `private static final Integer MAX_CONTACTS = 100`, plus exactly two "
-        "`@AuraEnabled(cacheable=true)` methods with signatures `public static List<Account> "
-        "getAccounts()` and `public static List<Contact> getContacts(Id accountId)`. Both new "
-        "Apex metadata files must use API 67.0 and Active status."
+        "Write only the eleven approved Salesforce candidate artifacts: manifest/package.xml; "
+        "the AccountContactExplorerController class, generated Apex test and their metadata; the "
+        "accountContactExplorer HTML, JavaScript, CSS, metadata and Jest test; and the "
+        "AccountContactExplorerUser permission set. Keep synthetic Jest data inline in the test "
+        "file rather than generating separate data files. Preserve all legacy Apex, Visualforce "
+        "and project files. Do not generate or modify controller-owned Jest tooling."
     ),
     (
-        "Use exactly two static SOQL queries with `WITH USER_MODE`: accounts select Id and Name, "
-        "`ORDER BY Name LIMIT :MAX_ACCOUNTS`; contacts return an empty List<Contact> when "
-        "`accountId == null`, select only Id, FirstName, LastName, Email and Phone for that "
-        "account, then `ORDER BY LastName, FirstName LIMIT :MAX_CONTACTS`. Throw exactly one "
-        "AuraHandledException with `Accounts could not be read.` and one with `Contacts could "
-        "not be read.`. Include no DML, dynamic Database query, callout, credential or secret."
+        "Use Salesforce API 67.0. Keep the deployment manifest dependency-closed for the new and "
+        "preserved legacy artifacts. Apex metadata must be Active; expose the LWC only on "
+        "lightning__AppPage and lightning__Tab."
     ),
     (
-        "Create AccountContactExplorerControllerTest with @IsTest, @TestSetup, and methods named "
-        "`returnsAccountsInNameOrder`, `returnsContactsInLastAndFirstNameOrder`, "
-        "`returnsEmptyListForBlankSelection`, and `returnsEmptyListWhenAccountHasNoContacts`. "
-        "Use exactly four Test.startTest/Test.stopTest blocks. Create Accounts with an exact "
-        "`index < AccountContactExplorerController.MAX_ACCOUNTS + 2` loop. Use `Synthetic "
-        "Account 000` as the target, `Synthetic Account 050` for `foreignContact`, and leave "
-        "`Synthetic Account 051` empty. For the target, create exactly MAX_CONTACTS + 2 Contacts "
-        "total: `Alpha Tie`/`Ada`, `Alpha Tie`/`Zoe`, 98 records whose LastName is exactly "
-        "`'Synthetic ' + paddedNumber(index)`, and two later-sorting records whose LastName is "
-        "exactly `'Zulu Overflow ' + paddedNumber(index)`."
+        "Expose public with sharing class AccountContactExplorerController with exactly the two "
+        "public static cacheable methods getAccounts() and getContacts(Id accountId). Query only "
+        "the required Account and Contact fields, use static SOQL WITH USER_MODE, filter contacts "
+        "by the selected account, preserve the specified ordering and bounded limits, and return "
+        "an empty list for a null selection before querying. Translate query failures to safe "
+        "nontechnical AuraHandledException messages. Include no DML, dynamic query, callout, "
+        "external endpoint, credential, authorization value or secret. Internal constants, helpers, "
+        "control flow, query layout and safe wording are candidate-owned."
     ),
     (
-        "In AccountContactExplorerControllerTest, query COUNT() in the account test, "
-        "assert `AccountContactExplorerController.MAX_ACCOUNTS + 2`, assert the cap with "
-        "`System.assertEquals(AccountContactExplorerController.MAX_ACCOUNTS, accounts.size())`, "
-        "and prove `Synthetic Account 000`/`Synthetic Account 049` ordering. In the contact test, "
-        "query the target COUNT() with `WHERE AccountId = :accountRecord.Id`, assert "
-        "`AccountContactExplorerController.MAX_CONTACTS + 2`, assert the cap with "
-        "`System.assertEquals(AccountContactExplorerController.MAX_CONTACTS, contacts.size())`, "
-        "prove `Alpha Tie`/`Ada` and `Alpha Tie`/`Zoe` at indexes 0 and 1, prove `Synthetic 097` "
-        "at index 99, and prove foreign exclusion with the valid Apex statement "
-        "`System.assert(!returnedIds.contains(foreignContact.Id))`. Also prove null and "
-        "empty-account behavior. Generate padded names with a "
-        "`private static String paddedNumber(Integer numberValue)` helper using String.valueOf "
-        "and concatenation; do not use String.format or `{0:03}`-style format specifiers. Query "
-        "contacts with `WHERE "
-        "AccountId = :accountRecord.Id`, construct `Map<Id, Contact> "
-        "returnedContactsById = new Map<Id, Contact>(contacts)`, derive `Set<Id> returnedIds = "
-        "returnedContactsById.keySet()`, and assert that foreignContact.Id is absent."
+        "Generate an @IsTest Apex class that exercises both public controller methods with "
+        "isolated synthetic Account and Contact data and meaningful normal, null, and empty-state "
+        "assertions. Do not create User records, query Profile, or use System.runAs to fabricate a "
+        "permission failure; those tests are org-configuration-dependent, while the controller's "
+        "safe exception translation is checked separately. Test names, helpers, setup, counts, "
+        "record values and assertion forms are candidate-owned. Do not use SeeAllData=true, "
+        "dynamic query, callouts, external endpoints, credentials or secrets."
     ),
     (
-        "Build accountContactExplorer.js with `import { LightningElement, wire } from 'lwc'`, "
-        "`extends LightningElement`, the exact Apex imports, `@wire(getAccounts)`, "
-        "`async handleLoad()`, `handleAccountChange`, imperative `getContacts({ accountId })` "
-        "only after Load, `get isLoadDisabled()` and `get showEmptyState()`. Support blank "
-        "selection, warning, loading, populated, empty, account-error and contact-error states "
-        "using safe fallbacks `Accounts could not be loaded.` and `Contacts could not be loaded.`. "
-        "Define top-level `CONTACT_COLUMNS` with four datatable columns for FirstName, LastName, "
-        "Email and Phone, then expose them with `columns = CONTACT_COLUMNS`. Declare the reactive "
-        "account options directly on the component as `accountOptions = [BLANK_ACCOUNT_OPTION]`; "
-        "in the successful `wiredAccounts` data branch, replace the field with an array literal "
-        "whose first element is `BLANK_ACCOUNT_OPTION` and whose remaining elements are spread "
-        "directly from `data.map(...)`, using `this.accountOptions = [BLANK_ACCOUNT_OPTION, "
-        "...data.map(...)]`. Do not stage the mapped options in an intermediate variable, mutate "
-        "the array with `push`, proxy it through `get accountOptions()`/`set accountOptions()`, or "
-        "assign an undeclared `_accountOptions` expando. Initialize `hasLoaded` to false. In "
-        "handleAccountChange, use the direct sequence `this.contacts = [];`, "
-        "`this.isLoading = false;`, `this.hasLoaded = false;`. In handleLoad, after the "
-        "valid-selection guard and before awaiting getContacts, use the direct sequence "
-        "`this.isLoading = true;`, `this.hasLoaded = false;`, `this.contacts = [];`. Set "
-        "it true only after a current successful contacts response, and make empty state depend on "
-        "it. When the account changes, "
-        "invalidate the prior request, "
-        "set isLoading false so another Load is possible, and set `warningMessage` to `Select an "
-        "account before loading contacts.` when the new selection is blank. Repeat that same "
-        "guard and safe warning in handleLoad when no account is selected."
+        "Export a standard-JavaScript LightningElement component whose only static dependencies "
+        "are lwc and the two controller methods. Let the user select an account and explicitly "
+        "load contacts. Render an actual account option whose value is the empty string; a combobox "
+        "placeholder is not that option. Render returned account options, contact results, loading, "
+        "empty and controlled error states. Bind disabled to a disabled-state getter that returns "
+        "true for a blank selection; do not bind a positive canLoadContacts getter directly because "
+        "that reverses the Load gate. Clear state and show safe guidance when selection is cleared; "
+        "and prevent a response made stale by an account change from "
+        "overwriting current state. Do not render the contact-results hook in empty, guidance, or "
+        "controlled-error states. Expose FirstName, LastName, Email and Phone for each result and "
+        "retain a unique key value for structured rows. State fields, helpers, async guards, "
+        "control flow and wording are candidate-owned. Include no dynamic module loading, host or "
+        "test globals, network primitives, reflective execution, external URLs or secrets."
     ),
     (
-        "Implement the stale-response guard with `loadRequestGeneration = 0`: increment "
-        "`this.loadRequestGeneration += 1` once at the start of handleAccountChange so changing "
-        "the selection immediately invalidates an in-flight request. In handleLoad, after the "
-        "valid-selection guard and before awaiting getContacts, use the direct sequence "
-        "`const accountId = this.selectedAccountId;`, "
-        "`this.loadRequestGeneration += 1;`, and "
-        "`const requestGeneration = this.loadRequestGeneration;`. Apply an "
-        "`isCurrentRequest(accountId, requestGeneration)` guard directly inside each of the "
-        "try success, catch error, and finally loading-reset paths. This must reject an older "
-        "overlapping Load for the same account as well as work invalidated by an account change. "
-        "Use only the three approved static imports (`lwc` plus the two exact Apex modules). "
-        "Include no runtime/test-global access, fetch, XMLHttpRequest, WebSocket, eval, dynamic "
-        "module loading, external URL or secret."
+        "Provide an accessible local UI with stable data-role values account-selector, "
+        "load-contacts and contact-results, data-state values loading and empty, and role=alert for "
+        "controlled guidance and errors. Put the account-selector hook on the interactive control. "
+        "Hooks may be literal values or simple property bindings. LWC template bindings must use "
+        "supported simple identifiers or dotted properties; compute expressions in JavaScript. "
+        "Do not use external scripts, frames, imports or URL-backed CSS."
     ),
     (
-        "Use `lightning-combobox` with `value={selectedAccountId}`, `options={accountOptions}` and "
-        "`onchange={handleAccountChange}`, plus `lightning-button` with `onclick={handleLoad}`, "
-        "`disabled={isLoadDisabled}`, `lwc:if={warningMessage}`, `lwc:if={errorMessage}`, "
-        "`lwc:if={isLoading}`, `lwc:elseif={hasContacts}` and "
-        "`lwc:elseif={showEmptyState}` in the template, with role=alert, spinner alternative text "
-        '`Loading contacts`, and datatable `key-field="Id"`. CSS must include :host, .controls, '
-        ".loading-region, .warning and .empty-state with no import or URL. Metadata must be API "
-        "67.0, exposed, and target exactly lightning__AppPage and lightning__Tab."
+        "Generate executable LWC Jest tests for important outcomes, including successful loading, "
+        "controlled failures and stale-response handling. Keep bounded synthetic Account and "
+        "Contact data inline. Test titles, helpers, assertions, mock implementation and source "
+        "order are candidate-owned and validated by the pinned Jest runner. Arrange initial-load "
+        "mock outcomes before createElement and appendChild; do not call non-@api component methods "
+        "through the host element. Do not include skipped "
+        "or focused tests, dangerous Node capabilities, network access, dynamic code execution, "
+        "external endpoints, credentials, authorization values or secrets."
     ),
     (
-        "Create LWC Jest coverage with these ten exact accepted titles: "
-        + "; ".join(SALESFORCE_REQUIRED_LWC_BEHAVIOR_TITLES)
-        + ". Import the fixtures as ACCOUNTS and CONTACTS. Use `createElement` with `{ is: "
-        "AccountContactExplorer }`, inspect component DOM through `element.shadowRoot`, dispatch "
-        "the `lightning-combobox` change event with `detail: { value: accountId }`. Create the "
-        "component before every `getAccounts.emit/error` call; do not emit wire data in a "
-        "beforeEach before a subscriber exists. Use two "
-        "separate ES-module virtual mocks for the exact `.getAccounts` and `.getContacts` Apex "
-        "module imports. The wire mock must return `{ __esModule: true, default: "
-        "createApexTestWireAdapter(jest.fn()) }`, load that factory from the pinned "
-        "`@salesforce/sfdx-lwc-jest` package, and use "
-        "`getAccounts.emit/error`; "
-        "the imperative mock must return `{ __esModule: true, default: jest.fn() }`."
-    ),
-    (
-        "For AccountContactExplorer LWC Jest execution, lexically import `afterEach`, "
-        "`describe`, `expect`, `it`, and `jest` from `@jest/globals`; the pinned runner does not "
-        "inject test globals. Put the "
-        "`require('@salesforce/sfdx-lwc-jest')` inside the getAccounts mock factory so Jest "
-        "hoisting cannot reference an out-of-scope imported adapter. Cover normal, "
-        "empty and error results with `getContacts.mockResolvedValue(CONTACTS)`, "
-        "`getContacts.mockResolvedValue([])` and `getContacts.mockRejectedValue(...)`. Implement "
-        "In the explicit-load test, configure `getContacts.mockResolvedValue(CONTACTS)` before "
-        "clicking Load and assert the rendered datatable data. Implement the stale-response test "
-        "with a `createDeferredPromise` helper, `firstRequest` and "
-        "`secondRequest`; resolve `secondRequest.resolve(CONTACTS)` before `firstRequest.resolve([` "
-        "a record containing `Stale`, prove both ordered call arguments using either nth-call "
-        "matchers or indexed `getContacts.mock.calls`, and prove stale data is not rendered with "
-        "a targeted `not.toContain('Stale')` assertion or a field-level `not.toBe('Stale')` "
-        "assertion. In the loading-state test, query the spinner and assert the pinned stub's "
-        "public property with `expect(spinner.alternativeText).toBe('Loading contacts')` (or "
-        "`.toEqual('Loading contacts')`); do not use "
-        "`spinner.getAttribute('alternative-text')`. Define `async function flushPromises()` "
-        "with two consecutive `await Promise.resolve()` turns and use it after component events "
-        "and every settled, rejected, or manually resolved imperative Apex promise before DOM "
-        "assertions. In `afterEach`, remove every child from `document.body`, then reset "
-        "`getContacts` with `getContacts.mockReset()`. Resetting `getAccounts` with "
-        "`getAccounts.mockReset()` is also supported. The "
-        "safe-fallback test must prove a technical "
-        "`SELECT Id FROM Contact` message is not exposed. Include no skipped, pending or todo test."
-    ),
-    (
-        "Provide sorted JSON fixtures with at least two records each: Accounts have exactly Id and "
-        "Name with 18-character synthetic 001-prefixed IDs; Contacts have exactly Id, FirstName, "
-        "LastName, Email and Phone with 18-character synthetic 003-prefixed IDs and "
-        "@example.invalid emails, sorted by LastName then FirstName."
-    ),
-    (
-        "The permission set must contain exactly read-only Account and Contact object permissions "
-        "with create/edit/delete/modifyAll/viewAll/viewAllFields false; exactly enabled legacy and "
-        "new controller class accesses; readable non-editable Contact.Email and Contact.Phone; "
-        "and exactly one enabled LegacyAccountContactExplorer page access."
-    ),
-    (
-        "manifest/package.xml must use API 67.0 and contain exactly ApexClass members "
-        "AccountContactExplorerController, AccountContactExplorerControllerTest, "
-        "LegacyAccountContactExplorerController and LegacyAccountContactExplorerControllerTest; "
-        "ApexPage LegacyAccountContactExplorer; LightningComponentBundle accountContactExplorer; "
-        "and PermissionSet AccountContactExplorerUser. Preserve every legacy source file and do "
-        "not generate package.json, package-lock.json or jest.config.js."
+        "Keep AccountContactExplorerUser least-privileged and read-only: Account and Contact read "
+        "access only, Contact Email and Phone readable but not editable, only the legacy and new "
+        "controller class accesses, and only the legacy Visualforce page access. Do not grant "
+        "create, edit, delete, modify-all, view-all, view-all-fields, user or administrative "
+        "capabilities."
     ),
 )
 
 SALESFORCE_CANDIDATE_FAILURE_CODES: Final[frozenset[str]] = frozenset(
     {
         "salesforce_candidate_inventory",
-        "salesforce_project_contract",
         "salesforce_manifest_contract",
         "salesforce_apex_controller_metadata_contract",
         "salesforce_apex_test_metadata_contract",
@@ -324,73 +228,32 @@ SALESFORCE_CANDIDATE_FAILURE_CODES: Final[frozenset[str]] = frozenset(
         "salesforce_lwc_styles_contract",
         "salesforce_lwc_metadata_contract",
         "salesforce_lwc_jest_contract",
-        "salesforce_lwc_fixture_contract",
         "salesforce_permission_set_contract",
         "salesforce_candidate_unclassified",
     }
 )
 
-# These identifiers are the complete public vocabulary for candidate-contract
-# diagnostics. They are intentionally code-owned and contain no candidate text.
-SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
-    {
-        "lwc_account_options_reactive_field",
-        "lwc_forbidden_runtime_capability",
-        "lwc_has_loaded_reset",
-        "lwc_request_generation_increment",
-    }
+SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID: Final = (
+    "candidate_jest_execution_failure"
 )
-SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
+# Candidate static checks emit their failed stage or a bounded contract/security
+# diagnostic. Runtime test execution owns the separate Jest execution signal.
+SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
     {
-        "jest_component_before_wire_emit",
-        "jest_dom_cleanup",
-        "jest_exact_behavior_titles",
-        "jest_explicit_load_behavior",
-        "jest_explicit_globals",
-        "jest_fixture_result_coverage",
+        *SALESFORCE_CANDIDATE_FAILURE_CODES,
+        APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+        APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
+        JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
+        LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
+        "lwc_forbidden_runtime_capability",
         "jest_forbidden_capability",
-        "jest_imperative_mock_contract",
-        "jest_loading_behavior",
-        "jest_mock_module_contract",
-        "jest_mock_not_reset",
-        "jest_ordered_call_proof",
-        "jest_spinner_public_property",
-        "jest_settled_render_flush",
-        "jest_required_behavior_coverage",
-        "jest_safe_error_redaction",
-        "jest_shadow_dom_contract",
-        "jest_stale_assertion_vacuous",
-        "jest_stale_render_proof",
-        "jest_stale_resolution_order",
-        "jest_stale_scenario_setup",
-        "jest_wire_adapter_factory_argument",
-        "jest_wire_adapter_api",
-        "jest_wire_adapter_contract",
-        *SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS,
     }
 )
 SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
-    {*SALESFORCE_CANDIDATE_FAILURE_CODES, *SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS}
-)
-# A failed static Jest behavior contract may still be executed inside the
-# controller-owned sandbox to collect richer evidence. Capability violations
-# and missing lexical Jest globals are excluded and remain hard prerequisites.
-SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
-    SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS
-    - {
-        "jest_explicit_globals",
-        "jest_forbidden_capability",
-        "lwc_forbidden_runtime_capability",
+    {
+        *SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS,
+        SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     }
-)
-
-_PRESERVED_LEGACY_PATHS = (
-    "force-app/main/default/pages/LegacyAccountContactExplorer.page",
-    "force-app/main/default/pages/LegacyAccountContactExplorer.page-meta.xml",
-    "force-app/main/default/classes/LegacyAccountContactExplorerController.cls",
-    "force-app/main/default/classes/LegacyAccountContactExplorerController.cls-meta.xml",
-    "force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls",
-    "force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls-meta.xml",
 )
 
 
@@ -406,7 +269,7 @@ class LocalCheckFailure(RuntimeError):
     ) -> None:
         self.failure_code = failure_code
         normalized = tuple(dict.fromkeys(diagnostic_ids))
-        if not set(normalized).issubset(SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS):
+        if not set(normalized).issubset(SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS):
             raise AssertionError("local check uses an unknown diagnostic identifier")
         self.diagnostic_ids = normalized
         super().__init__(message)
@@ -437,7 +300,7 @@ def check_salesforce_candidate(root: Path) -> dict[str, Any]:
     """
 
     root = _root(root)
-    required = (PROJECT_PATH, *_PRESERVED_LEGACY_PATHS, *SALESFORCE_AGENT_OUTPUT_PATHS)
+    required = SALESFORCE_AGENT_OUTPUT_PATHS
     try:
         paths = {relative: _file(root, relative) for relative in required}
     except LocalCheckFailure as exc:
@@ -448,10 +311,6 @@ def check_salesforce_candidate(root: Path) -> dict[str, Any]:
         ) from exc
 
     stages: tuple[tuple[str, Callable[[], None]], ...] = (
-        (
-            "salesforce_project_contract",
-            lambda: _check_project(_json_object(paths[PROJECT_PATH])),
-        ),
         (
             "salesforce_manifest_contract",
             lambda: _check_manifest(_xml_root(paths[MANIFEST_PATH])),
@@ -491,13 +350,6 @@ def check_salesforce_candidate(root: Path) -> dict[str, Any]:
         (
             "salesforce_lwc_jest_contract",
             lambda: _check_lwc_test(_text(paths[LWC_TEST_PATH])),
-        ),
-        (
-            "salesforce_lwc_fixture_contract",
-            lambda: _check_lwc_data(
-                _json_array(paths[LWC_ACCOUNTS_DATA_PATH]),
-                _json_array(paths[LWC_CONTACTS_DATA_PATH]),
-            ),
         ),
         (
             "salesforce_permission_set_contract",
@@ -692,7 +544,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         diagnostic_ids = tuple(
             diagnostic_id
             for diagnostic_id in diagnostic_ids
-            if diagnostic_id in SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS
+            if diagnostic_id in SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS
         )
         print(
             json.dumps(
@@ -779,6 +631,82 @@ def _check_apex_metadata(root: ElementTree.Element) -> None:
     )
 
 
+def _apex_method_body(
+    code: str,
+    *,
+    return_type: str,
+    method_name: str,
+    arguments: str,
+) -> str:
+    """Return one public method body from the comment/string-free Apex view."""
+
+    matches = tuple(
+        re.finditer(
+            rf"public\s+static\s+List\s*<\s*{re.escape(return_type)}\s*>\s+"
+            rf"{re.escape(method_name)}\s*{arguments}\s*\{{",
+            code,
+            re.I,
+        )
+    )
+    _require(len(matches) == 1, f"{method_name} Apex method body")
+    opening = matches[0].end() - 1
+    depth = 0
+    for index in range(opening, len(code)):
+        character = code[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return code[opening + 1 : index]
+            _require(depth >= 0, f"{method_name} Apex method braces")
+    raise LocalCheckFailure(f"{method_name} Apex method braces")
+
+
+def _apex_static_queries(body: str) -> tuple[str, ...]:
+    return tuple(
+        match.group(0) for match in re.finditer(r"\[\s*SELECT\b.*?\]", body, re.I | re.DOTALL)
+    )
+
+
+def _require_soql_contract(
+    query: str,
+    *,
+    object_name: str,
+    fields: frozenset[str],
+    order_by: tuple[str, ...],
+) -> None:
+    select = re.search(
+        rf"\bSELECT\b(?P<fields>.*?)\bFROM\s+{re.escape(object_name)}\b",
+        query,
+        re.I | re.DOTALL,
+    )
+    _require(select is not None, f"{object_name} method-bound query")
+    assert select is not None
+    observed_fields = frozenset(
+        re.sub(r"\s+", "", field).casefold()
+        for field in select.group("fields").split(",")
+        if field.strip()
+    )
+    _require(
+        observed_fields == frozenset(field.casefold() for field in fields),
+        f"{object_name} query fields",
+    )
+    ordered_fields = r"\s*,\s*".join(re.escape(field) for field in order_by)
+    _require(
+        re.search(rf"\bORDER\s+BY\s+{ordered_fields}\b", query, re.I) is not None,
+        f"{object_name} query order",
+    )
+    _require(
+        re.search(r"\bLIMIT\s+(?::[A-Za-z_][A-Za-z0-9_]*|[1-9][0-9]*)\b", query, re.I) is not None,
+        f"{object_name} bounded query",
+    )
+    _require(
+        re.search(r"\bWITH\s+USER_MODE\b", query, re.I) is not None,
+        f"{object_name} user-mode query",
+    )
+
+
 def _check_controller(controller: str) -> None:
     code, string_literals = _apex_lexical_view(controller)
     sharing_declarations = tuple(
@@ -792,101 +720,140 @@ def _check_controller(controller: str) -> None:
     )
     _require(sharing_declarations == ("with",), "with-sharing Apex declaration")
 
-    for marker in (
-        "public with sharing class AccountContactExplorerController",
-        "private static final Integer MAX_ACCOUNTS = 50",
-        "private static final Integer MAX_CONTACTS = 100",
-        "public static List<Account> getAccounts()",
-        "public static List<Contact> getContacts(Id accountId)",
-        "LIMIT :MAX_ACCOUNTS",
-        "LIMIT :MAX_CONTACTS",
-        "if (accountId == null)",
-    ):
-        _require(marker in code, "Apex behavior and safety")
-    for name, value in (("MAX_ACCOUNTS", "50"), ("MAX_CONTACTS", "100")):
-        _require(
-            re.search(
-                rf"@TestVisible\s+private\s+static\s+final\s+Integer\s+"
-                rf"{name}\s*=\s*{value}\b",
-                code,
+    public_methods = (
+        (
+            "Account",
+            "getAccounts",
+            r"\(\s*\)",
+        ),
+        (
+            "Contact",
+            "getContacts",
+            r"\(\s*Id\s+accountId\s*\)",
+        ),
+    )
+    public_interface_is_valid = True
+    for return_type, method_name, arguments in public_methods:
+        public_interface_is_valid = (
+            public_interface_is_valid
+            and len(
+                re.findall(
+                    r"@AuraEnabled\s*\(\s*cacheable\s*=\s*true\s*\)\s*"
+                    rf"public\s+static\s+List\s*<\s*{return_type}\s*>\s+"
+                    rf"{method_name}\s*{arguments}",
+                    code,
+                    re.I,
+                )
             )
-            is not None,
-            "test-visible Apex limits",
+            == 1
         )
+    public_interface_is_valid = public_interface_is_valid and (
+        len(re.findall(r"@AuraEnabled\b", code, re.I)) == len(public_methods)
+    )
+    if not public_interface_is_valid:
+        raise LocalCheckFailure(
+            "local Apex public interface assertion failed",
+            diagnostic_ids=(APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,),
+        )
+
+    get_accounts_body = _apex_method_body(
+        code,
+        return_type="Account",
+        method_name="getAccounts",
+        arguments=r"\(\s*\)",
+    )
+    get_contacts_body = _apex_method_body(
+        code,
+        return_type="Contact",
+        method_name="getContacts",
+        arguments=r"\(\s*Id\s+accountId\s*\)",
+    )
+    all_static_queries = _apex_static_queries(code)
     _require(
-        len(re.findall(r"@AuraEnabled\b", code)) == 2
-        and code.count("@AuraEnabled(cacheable=true)") == 2,
-        "exact cacheable Apex methods",
+        all(re.search(r"\bWITH\s+USER_MODE\b", query, re.I) for query in all_static_queries),
+        "Apex user-mode queries",
+    )
+    account_queries = tuple(
+        query
+        for query in _apex_static_queries(get_accounts_body)
+        if re.search(r"\bFROM\s+Account\b", query, re.I)
+    )
+    contact_queries = tuple(
+        query
+        for query in _apex_static_queries(get_contacts_body)
+        if re.search(r"\bFROM\s+Contact\b", query, re.I)
+    )
+    _require(
+        len(account_queries) == 1 and len(contact_queries) == 1,
+        "method-bound Account and Contact static queries",
+    )
+    _require_soql_contract(
+        account_queries[0],
+        object_name="Account",
+        fields=frozenset({"Id", "Name"}),
+        order_by=("Name",),
+    )
+    _require_soql_contract(
+        contact_queries[0],
+        object_name="Contact",
+        fields=frozenset({"Id", "FirstName", "LastName", "Email", "Phone"}),
+        order_by=("LastName", "FirstName"),
     )
     _require(
         re.search(
-            r"@AuraEnabled\(cacheable=true\)\s+"
-            r"public\s+static\s+List<Account>\s+getAccounts\(\)",
-            code,
+            r"\bWHERE\s+AccountId\s*=\s*:accountId\b",
+            contact_queries[0],
+            re.I,
+        )
+        is not None,
+        "selected-account Contact query",
+    )
+    contact_query_offset = get_contacts_body.find(contact_queries[0])
+    _require(contact_query_offset >= 0, "Contact query position")
+    before_contact_query = get_contacts_body[:contact_query_offset]
+    _require(
+        re.search(
+            r"\bif\s*\(\s*(?:accountId\s*==\s*null|null\s*==\s*accountId)\s*\)\s*"
+            r"\{\s*return\s+new\s+List\s*<\s*Contact\s*>\s*\(\s*\)\s*;\s*\}",
+            before_contact_query,
+            re.I | re.DOTALL,
+        )
+        is not None,
+        "Contact null-selection guard",
+    )
+    controlled_query_failures = (
+        re.search(
+            r"\bthrow\s+new\s+AuraHandledException\s*\(",
+            get_accounts_body,
+            re.I,
         )
         is not None
         and re.search(
-            r"@AuraEnabled\(cacheable=true\)\s+"
-            r"public\s+static\s+List<Contact>\s+getContacts\(Id\s+accountId\)",
-            code,
+            r"\bthrow\s+new\s+AuraHandledException\s*\(",
+            get_contacts_body,
+            re.I,
         )
-        is not None,
-        "cacheable Apex method bindings",
+        is not None
     )
-    _require(
-        len(re.findall(r"\[\s*SELECT\b", code, re.I)) == 2,
-        "exact static SOQL query count",
-    )
-    _require(
-        len(re.findall(r"\bWITH\s+USER_MODE\b", code, re.I)) == 2,
-        "Apex user-mode queries",
-    )
-    _require(
-        len(re.findall(r"\bthrow\s+new\s+AuraHandledException\s*\(", code, re.I)) == 2,
-        "controlled Apex exceptions",
-    )
-    _require(
-        string_literals.count("Accounts could not be read.") == 1
-        and string_literals.count("Contacts could not be read.") == 1,
-        "controlled Apex exception messages",
-    )
-    accounts_body = _apex_method_body(code, "public static List<Account> getAccounts()")
-    contacts_body = _apex_method_body(
-        code,
-        "public static List<Contact> getContacts(Id accountId)",
-    )
+    if not controlled_query_failures:
+        raise LocalCheckFailure(
+            "local Apex controlled-query error assertion failed",
+            diagnostic_ids=(APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,),
+        )
     _require(
         re.search(
-            r"\[\s*SELECT\s+Id\s*,\s*Name\s+FROM\s+Account\s+"
-            r"WITH\s+USER_MODE\s+ORDER\s+BY\s+Name\s+LIMIT\s+:MAX_ACCOUNTS\s*\]",
-            accounts_body,
-            re.I,
+            r"(?m)^[ \t]*(?:[A-Z][A-Z0-9_]*[ \t]+){2,}[A-Z][A-Z0-9_]*[ \t]*;[ \t]*$",
+            code,
         )
-        is not None,
-        "Account query fields ordering and limit",
-    )
-    _require(
-        re.search(r"if\s*\(\s*accountId\s*==\s*null\s*\)", contacts_body, re.I) is not None
-        and re.search(
-            r"\[\s*SELECT\s+Id\s*,\s*FirstName\s*,\s*LastName\s*,\s*Email\s*,\s*Phone\s+"
-            r"FROM\s+Contact\s+WHERE\s+AccountId\s*=\s*:accountId\s+WITH\s+USER_MODE\s+"
-            r"ORDER\s+BY\s+LastName\s*,\s*FirstName\s+LIMIT\s+:MAX_CONTACTS\s*\]",
-            contacts_body,
-            re.I,
-        )
-        is not None,
-        "Contact query fields filter ordering and limit",
-    )
-    _require(
-        len(re.findall(r"\bthrow\s+new\s+AuraHandledException\s*\(", accounts_body, re.I)) == 1
-        and len(re.findall(r"\bthrow\s+new\s+AuraHandledException\s*\(", contacts_body, re.I)) == 1,
-        "controlled Apex exception bindings",
+        is None,
+        "valid Apex executable statements",
     )
 
     _require(
         re.search(
             r"(?i)\bDatabase\s*\.\s*"
-            r"(?:insert|update|upsert|delete|undelete|merge|query|queryWithBinds)\b",
+            r"(?:insert|update|upsert|delete|undelete|merge|query|queryWithBinds|"
+            r"countQuery|countQueryWithBinds|getQueryLocator)\b",
             code,
         )
         is None,
@@ -896,13 +863,36 @@ def _check_controller(controller: str) -> None:
         re.search(r"(?i)\b(?:insert|update|upsert|delete|undelete|merge)\b", code) is None,
         "read-only Apex contract",
     )
-    for forbidden in (r"(?i)\b(Http|HttpRequest|HttpResponse|Continuation|NamedCredential)\b",):
-        _require(re.search(forbidden, code) is None, "forbidden Apex capability")
-    for forbidden in (
-        r"(?i)\bcallout\s*:",
-        r"(?i)\b(password|client_secret|access_token|authorization)\b\s*=",
-    ):
-        _require(re.search(forbidden, controller) is None, "forbidden Apex material")
+    _require(
+        re.search(
+            r"(?i)\b(?:Http|HttpRequest|HttpResponse|Continuation|NamedCredential|"
+            r"WebServiceCallout|RemoteSiteSetting)\b|"
+            r"\.\s*getContent(?:AsPDF)?\s*\(|"
+            r"@future\s*\([^)]*\bcallout\s*=\s*true",
+            code,
+        )
+        is None,
+        "forbidden Apex capability",
+    )
+
+    literal_material = "\n".join(string_literals)
+    _require(
+        re.search(r"(?i)https?://", literal_material) is None
+        and re.search(
+            r"(?i)\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+            r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*=",
+            code,
+        )
+        is None
+        and re.search(
+            r"(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+|"
+            r"\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+            r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*[:=]",
+            literal_material,
+        )
+        is None,
+        "forbidden Apex material",
+    )
 
 
 def _apex_lexical_view(source: str) -> tuple[str, tuple[str, ...]]:
@@ -978,187 +968,159 @@ def _apex_lexical_view(source: str) -> tuple[str, tuple[str, ...]]:
     return "".join(code), tuple(string_literals)
 
 
-def _apex_method_body(code: str, signature: str) -> str:
-    _require(code.count(signature) == 1, "unique Apex method signature")
-    signature_index = code.index(signature)
-    opening = code.find("{", signature_index + len(signature))
-    _require(opening >= 0, "Apex method opening brace")
-    depth = 0
-    for index in range(opening, len(code)):
-        if code[index] == "{":
-            depth += 1
-        elif code[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return code[opening + 1 : index]
-    raise LocalCheckFailure("local contract assertion failed")
-
-
 def _check_controller_test(test_source: str) -> None:
     code, string_literals = _apex_lexical_view(test_source)
-    for marker in (
-        "@IsTest",
-        "@TestSetup",
-        "returnsAccountsInNameOrder",
-        "returnsContactsInLastAndFirstNameOrder",
-        "returnsEmptyListForBlankSelection",
-        "returnsEmptyListWhenAccountHasNoContacts",
-        "AccountContactExplorerController.getAccounts()",
-        "AccountContactExplorerController.getContacts(null)",
-        "AccountContactExplorerController.MAX_ACCOUNTS + 2",
-        "AccountContactExplorerController.MAX_CONTACTS + 2",
-        "System.assertEquals(AccountContactExplorerController.MAX_ACCOUNTS, accounts.size())",
-        "System.assertEquals(AccountContactExplorerController.MAX_CONTACTS, contacts.size())",
-        "WHERE AccountId = :accountRecord.Id",
-        "Map<Id, Contact> returnedContactsById = new Map<Id, Contact>(contacts)",
-        "Set<Id> returnedIds = returnedContactsById.keySet()",
-        "private static String paddedNumber(Integer numberValue)",
-    ):
-        _require(marker in code, "Apex test behavior")
-    _require("String.format" not in code, "supported Apex padding helper")
     _require(
-        re.search(r"\{\d+\s*:\s*\d+\}", test_source) is None,
-        "supported Apex format syntax",
+        re.search(
+            r"@IsTest\b(?:\s*\(\s*\))?\s*"
+            r"(?:private|public)?\s*class\s+AccountContactExplorerControllerTest\b",
+            code,
+            re.I,
+        )
+        is not None,
+        "Apex test class",
     )
     _require(
         re.search(
-            r"System\.assert\s*\(\s*!\s*returnedIds\.contains\(foreignContact\.Id\)\s*\)"
-            r"|(?:System\.)?Assert\.isFalse\s*\(\s*"
-            r"returnedIds\.contains\(foreignContact\.Id\)\s*\)",
+            r"@IsTest\b(?:\s*\(\s*\))?\s+static\s+void\s+"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*\(",
             code,
+            re.I,
         )
         is not None,
-        "foreign Contact exclusion assertion",
+        "Apex test method",
     )
-    for marker in (
-        "System.assertEquals('Synthetic Account 000', accounts[0].Name)",
-        "System.assertEquals('Synthetic Account 049', accounts[49].Name)",
-        "System.assertEquals('Alpha Tie', contacts[0].LastName)",
-        "System.assertEquals('Ada', contacts[0].FirstName)",
-        "System.assertEquals('Alpha Tie', contacts[1].LastName)",
-        "System.assertEquals('Zoe', contacts[1].FirstName)",
-        "System.assertEquals('Synthetic 097', contacts[99].LastName)",
-    ):
-        _require(marker in test_source, "Apex test ordering and cap assertions")
-    for expected_literal in (
-        "Synthetic Account 000",
-        "Synthetic Account 049",
-        "Alpha Tie",
-        "Ada",
-        "Zoe",
-        "Synthetic 097",
-    ):
-        _require(expected_literal in string_literals, "Apex test expected values")
-    _require(code.count("Test.startTest()") == 4, "isolated Apex test executions")
-
-
-def _javascript_braced_body(source: str, opening: int) -> str | None:
-    depth = 0
-    quote: str | None = None
-    escaped = False
-    for index in range(opening, len(source)):
-        character = source[index]
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            continue
-        if character in {"'", '"', "`"}:
-            quote = character
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return source[opening + 1 : index]
-    return None
-
-
-def _javascript_brace_depth_at(source: str, position: int) -> int:
-    """Return structural brace depth while ignoring quoted JavaScript text."""
-
-    depth = 0
-    quote: str | None = None
-    escaped = False
-    for character in source[:position]:
-        if quote is not None:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == quote:
-                quote = None
-            continue
-        if character in {"'", '"', "`"}:
-            quote = character
-        elif character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-    return depth
-
-
-def _javascript_top_level_matches(source: str, pattern: str) -> tuple[re.Match[str], ...]:
-    return tuple(
-        match
-        for match in re.finditer(pattern, source)
-        if _javascript_brace_depth_at(source, match.start()) == 0
+    for method_name in ("getAccounts", "getContacts"):
+        _require(
+            re.search(
+                rf"\bAccountContactExplorerController\s*\.\s*{method_name}\s*\(",
+                code,
+                re.I,
+            )
+            is not None,
+            "Apex public method coverage",
+        )
+    _require(
+        re.search(r"\b(?:System\s*\.\s*)?Assert\s*\.", code, re.I) is not None
+        or re.search(r"\bSystem\s*\.\s*assert(?:Equals|NotEquals)?\s*\(", code, re.I) is not None,
+        "Apex test assertion",
+    )
+    _require(
+        re.search(
+            r"@IsTest\s*\([^)]*\bSeeAllData\s*=\s*true\b",
+            code,
+            re.I,
+        )
+        is None,
+        "isolated Apex test data",
+    )
+    _require(
+        re.search(
+            r"(?i)\bDatabase\s*\.\s*"
+            r"(?:query|queryWithBinds|countQuery|countQueryWithBinds|getQueryLocator)\b",
+            code,
+        )
+        is None,
+        "static Apex test queries",
+    )
+    _require(
+        re.search(
+            r"(?i)\b(?:Http|HttpRequest|HttpResponse|Continuation|NamedCredential|"
+            r"WebServiceCallout|RemoteSiteSetting)\b|"
+            r"\.\s*getContent(?:AsPDF)?\s*\(|"
+            r"@future\s*\([^)]*\bcallout\s*=\s*true",
+            code,
+        )
+        is None,
+        "forbidden Apex test capability",
+    )
+    literal_material = "\n".join(string_literals)
+    _require(
+        re.search(r"(?i)https?://", literal_material) is None
+        and re.search(
+            r"(?i)\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+            r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*=",
+            code,
+        )
+        is None
+        and re.search(
+            r"(?i)-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer\s+|"
+            r"\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+            r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*[:=]",
+            literal_material,
+        )
+        is None,
+        "forbidden Apex test material",
     )
 
 
-def _javascript_top_level_match(source: str, pattern: str) -> re.Match[str] | None:
-    return next(iter(_javascript_top_level_matches(source, pattern)), None)
+def _forbidden_static_computed_property(source: str) -> bool:
+    """Detect statically assembled prototype-escape property names."""
 
-
-def _javascript_direct_sequence_matches(
-    source: str,
-    pattern: str,
-) -> tuple[re.Match[str], ...]:
-    """Find top-level blocks that cannot be braceless control-statement bodies."""
-
-    return tuple(
-        match
-        for match in _javascript_top_level_matches(source, pattern)
-        if not source[: match.start()].strip()
-        or source[: match.start()].rstrip().endswith((";", "}"))
-    )
+    dangerous_names = {"__proto__", "constructor", "prototype"}
+    for bracket in re.finditer(r"\[(?P<body>[^\[\]\r\n]{1,256})\]", source):
+        body = bracket.group("body")
+        index = 0
+        pieces: list[str] = []
+        while index < len(body):
+            while index < len(body) and body[index].isspace():
+                index += 1
+            if index >= len(body) or body[index] not in {"'", '"'}:
+                break
+            quote = body[index]
+            index += 1
+            piece: list[str] = []
+            while index < len(body) and body[index] != quote:
+                if body[index] == "\\" and index + 1 < len(body):
+                    piece.append(body[index + 1])
+                    index += 2
+                else:
+                    piece.append(body[index])
+                    index += 1
+            if index >= len(body):
+                break
+            index += 1
+            pieces.append("".join(piece))
+            while index < len(body) and body[index].isspace():
+                index += 1
+            if index == len(body):
+                if "".join(pieces).lower() in dangerous_names:
+                    return True
+                break
+            if body[index] != "+":
+                break
+            index += 1
+    return re.search(r"(?i)\b(?:__proto__|constructor|prototype)\s*:", source) is not None
 
 
 def _check_lwc_javascript(source: str) -> None:
     source = _without_c_style_comments(source, line_comments=True)
-    code_view, has_template_literal = _javascript_code_view(source)
-    javascript_diagnostics: list[str] = []
-    import_declarations = tuple(re.finditer(r"(?ms)^[ \t]*import\b(?P<body>.*?);", code_view))
-    static_imports: list[str] = []
-    import_inventory_is_valid = True
-    for declaration in import_declarations:
-        body = source[declaration.start("body") : declaration.end("body")].strip()
-        from_match = re.fullmatch(
-            r".+?\bfrom\s*(['\"])(?P<module>[^'\"]+)\1\s*",
-            body,
-            flags=re.DOTALL,
-        )
-        side_effect_match = re.fullmatch(
-            r"(['\"])(?P<module>[^'\"]+)\1\s*",
-            body,
-            flags=re.DOTALL,
-        )
-        module_match = from_match or side_effect_match
-        if module_match is None:
-            import_inventory_is_valid = False
-        else:
-            static_imports.append(module_match.group("module"))
+    code_view, _ = _javascript_code_view(source)
+
     import_tokens = tuple(re.finditer(r"\bimport\b", code_view))
-    import_inventory_is_valid = import_inventory_is_valid and all(
-        any(
-            declaration.start() <= token.start() < declaration.end()
-            for declaration in import_declarations
+    static_imports: list[str] = []
+    import_bindings: dict[str, str] = {}
+    import_inventory_is_valid = True
+    for token in import_tokens:
+        declaration = re.match(
+            r"import\s+(?P<bindings>[\s\S]{1,2048}?)\s+from\s*"
+            r"(?P<quote>['\"])(?P<module>[^'\"\r\n]+)(?P=quote)",
+            source[token.start() :],
         )
-        for token in import_tokens
-    )
+        if (
+            declaration is None
+            or re.match(
+                r"[ \t]*;?[ \t]*(?:\r?\n|$)",
+                source[token.start() + declaration.end() :],
+            )
+            is None
+        ):
+            import_inventory_is_valid = False
+            continue
+        module_name = declaration.group("module")
+        static_imports.append(module_name)
+        import_bindings[module_name] = declaration.group("bindings")
+
     allowed_static_imports = frozenset(
         {
             "lwc",
@@ -1166,341 +1128,205 @@ def _check_lwc_javascript(source: str) -> None:
             "@salesforce/apex/AccountContactExplorerController.getContacts",
         }
     )
-    class_start = re.search(
-        r"\bexport\s+default\s+class\s+[A-Za-z_$][\w$]*\s+"
-        r"extends\s+LightningElement\s*\{",
-        code_view,
+    lwc_named_imports = re.search(
+        r"\{(?P<bindings>[\s\S]*?)\}",
+        import_bindings.get("lwc", ""),
+    )
+    base_bindings = (
+        ()
+        if lwc_named_imports is None
+        else tuple(
+            binding.strip()
+            for binding in lwc_named_imports.group("bindings").split(",")
+            if binding.strip()
+        )
+    )
+    base_binding_match = next(
+        (
+            match
+            for binding in base_bindings
+            if (
+                match := re.fullmatch(
+                    r"LightningElement(?:\s+as\s+(?P<local>[A-Za-z_$][\w$]*))?",
+                    binding,
+                )
+            )
+            is not None
+        ),
+        None,
+    )
+    local_base_name = (
+        None
+        if base_binding_match is None
+        else base_binding_match.group("local") or "LightningElement"
+    )
+    public_export = (
+        None
+        if local_base_name is None
+        else re.search(
+            r"\bexport\s+default\s+class(?:\s+[A-Za-z_$][\w$]*)?\s+"
+            rf"extends\s+{re.escape(local_base_name)}\s*\{{",
+            code_view,
+        )
     )
     export_tokens = tuple(re.finditer(r"\bexport\b", code_view))
+    has_module_re_export = any(
+        re.match(
+            r"export\s+(?:\*|\{[^};]{0,2048}\})\s+from\s*['\"]",
+            source[token.start() :],
+        )
+        is not None
+        for token in export_tokens
+    )
     export_inventory_is_valid = (
-        class_start is not None
+        public_export is not None
         and len(export_tokens) == 1
-        and export_tokens[0].start() == class_start.start()
+        and export_tokens[0].start() == public_export.start()
     )
-    forbidden_runtime_patterns = (
-        r"\bfetch\s*\(",
-        r"\bXMLHttpRequest\b",
-        r"\bWebSocket\b",
-        # Reject these executable bindings even when they are first aliased and
-        # called later. The source contract is intentionally narrower than the
-        # JavaScript runtime available inside Jest.
-        r"\b(?:eval|Function|require|arguments)\b",
-        r"\bimport\s*\(",
-        r"\b(?:globalThis|global|window|self|document|top|parent|frames|opener|"
-        r"location|navigator|process|module|exports)\b",
-        r"\b(?:jest|describe|it|test|expect|beforeEach|afterEach|beforeAll|afterAll)\b",
-        r"\b(?:Proxy|Reflect|__proto__|prototype|ownerDocument|defaultView)\b",
-        r"\bconstructor\b",
-        r"\\u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]{1,6}\})",
-        # Object.freeze is the only Object API required by this bounded
-        # component. Reflective Object APIs can otherwise recover Function or
-        # hidden runtime globals without spelling a forbidden identifier.
-        r"\bObject\b(?!\s*\.\s*freeze\s*\()",
-        r"\?\.\s*\[",
-        r"(?:\{|,)\s*\[",
-        r"(?:[A-Za-z_$][\w$]*|\)|\])\s*\[",
-    )
-    forbidden_sensitive_patterns = (
-        r"(?i)\b(password|client_secret|access_token|authorization)\b\s*[:=]",
-        r"https?://",
-        r"(['\"])@jest/globals\1",
-        r"(?:\{|,)\s*(?:'(?:\\.|[^'\\\r\n])*'|\"(?:\\.|[^\"\\\r\n])*\")\s*:",
-    )
-    if (
-        not import_inventory_is_valid
-        or not export_inventory_is_valid
-        or len(static_imports) != len(allowed_static_imports)
-        or frozenset(static_imports) != allowed_static_imports
-        or has_template_literal
-        or any(re.search(pattern, code_view) for pattern in forbidden_runtime_patterns)
-        or any(re.search(pattern, source) for pattern in forbidden_sensitive_patterns)
-    ):
-        javascript_diagnostics.append("lwc_forbidden_runtime_capability")
 
-    class_body = (
-        _javascript_braced_body(source, class_start.end() - 1) if class_start is not None else ""
+    apex_modules = (
+        "@salesforce/apex/AccountContactExplorerController.getAccounts",
+        "@salesforce/apex/AccountContactExplorerController.getContacts",
     )
-    direct_account_options_field = _javascript_top_level_match(
-        class_body or "",
-        r"(?m)^[ \t]*accountOptions\s*=\s*\[\s*BLANK_ACCOUNT_OPTION\s*\]\s*;",
-    )
-    wire_handler_start = _javascript_top_level_match(
-        class_body or "",
-        r"@wire\s*\(\s*getAccounts\s*\)\s*wiredAccounts\s*\([^)]*\)\s*\{",
-    )
-    wire_handler = (
-        _javascript_braced_body(class_body or "", wire_handler_start.end() - 1)
-        if wire_handler_start is not None
-        else ""
-    )
-    direct_wire_assignment = re.search(
-        r"this\s*\.\s*accountOptions\s*=\s*\[\s*BLANK_ACCOUNT_OPTION\s*,\s*"
-        r"\.\.\.\s*data\s*\.\s*map\s*\(",
-        wire_handler or "",
-    )
-    proxied_account_options = (
-        re.search(r"\b(?:get|set)\s+accountOptions\s*\(", source) is not None
-        or re.search(r"\b(?:this\s*\.\s*)?_accountOptions\b", source) is not None
-        or re.search(r"\bthis\s*\.\s*accountOptions\s*\.\s*push\s*\(", source) is not None
-    )
-    if (
-        direct_account_options_field is None
-        or direct_wire_assignment is None
-        or proxied_account_options
-    ):
-        javascript_diagnostics.append("lwc_account_options_reactive_field")
-    direct_has_loaded_field = _javascript_top_level_match(
-        class_body or "",
-        r"(?m)^[ \t]*hasLoaded\s*=\s*false\s*;",
-    )
-    account_change_start = _javascript_top_level_match(
-        class_body or "",
-        r"\bhandleAccountChange\s*\([^)]*\)\s*\{",
-    )
-    account_change_body = (
-        _javascript_braced_body(class_body or "", account_change_start.end() - 1)
-        if account_change_start is not None
-        else ""
-    )
-    handle_load_start = _javascript_top_level_match(
-        class_body or "",
-        r"\basync\s+handleLoad\s*\(\s*\)\s*\{",
-    )
-    handle_load_body = (
-        _javascript_braced_body(class_body or "", handle_load_start.end() - 1)
-        if handle_load_start is not None
-        else ""
-    )
-    try_start = _javascript_top_level_match(handle_load_body or "", r"\btry\s*\{")
-    try_body = (
-        _javascript_braced_body(handle_load_body or "", try_start.end() - 1)
-        if try_start is not None
-        else ""
-    )
-    catch_start = _javascript_top_level_match(
-        handle_load_body or "",
-        r"\bcatch\s*\([^)]*\)\s*\{",
-    )
-    catch_body = (
-        _javascript_braced_body(handle_load_body or "", catch_start.end() - 1)
-        if catch_start is not None
-        else ""
-    )
-    finally_start = _javascript_top_level_match(handle_load_body or "", r"\bfinally\s*\{")
-    finally_body = (
-        _javascript_braced_body(handle_load_body or "", finally_start.end() - 1)
-        if finally_start is not None
-        else ""
-    )
-    current_request_method_start = _javascript_top_level_match(
-        class_body or "",
-        r"\bisCurrentRequest\s*\(\s*accountId\s*,\s*requestGeneration\s*\)\s*\{",
-    )
-    current_request_method_body = (
-        _javascript_braced_body(
-            class_body or "",
-            current_request_method_start.end() - 1,
+    apex_bindings: list[str] = []
+    apex_bindings_are_used = True
+    for module_name in apex_modules:
+        binding_match = re.fullmatch(
+            r"\s*(?P<local>[A-Za-z_$][\w$]*)\s*",
+            import_bindings.get(module_name, ""),
         )
-        if current_request_method_start is not None
-        else ""
-    )
-    account_change_cleanups = _javascript_direct_sequence_matches(
-        account_change_body or "",
-        r"(?m)^(?P<indent>[ \t]*)this\s*\.\s*contacts\s*=\s*\[\s*\]\s*;[ \t]*\r?\n"
-        r"(?:[ \t]*\r?\n)*(?P=indent)this\s*\.\s*isLoading\s*=\s*false\s*;"
-        r"[ \t]*\r?\n(?:[ \t]*\r?\n)*(?P=indent)this\s*\.\s*hasLoaded\s*=\s*false\s*;",
-    )
-    handle_load_cleanup_blocks = _javascript_direct_sequence_matches(
-        handle_load_body or "",
-        r"(?m)^(?P<indent>[ \t]*)this\s*\.\s*isLoading\s*=\s*true\s*;[ \t]*\r?\n"
-        r"(?:[ \t]*\r?\n)*(?P=indent)this\s*\.\s*hasLoaded\s*=\s*false\s*;"
-        r"[ \t]*\r?\n(?:[ \t]*\r?\n)*(?P=indent)this\s*\.\s*contacts\s*=\s*\[\s*\]\s*;",
-    )
-    account_change_generation_increments = _javascript_direct_sequence_matches(
-        account_change_body or "",
-        r"(?m)^[ \t]*this\s*\.\s*loadRequestGeneration\s*\+=\s*1\s*;",
-    )
-    handle_load_generation_blocks = _javascript_direct_sequence_matches(
-        handle_load_body or "",
-        r"(?m)^(?P<indent>[ \t]*)const\s+accountId\s*=\s*"
-        r"this\s*\.\s*selectedAccountId\s*;[ \t]*\r?\n"
-        r"(?:[ \t]*\r?\n)*(?P=indent)this\s*\.\s*loadRequestGeneration\s*\+=\s*1\s*;"
-        r"[ \t]*\r?\n(?:[ \t]*\r?\n)*(?P=indent)const\s+requestGeneration\s*=\s*"
-        r"this\s*\.\s*loadRequestGeneration\s*;",
-    )
-    handle_load_request = re.search(
-        r"\bawait\s+getContacts\s*\(",
-        handle_load_body or "",
-    )
-    blank_guard_start = _javascript_top_level_match(
-        handle_load_body or "",
-        r"\bif\s*\(\s*!\s*this\s*\.\s*selectedAccountId\s*\)\s*\{",
-    )
-    blank_guard_opening = blank_guard_start.end() - 1 if blank_guard_start is not None else -1
-    blank_guard_body = (
-        _javascript_braced_body(handle_load_body or "", blank_guard_opening)
-        if blank_guard_opening >= 0
-        else None
-    )
-    blank_guard_end = (
-        blank_guard_opening + 1 + len(blank_guard_body) if blank_guard_body is not None else -1
-    )
-    valid_interval_end = handle_load_request.start() if handle_load_request is not None else -1
-    account_change_cleanup = next(iter(account_change_cleanups), None)
-    account_change_code_view, _ = _javascript_code_view(account_change_body or "")
-    assignment_operator = r"(?:\?\?=|&&=|\|\|=|\*\*=|>>>=|<<=|>>=|[+\-*/%&|^]=|=(?!=|>))"
+        if binding_match is None:
+            apex_bindings_are_used = False
+            continue
+        local_name = binding_match.group("local")
+        apex_bindings.append(local_name)
+        # The first occurrence is the import binding. A second executable
+        # occurrence proves the generated component actually consumes it.
+        if len(re.findall(rf"\b{re.escape(local_name)}\b", code_view)) < 2:
+            apex_bindings_are_used = False
 
-    def account_change_state_write_count(field: str) -> int:
-        member = rf"\bthis\s*\.\s*{field}\b"
-        return len(
-            re.findall(
-                rf"(?:\+\+|--)\s*{member}|{member}\s*(?:\+\+|--|{assignment_operator})",
-                account_change_code_view,
-            )
-        )
-
-    account_change_state_has_single_write = all(
-        account_change_state_write_count(field) == 1
-        for field in ("contacts", "isLoading", "hasLoaded")
-    )
-    valid_path_cleanup = next(
-        (
-            match
-            for match in handle_load_cleanup_blocks
-            if blank_guard_end < match.start() and match.end() < valid_interval_end
-        ),
-        None,
-    )
-    account_change_generation_increment = next(
-        (
-            match
-            for match in account_change_generation_increments
-            if not (account_change_body or "")[: match.start()].strip()
-        ),
-        None,
-    )
-    valid_path_generation_block = next(
-        (
-            match
-            for match in handle_load_generation_blocks
-            if blank_guard_end < match.start() and match.end() < valid_interval_end
-        ),
-        None,
-    )
-    if (
-        direct_has_loaded_field is None
-        or account_change_cleanup is None
-        or not account_change_state_has_single_write
-        or handle_load_request is None
-        or blank_guard_body is None
-        or re.search(r"\breturn\s*;", blank_guard_body) is None
-        or valid_path_cleanup is None
-    ):
-        javascript_diagnostics.append("lwc_has_loaded_reset")
-    stale_guard_pattern = (
-        r"(?m)^[ \t]*if\s*\(\s*!\s*this\s*\.\s*isCurrentRequest\s*\(\s*"
-        r"accountId\s*,\s*requestGeneration\s*\)\s*\)\s*\{\s*return\s*;\s*\}"
-    )
-    try_stale_guards = _javascript_direct_sequence_matches(try_body or "", stale_guard_pattern)
-    catch_stale_guards = _javascript_direct_sequence_matches(
-        catch_body or "",
-        stale_guard_pattern,
-    )
-    finally_current_guard = _javascript_direct_sequence_matches(
-        finally_body or "",
-        r"(?m)^[ \t]*if\s*\(\s*this\s*\.\s*isCurrentRequest\s*\(\s*"
-        r"accountId\s*,\s*requestGeneration\s*\)\s*\)\s*\{\s*"
-        r"this\s*\.\s*isLoading\s*=\s*false\s*;\s*\}",
-    )
-    current_request_comparison_is_complete = (
-        re.fullmatch(
-            r"\s*return\s*\(\s*"
-            r"(?:accountId\s*===\s*this\.selectedAccountId|"
-            r"this\.selectedAccountId\s*===\s*accountId)\s*&&\s*"
-            r"(?:requestGeneration\s*===\s*this\.loadRequestGeneration|"
-            r"this\.loadRequestGeneration\s*===\s*requestGeneration)\s*"
-            r"\)\s*;\s*",
-            current_request_method_body or "",
+    has_typescript_class_modifier = (
+        re.search(
+            r"(?m)^[ \t]*(?:public|private|protected|readonly|declare|abstract)\s+"
+            r"(?:static\s+)?[#A-Za-z_$]",
+            code_view,
         )
         is not None
     )
+    has_unapproved_public_api = re.search(r"@\s*api\b", code_view) is not None
+
+    forbidden_runtime_patterns = (
+        r"\b(?:eval|Function|require)\b",
+        r"\bimport\s*\(",
+        r"\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\b",
+        r"\bnavigator\s*\.\s*sendBeacon\b",
+        r"\b(?:globalThis|global|window|self|document|top|parent|frames|opener|"
+        r"location|navigator|process|module|exports)\b",
+        r"\b(?:jest|describe|it|test|expect|beforeEach|afterEach|beforeAll|afterAll)\b",
+        r"\b(?:Proxy|Reflect|__proto__)\b",
+        r"\.\s*(?:constructor|prototype)\b",
+        r"\bObject\s*\.\s*(?:getPrototypeOf|setPrototypeOf|defineProperty|"
+        r"defineProperties|create)\s*\(",
+        r"\\(?:u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]{1,6}\})|x[0-9A-Fa-f]{2})",
+    )
+    forbidden_material_patterns = (
+        r"(?i)https?://",
+        r"(?i)\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+        r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*[:=]",
+    )
+
     if (
-        account_change_generation_increment is None
-        or len(account_change_generation_increments) != 1
-        or valid_path_generation_block is None
-        or len(handle_load_generation_blocks) != 1
-        or len(try_stale_guards) != 1
-        or len(catch_stale_guards) != 1
-        or len(finally_current_guard) != 1
-        or not current_request_comparison_is_complete
+        any(module not in allowed_static_imports for module in static_imports)
+        or has_module_re_export
+        or _forbidden_static_computed_property(source)
+        or any(re.search(pattern, code_view) for pattern in forbidden_runtime_patterns)
+        or any(re.search(pattern, source) for pattern in forbidden_material_patterns)
     ):
-        javascript_diagnostics.append("lwc_request_generation_increment")
-    if javascript_diagnostics:
         raise LocalCheckFailure(
             "local LWC JavaScript contract assertion failed",
-            diagnostic_ids=javascript_diagnostics,
+            diagnostic_ids=("lwc_forbidden_runtime_capability",),
         )
-    for marker in (
-        "import { LightningElement, wire } from 'lwc'",
-        "extends LightningElement",
-        "@salesforce/apex/AccountContactExplorerController.getAccounts",
-        "@salesforce/apex/AccountContactExplorerController.getContacts",
-        "@wire(getAccounts)",
-        "async handleLoad()",
-        "if (!this.selectedAccountId)",
-        "this.isLoading = true",
-        "this.isLoading = false",
-        "loadRequestGeneration = 0",
-        "const accountId = this.selectedAccountId",
-        "const requestGeneration = this.loadRequestGeneration",
-        "getContacts({ accountId })",
-        "isCurrentRequest(accountId, requestGeneration)",
-        "this.hasLoaded = true",
-        "columns = CONTACT_COLUMNS",
-        "fieldName: 'FirstName'",
-        "fieldName: 'LastName'",
-        "fieldName: 'Email'",
-        "fieldName: 'Phone'",
-        "get isLoadDisabled()",
-        "get showEmptyState()",
-        "Accounts could not be loaded.",
-        "Contacts could not be loaded.",
-    ):
-        _require(marker in source, "LWC behavior")
-    _require(source.count("isLoading = false") >= 3, "LWC selection loading reset")
     _require(
-        source.count("Select an account before loading contacts.") >= 2,
-        "LWC blank-selection warning",
+        import_inventory_is_valid
+        and len(static_imports) == len(allowed_static_imports)
+        and frozenset(static_imports) == allowed_static_imports
+        and export_inventory_is_valid
+        and local_base_name is not None,
+        "LWC public module interface",
+    )
+    _require(
+        len(apex_bindings) == len(apex_modules)
+        and apex_bindings_are_used
+        and not has_typescript_class_modifier
+        and not has_unapproved_public_api,
+        "executable standard-JavaScript LWC implementation",
     )
 
 
 def _check_lwc_template(template: str) -> None:
     template = _without_html_comments(template)
-    for marker in (
-        "<lightning-combobox",
-        "value={selectedAccountId}",
-        "options={accountOptions}",
-        "onchange={handleAccountChange}",
-        "<lightning-button",
-        "onclick={handleLoad}",
-        "disabled={isLoadDisabled}",
-        "lwc:if={warningMessage}",
-        "lwc:if={errorMessage}",
-        "lwc:if={isLoading}",
-        "lwc:elseif={hasContacts}",
-        "lwc:elseif={showEmptyState}",
-        'role="alert"',
-        'alternative-text="Loading contacts"',
-        'key-field="Id"',
+    _require(
+        re.fullmatch(r"\s*<template(?:\s[^>]*)?>.*</template>\s*", template, re.DOTALL) is not None,
+        "LWC template root",
+    )
+    _require(
+        re.search(
+            r"(?i)<\s*(?:script|iframe|frame|frameset|object|embed|link|base|meta)\b|"
+            r"\blwc\s*:\s*dom\s*=|\b(?:https?|javascript|data)\s*:",
+            template,
+        )
+        is None,
+        "forbidden LWC template capability",
+    )
+    binding_tokens = tuple(re.finditer(r"\{(?P<body>[^{}\r\n]*)\}", template))
+    template_without_bindings = re.sub(r"\{[^{}\r\n]*\}", "", template)
+    bindings_are_simple = (
+        "{" not in template_without_bindings and "}" not in template_without_bindings
+    )
+    bindings_are_simple = bindings_are_simple and all(
+        re.fullmatch(
+            rf"\s*{_LWC_SIMPLE_BINDING_BODY_PATTERN}\s*",
+            match.group("body"),
+        )
+        is not None
+        for match in binding_tokens
+    )
+    if not bindings_are_simple:
+        raise LocalCheckFailure(
+            "local LWC template binding assertion failed",
+            diagnostic_ids=(LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,),
+        )
+    for attribute, values in (
+        ("data-role", LWC_SEMANTIC_DATA_ROLES),
+        ("data-state", LWC_SEMANTIC_DATA_STATES),
     ):
-        _require(marker in template, "LWC template state and accessibility")
+        missing_literals = tuple(
+            value
+            for value in values
+            if re.search(
+                rf"<[^>]*\b{attribute}\s*=\s*(['\"]){re.escape(value)}\1[^>]*>",
+                template,
+                re.DOTALL,
+            )
+            is None
+        )
+        bounded_binding = re.search(
+            rf"<[^>]*\b{attribute}\s*=\s*{_LWC_SEMANTIC_BINDING_PATTERN}[^>]*>",
+            template,
+            re.DOTALL,
+        )
+        _require(
+            not missing_literals or bounded_binding is not None,
+            f"LWC semantic hook {attribute}",
+        )
 
 
 def _check_lwc_styles(styles: str) -> None:
     styles = _without_c_style_comments(styles, line_comments=False)
-    for marker in (":host", ".controls", ".loading-region", ".warning", ".empty-state"):
-        _require(marker in styles, "LWC styles")
-    _require(re.search(r"(?i)(@import|url\s*\()", styles) is None, "external CSS resource")
+    _require(
+        re.search(r"(?i)(@import|url\s*\(|expression\s*\(|behavior\s*:)", styles) is None,
+        "external CSS resource",
+    )
 
 
 def _check_lwc_metadata(root: ElementTree.Element) -> None:
@@ -1528,398 +1354,298 @@ def _check_lwc_metadata(root: ElementTree.Element) -> None:
     )
 
 
+def _jest_static_import_modules(source: str, code_view: str) -> tuple[str, ...] | None:
+    """Return bounded static Jest import targets, failing closed on ambiguity.
+
+    ``code_view`` has comments and string contents blanked while retaining source
+    offsets.  Import tokens therefore come only from executable source, while the
+    corresponding slice of ``source`` still contains the module string that must
+    be checked against the allowlist.
+    """
+
+    import_tokens = tuple(re.finditer(r"\bimport\b", code_view))
+    if len(import_tokens) > 32:
+        return None
+
+    modules: list[str] = []
+    for token in import_tokens:
+        declaration = source[token.start() : token.start() + 4096]
+        side_effect_import = re.match(
+            r"import[ \t\r\n]*(?P<quote>['\"])(?P<module>[^'\"\r\n]{1,256})(?P=quote)",
+            declaration,
+        )
+        from_import = re.match(
+            r"import[ \t\r\n]+[A-Za-z0-9_$,*{} \t\r\n]{1,2048}?"
+            r"\bfrom[ \t\r\n]*(?P<quote>['\"])(?P<module>[^'\"\r\n]{1,256})"
+            r"(?P=quote)",
+            declaration,
+        )
+        parsed = side_effect_import or from_import
+        if parsed is None:
+            return None
+
+        tail = declaration[parsed.end() :]
+        horizontal_space = re.match(r"[ \t]*", tail)
+        assert horizontal_space is not None
+        next_character = tail[horizontal_space.end() : horizontal_space.end() + 1]
+        if next_character not in {"", ";", "\n", "\r"}:
+            return None
+        modules.append(parsed.group("module"))
+
+    return tuple(modules)
+
+
+def _jest_globals_named_imports(source: str, code_view: str) -> frozenset[str]:
+    """Return Jest APIs named-imported from the non-injected globals module."""
+
+    imported: set[str] = set()
+    for token in re.finditer(r"\bimport\b", code_view):
+        declaration = source[token.start() : token.start() + 4096]
+        parsed = re.match(
+            r"import[ \t\r\n]+(?P<bindings>[A-Za-z0-9_$,*{} \t\r\n]{1,2048}?)"
+            r"\bfrom[ \t\r\n]*(?P<quote>['\"])(?P<module>[^'\"\r\n]{1,256})"
+            r"(?P=quote)",
+            declaration,
+        )
+        if parsed is None or parsed.group("module") != "@jest/globals":
+            continue
+        named = re.fullmatch(r"\s*\{(?P<items>[\s\S]*?)\}\s*", parsed.group("bindings"))
+        if named is None:
+            continue
+        for item in named.group("items").split(","):
+            binding = re.fullmatch(
+                r"\s*(?P<api>[A-Za-z_$][A-Za-z0-9_$]*)"
+                r"(?:\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*",
+                item,
+            )
+            if binding is not None:
+                imported.add(binding.group("api"))
+    return frozenset(imported)
+
+
+def _dangerous_jest_module_target(target: str) -> bool:
+    """Identify Node/runtime modules that grant capabilities beyond candidate tests."""
+
+    if target.startswith("node:"):
+        return True
+    root = target.split("/", 1)[0]
+    return root in {
+        "async_hooks",
+        "child_process",
+        "cluster",
+        "dgram",
+        "dns",
+        "fs",
+        "http",
+        "https",
+        "inspector",
+        "module",
+        "net",
+        "os",
+        "process",
+        "repl",
+        "stream",
+        "tls",
+        "tty",
+        "v8",
+        "vm",
+        "wasi",
+        "worker_threads",
+    }
+
+
 def _check_lwc_test(test_source: str) -> None:
     test_source = _without_c_style_comments(test_source, line_comments=True)
-    diagnostics: list[str] = []
-
-    def require_clause(condition: bool, diagnostic_id: str) -> None:
-        if not condition and diagnostic_id not in diagnostics:
-            diagnostics.append(diagnostic_id)
-
-    explicit_globals = re.search(
-        r"(?m)^[ \t]*import\s*\{(?P<names>[^}\r\n]+)\}\s*from\s*"
-        r"(['\"])@jest/globals\2\s*;",
-        test_source,
+    code_view, _ = _javascript_code_view(test_source)
+    _require(
+        re.search(r"\b(?:it|test)(?:\s*\.\s*each)?\s*(?:\(|`)", code_view) is not None,
+        "executable Jest test",
     )
-    imported_jest_globals = (
-        {name.strip() for name in explicit_globals.group("names").split(",") if name.strip()}
-        if explicit_globals is not None
-        else set()
-    )
-    require_clause(
-        imported_jest_globals == {"afterEach", "describe", "expect", "it", "jest"},
-        "jest_explicit_globals",
-    )
-
-    flush_start = re.search(
-        r"\basync\s+function\s+flushPromises\s*\(\s*\)\s*\{",
-        test_source,
-    )
-    flush_body = (
-        _javascript_braced_body(test_source, flush_start.end() - 1)
-        if flush_start is not None
-        else ""
-    )
-    flush_sequence = _javascript_direct_sequence_matches(
-        flush_body or "",
-        r"(?m)^(?P<indent>[ \t]*)await\s+Promise\s*\.\s*resolve\s*\(\s*\)\s*;"
-        r"[ \t]*\r?\n(?:[ \t]*\r?\n)*(?P=indent)await\s+Promise\s*\.\s*resolve\s*"
-        r"\(\s*\)\s*;",
-    )
-    require_clause(
-        len(flush_sequence) == 1
-        and len(re.findall(r"\bawait\s+flushPromises\s*\(\s*\)\s*;", test_source)) >= 10,
-        "jest_settled_render_flush",
-    )
-
-    after_each_start = re.search(r"\bafterEach\s*\(\s*\(\s*\)\s*=>\s*\{", test_source)
-    after_each_body = (
-        _javascript_braced_body(test_source, after_each_start.end() - 1)
-        if after_each_start is not None
-        else ""
-    )
-    require_clause(
+    _require(
         re.search(
-            r"while\s*\(\s*document\s*\.\s*body\s*\.\s*firstChild\s*\)\s*\{\s*"
-            r"document\s*\.\s*body\s*\.\s*removeChild\s*\(\s*"
-            r"document\s*\.\s*body\s*\.\s*firstChild\s*\)\s*;\s*\}",
-            after_each_body or "",
+            r"\b(?:xit|xtest|xdescribe|pending)\s*\(|"
+            r"\.\s*(?:skip|todo|only)\b",
+            code_view,
         )
-        is not None,
-        "jest_dom_cleanup",
+        is None,
+        "complete Jest test source",
     )
 
-    groups = {
-        "jest_wire_adapter_contract": (
-            "createApexTestWireAdapter",
+    allowed_require_targets = frozenset({"@salesforce/sfdx-lwc-jest"})
+    allowed_static_import_targets = frozenset(
+        {
+            "@jest/globals",
+            "@salesforce/sfdx-lwc-jest",
+            "lwc",
+            "c/accountContactExplorer",
             "@salesforce/apex/AccountContactExplorerController.getAccounts",
-            "require('@salesforce/sfdx-lwc-jest')",
-            "getAccounts.emit(ACCOUNTS)",
-            "getAccounts.error",
-        ),
-        "jest_imperative_mock_contract": (
             "@salesforce/apex/AccountContactExplorerController.getContacts",
-            "getContacts.mockRejectedValue",
-        ),
-        "jest_explicit_load_behavior": (
-            "expect(getContacts).not.toHaveBeenCalled()",
-            "lightning-datatable",
-        ),
-        "jest_loading_behavior": ("lightning-spinner",),
-        "jest_required_behavior_coverage": (".empty-state",),
-        "jest_safe_error_redaction": (
-            "Contacts could not be loaded.",
-            "not.toContain('SELECT Id FROM Contact')",
-        ),
-        "jest_stale_scenario_setup": (
-            "createDeferredPromise",
-            "mockReturnValueOnce(firstRequest.promise)",
-            "mockReturnValueOnce(secondRequest.promise)",
-            "secondRequest.resolve(CONTACTS)",
-            "firstRequest.resolve([",
-        ),
-        "jest_shadow_dom_contract": (
-            "is: AccountContactExplorer",
-            "element.shadowRoot.querySelector",
-        ),
-    }
-    for diagnostic_id, markers in groups.items():
-        require_clause(all(marker in test_source for marker in markers), diagnostic_id)
-
-    for title in SALESFORCE_REQUIRED_LWC_BEHAVIOR_TITLES:
-        require_clause(
-            re.search(
-                r"\b(?:it|test)\s*\(\s*(['\"])" + re.escape(title) + r"\1\s*,",
-                test_source,
-            )
-            is not None,
-            "jest_exact_behavior_titles",
+        }
+    )
+    require_inventory_is_valid = True
+    require_targets: list[str] = []
+    for token in re.finditer(r"\brequire\b", code_view):
+        require_call = re.match(
+            r"require\s*\(\s*(?P<quote>['\"])(?P<target>[^'\"\r\n]+)(?P=quote)\s*\)",
+            test_source[token.start() :],
         )
-    require_clause(
-        re.search(
-            r"getContacts\.mockResolvedValue(?:Once)?\(\s*CONTACTS\s*\)",
-            test_source,
-        )
-        is not None
-        and re.search(
-            r"getContacts\.mockResolvedValue(?:Once)?\(\s*\[\s*\]\s*\)",
-            test_source,
-        )
-        is not None,
-        "jest_fixture_result_coverage",
-    )
-    require_clause(
-        test_source.count("__esModule: true") == 2,
-        "jest_mock_module_contract",
-    )
-    require_clause(
-        re.search(
-            r"createApexTestWireAdapter\s*\(\s*jest\s*\.\s*fn\s*\(\s*\)\s*\)",
-            test_source,
-        )
-        is not None,
-        "jest_wire_adapter_factory_argument",
-    )
-    require_clause(
-        "element.querySelector" not in test_source,
-        "jest_shadow_dom_contract",
-    )
-    require_clause(
-        re.search(
-            r"detail\s*:\s*\{\s*value\s*:\s*(?:accountId|"
-            r"ACCOUNTS\s*\[\s*\d+\s*\]\s*\.\s*Id|"
-            r"(['\"])001[A-Za-z0-9]{15}\1)\s*\}",
-            test_source,
-        )
-        is not None,
-        "jest_shadow_dom_contract",
-    )
-    require_clause(
-        "getAccounts.mockSuccess" not in test_source and "getAccounts.mockError" not in test_source,
-        "jest_wire_adapter_api",
-    )
-    loading_test_title = "shows loading state and disables Load while contacts are pending"
-    loading_test_match = re.search(
-        r"\b(?:it|test)\s*\(\s*(['\"])" + re.escape(loading_test_title) + r"\1\s*,",
-        test_source,
-    )
-    loading_test_opening = (
-        test_source.find("{", loading_test_match.end()) if loading_test_match is not None else -1
-    )
-    loading_test_body = (
-        _javascript_braced_body(test_source, loading_test_opening)
-        if loading_test_opening >= 0
-        else None
-    )
-    spinner_attribute_read = re.search(
-        r"\.\s*getAttribute\s*\(\s*(['\"])alternative-text\1\s*\)",
-        test_source,
-    )
-    spinner_public_property_assertion = re.search(
-        r"expect\s*\(\s*spinner\s*\.\s*alternativeText\s*\)\s*\.\s*"
-        r"(?:toBe|toEqual)\s*\(\s*(['\"])Loading contacts\1\s*\)",
-        loading_test_body or "",
-    )
-    require_clause(
-        spinner_attribute_read is None and spinner_public_property_assertion is not None,
-        "jest_spinner_public_property",
-    )
-
-    second_resolution = test_source.find("secondRequest.resolve(CONTACTS)")
-    first_resolution = test_source.find("firstRequest.resolve([")
-    require_clause(
-        second_resolution >= 0 and first_resolution >= 0 and second_resolution < first_resolution,
-        "jest_stale_resolution_order",
-    )
-
-    lifecycle_or_test = tuple(
-        (match.start(), match.group(1))
-        for match in re.finditer(r"\b(beforeEach|afterEach|it|test)\s*\(", test_source)
-    )
-    helper_component_positions = tuple(
-        match.start() for match in re.finditer(r"\bcreateComponent\s*\(\s*\)", test_source)
-    )
-    direct_component_positions = tuple(
-        match.start()
-        for match in re.finditer(
-            r"\bcreateElement\s*\(\s*(['\"])c-account-contact-explorer\1\s*,",
-            test_source,
-        )
-    )
-    append_positions = tuple(
-        match.start()
-        for match in re.finditer(
-            r"\bdocument\s*\.\s*body\s*\.\s*appendChild\s*\(",
-            test_source,
-        )
-    )
-    wire_calls = tuple(
-        match.start()
-        for match in re.finditer(r"\bgetAccounts\s*\.\s*(?:emit|error)\s*\(", test_source)
-    )
-    component_precedes_every_wire_call = bool(wire_calls)
-    for wire_call in wire_calls:
-        preceding_constructs = tuple(item for item in lifecycle_or_test if item[0] < wire_call)
-        if not preceding_constructs:
-            component_precedes_every_wire_call = False
+        if require_call is None:
+            require_inventory_is_valid = False
             break
-        construct_position, construct_kind = preceding_constructs[-1]
-        helper_created = any(
-            construct_position < component_position < wire_call
-            for component_position in helper_component_positions
-        )
-        directly_created_and_appended = any(
-            construct_position < component_position < append_position < wire_call
-            for component_position in direct_component_positions
-            for append_position in append_positions
-        )
-        if construct_kind not in {"it", "test"} or not (
-            helper_created or directly_created_and_appended
-        ):
-            component_precedes_every_wire_call = False
-            break
-    require_clause(
-        component_precedes_every_wire_call,
-        "jest_component_before_wire_emit",
+        require_targets.append(require_call.group("target"))
+    static_import_targets = _jest_static_import_modules(test_source, code_view)
+    observed_import_targets = () if static_import_targets is None else static_import_targets
+    unapproved_module_target = any(
+        target not in allowed_require_targets for target in require_targets
+    ) or any(target not in allowed_static_import_targets for target in observed_import_targets)
+    dangerous_module_target = any(
+        _dangerous_jest_module_target(target)
+        for target in (*require_targets, *observed_import_targets)
     )
 
-    reset_is_in_lifecycle_hook = False
-    for reset in re.finditer(r"\bgetContacts\s*\.\s*mockReset\s*\(\s*\)", test_source):
-        preceding_constructs = tuple(item for item in lifecycle_or_test if item[0] < reset.start())
-        if preceding_constructs and preceding_constructs[-1][1] in {"beforeEach", "afterEach"}:
-            reset_is_in_lifecycle_hook = True
-            break
-    require_clause(reset_is_in_lifecycle_hook, "jest_mock_not_reset")
-
-    nth_call_proof = all(
-        re.search(
-            rf"\.toHaveBeenNthCalledWith\s*\(\s*{call_number}\s*,\s*\{{\s*"
-            rf"accountId\s*:\s*ACCOUNTS\s*\[\s*{index}\s*\]\s*\.\s*Id\s*\}}\s*\)",
-            test_source,
+    special_helper_inventory_is_valid = True
+    special_helper_targets: list[str] = []
+    for token in re.finditer(
+        r"\bjest\s*(?:\?\.|\.)\s*"
+        r"(?:requireActual|requireMock|createMockFromModule)\b",
+        code_view,
+    ):
+        helper_call = re.match(
+            r"jest\s*(?:\?\.\s*|\.\s*)"
+            r"(?:requireActual|requireMock|createMockFromModule)\s*\(\s*"
+            r"(?P<quote>['\"])(?P<target>[^'\"\r\n]{1,256})(?P=quote)",
+            test_source[token.start() : token.start() + 1024],
         )
-        is not None
-        for call_number, index in ((1, 0), (2, 1))
+        if helper_call is None:
+            special_helper_inventory_is_valid = False
+            continue
+        special_helper_targets.append(helper_call.group("target"))
+    dangerous_module_target = dangerous_module_target or any(
+        _dangerous_jest_module_target(target) for target in special_helper_targets
     )
-    indexed_call_proof = all(
-        re.search(
-            rf"getContacts\s*\.\s*mock\s*\.\s*calls\s*\[\s*{index}\s*\]"
-            r"\s*\[\s*0\s*\]\s*\.\s*accountId\s*\)\s*\.\s*"
-            rf"(?:toBe|toEqual)\s*\(\s*ACCOUNTS\s*\[\s*{index}\s*\]\s*\.\s*Id\s*\)",
-            test_source,
-        )
-        is not None
-        for index in (0, 1)
+    unapproved_module_target = unapproved_module_target or any(
+        target not in allowed_static_import_targets and not _dangerous_jest_module_target(target)
+        for target in special_helper_targets
     )
-    argument_array_call_proof = all(
-        re.search(
-            rf"expect\s*\(\s*getContacts\s*\.\s*mock\s*\.\s*calls\s*"
-            rf"\[\s*{index}\s*\]\s*\)\s*\.\s*toEqual\s*\(\s*\[\s*"
-            rf"\{{\s*accountId\s*:\s*ACCOUNTS\s*\[\s*{index}\s*\]\s*\.\s*Id\s*\}}"
-            r"\s*\]\s*\)",
-            test_source,
-        )
-        is not None
-        for index in (0, 1)
-    )
-    require_clause(
-        nth_call_proof or indexed_call_proof or argument_array_call_proof,
-        "jest_ordered_call_proof",
-    )
-
-    vacuous_root_assertion = re.search(
-        r"expect\s*\(\s*(?:element\s*\.\s*)?shadowRoot\s*\.\s*textContent\s*\)"
-        r"\s*\.\s*not\s*\.\s*toBe\s*\(\s*(['\"])Stale\1\s*\)",
-        test_source,
-    )
-    require_clause(vacuous_root_assertion is None, "jest_stale_assertion_vacuous")
-    targeted_text_absence = re.search(
-        r"expect\s*\([^\n)]*textContent[^\n)]*\)\s*\.\s*not\s*\.\s*toContain"
-        r"\s*\(\s*(['\"])Stale\1\s*\)",
-        test_source,
-    )
-    field_level_absence = re.search(
-        r"expect\s*\([^\n)]*\.data\s*\[[^\]]+\]\s*\.\s*[A-Za-z_$][\w$]*\s*\)"
-        r"\s*\.\s*not\s*\.\s*toBe\s*\(\s*(['\"])Stale\1\s*\)",
-        test_source,
-    )
-    require_clause(
-        targeted_text_absence is not None or field_level_absence is not None,
-        "jest_stale_render_proof",
-    )
-
     forbidden_capability_patterns = (
-        r"\brequire\s*\(\s*(['\"])(?:node:)?(?:child_process|dgram|dns|fs|http|https|net|vm|worker_threads)\1\s*\)",
-        r"\bimport\s+[^;\n]*\s+from\s*(['\"])(?:node:)?(?:child_process|dgram|dns|fs|http|https|net|vm|worker_threads)\1",
-        r"\b(?:eval|Function|fetch|XMLHttpRequest|WebSocket)\s*\(",
-        r"\bprocess\s*\.",
+        r"\bimport\s*\(",
+        r"\b(?:eval|Function|fetch|XMLHttpRequest|WebSocket|EventSource)\b",
+        r"\bnavigator\s*\.\s*sendBeacon\b",
+        r"\b(?:globalThis|global|process|module|exports)\b",
+        r"\b(?:Proxy|Reflect|__proto__)\b",
+        r"\.\s*(?:constructor|prototype)\b",
+        r"\bObject\s*\.\s*(?:getPrototypeOf|setPrototypeOf|defineProperty|"
+        r"defineProperties|create)\s*\(",
+        r"\bjest\s*(?:\?\.|\.)\s*(?:setMock|unstable_mockModule)\b",
+        r"\\(?:u(?:[0-9A-Fa-f]{4}|\{[0-9A-Fa-f]{1,6}\})|x[0-9A-Fa-f]{2})",
     )
-    require_clause(
-        not any(re.search(pattern, test_source) for pattern in forbidden_capability_patterns),
-        "jest_forbidden_capability",
+    forbidden_material_patterns = (
+        r"(?i)https?://",
+        r"(?i)\b(?:password|passwd|client[_-]?secret|access[_-]?token|"
+        r"refresh[_-]?token|authorization|api[_-]?key|private[_-]?key)\b\s*[:=]",
     )
-
+    dangerous_capability = (
+        not require_inventory_is_valid
+        or not special_helper_inventory_is_valid
+        or dangerous_module_target
+        or _forbidden_static_computed_property(test_source)
+        or any(re.search(pattern, code_view) for pattern in forbidden_capability_patterns)
+        or any(re.search(pattern, test_source) for pattern in forbidden_material_patterns)
+    )
+    diagnostics: list[str] = []
+    if unapproved_module_target:
+        diagnostics.append(JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID)
+    if dangerous_capability:
+        diagnostics.append("jest_forbidden_capability")
     if diagnostics:
         raise LocalCheckFailure(
-            "local LWC Jest contract assertions failed",
-            diagnostic_ids=tuple(diagnostics),
+            "local LWC Jest safety assertion failed",
+            diagnostic_ids=diagnostics,
         )
-
-
-def _check_lwc_data(accounts: list[Any], contacts: list[Any]) -> None:
-    _require(len(accounts) >= 2 and len(contacts) >= 2, "synthetic test data inventory")
-    account_names: list[str] = []
-    for value in accounts:
-        _require(isinstance(value, dict), "Account test record")
-        record = cast(dict[str, Any], value)
-        _require(set(record) == {"Id", "Name"}, "Account test fields")
-        _require(
-            isinstance(record["Id"], str)
-            and re.fullmatch(r"001[A-Za-z0-9]{15}", record["Id"]) is not None,
-            "synthetic Account Id",
-        )
-        _require(isinstance(record["Name"], str), "synthetic Account name")
-        account_names.append(cast(str, record["Name"]))
-    _require(account_names == sorted(account_names), "Account fixture ordering")
-
-    contact_names: list[tuple[str, str]] = []
-    for value in contacts:
-        _require(isinstance(value, dict), "Contact test record")
-        record = cast(dict[str, Any], value)
-        _require(
-            set(record) == {"Id", "FirstName", "LastName", "Email", "Phone"},
-            "Contact test fields",
-        )
-        _require(
-            isinstance(record["Id"], str)
-            and re.fullmatch(r"003[A-Za-z0-9]{15}", record["Id"]) is not None,
-            "synthetic Contact Id",
-        )
-        _require(
-            all(isinstance(record[field], str) for field in ("FirstName", "LastName", "Phone")),
-            "synthetic Contact text",
-        )
-        _require(
-            isinstance(record["Email"], str) and record["Email"].endswith("@example.invalid"),
-            "non-routable Contact email",
-        )
-        contact_names.append((cast(str, record["LastName"]), cast(str, record["FirstName"])))
-    _require(contact_names == sorted(contact_names), "Contact fixture ordering")
+    _require(static_import_targets is not None, "bounded Jest static import inventory")
 
 
 def _javascript_code_view(source: str) -> tuple[str, bool]:
-    """Blank quoted JavaScript text while preserving code offsets and newlines.
-
-    Template literals are deliberately unsupported by this bounded component
-    contract; masking their complete contents prevents string fragments from
-    satisfying or tripping identifier checks.
-    """
+    """Blank JavaScript strings while retaining executable template expressions."""
 
     output = list(source)
-    index = 0
     has_template_literal = False
-    while index < len(source):
-        quote = source[index]
-        if quote not in {"'", '"', "`"}:
-            index += 1
-            continue
-        has_template_literal = has_template_literal or quote == "`"
+
+    def mask_ordinary_string(index: int, quote: str) -> int:
         output[index] = " "
         index += 1
         while index < len(source):
             character = source[index]
             if character == "\\":
                 output[index] = " "
-                if index + 1 < len(source):
-                    if source[index + 1] not in {"\n", "\r"}:
-                        output[index + 1] = " "
-                    index += 2
-                    continue
+                _require(index + 1 < len(source), "terminated JavaScript string escape")
+                if source[index + 1] not in {"\n", "\r"}:
+                    output[index + 1] = " "
+                index += 2
+                continue
             if character == quote:
                 output[index] = " "
-                index += 1
-                break
+                return index + 1
             if character not in {"\n", "\r"}:
                 output[index] = " "
+            index += 1
+        raise LocalCheckFailure("local contract assertion failed")
+
+    def mask_template_expression(index: int) -> int:
+        depth = 1
+        while index < len(source):
+            character = source[index]
+            if character in {"'", '"'}:
+                index = mask_ordinary_string(index, character)
+                continue
+            if character == "`":
+                index = mask_template(index)
+                continue
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    output[index] = " "
+                    return index + 1
+            index += 1
+        raise LocalCheckFailure("local contract assertion failed")
+
+    def mask_template(index: int) -> int:
+        nonlocal has_template_literal
+        has_template_literal = True
+        output[index] = " "
+        index += 1
+        while index < len(source):
+            character = source[index]
+            if character == "\\":
+                output[index] = " "
+                _require(index + 1 < len(source), "terminated JavaScript template escape")
+                if source[index + 1] not in {"\n", "\r"}:
+                    output[index + 1] = " "
+                index += 2
+                continue
+            if character == "`":
+                output[index] = " "
+                return index + 1
+            if source.startswith("${", index):
+                output[index] = " "
+                output[index + 1] = " "
+                index = mask_template_expression(index + 2)
+                continue
+            if character not in {"\n", "\r"}:
+                output[index] = " "
+            index += 1
+        raise LocalCheckFailure("local contract assertion failed")
+
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if character in {"'", '"'}:
+            index = mask_ordinary_string(index, character)
+        elif character == "`":
+            index = mask_template(index)
+        else:
             index += 1
     return "".join(output), has_template_literal
 

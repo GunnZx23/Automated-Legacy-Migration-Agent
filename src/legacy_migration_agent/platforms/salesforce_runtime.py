@@ -1,6 +1,6 @@
 """Supported Salesforce preset and deterministic local validation runtime.
 
-The model may author only the thirteen Salesforce solution files declared by
+The model may author only the eleven Salesforce solution files declared by
 ``SALESFORCE_AGENT_OUTPUT_PATHS``.  Dependency manifests, dependency locks,
 Jest configuration, executable paths, and command arguments remain trusted
 controller inputs.  This module intentionally performs local validation only;
@@ -13,10 +13,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
 import sys
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,7 @@ from legacy_migration_agent.contracts import (
 )
 from legacy_migration_agent.core.execution import ExecutionResult, SafeCommandRunner
 from legacy_migration_agent.core.integrity import artifact_digest
+from legacy_migration_agent.core.observability import lifecycle_event
 from legacy_migration_agent.core.policies import (
     CommandRegistry,
     CommandSpec,
@@ -47,6 +50,7 @@ from legacy_migration_agent.core.policies import (
     validate_manifest_for_request,
     validate_report,
 )
+from legacy_migration_agent.core.redaction import SecretRedactor
 from legacy_migration_agent.core.run_session import AgentDefinitionDigests, AgentRunSession
 from legacy_migration_agent.core.scope_policy import (
     MigrationScopePolicy,
@@ -59,21 +63,23 @@ from legacy_migration_agent.graphs.dependency_graph import (
     build_salesforce_dependency_graph,
 )
 from legacy_migration_agent.platforms.local_checks import (
+    APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
+    APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+    JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
     LWC_CONTROLLER_TEST_PATH,
     LWC_JEST_SETUP_PATH,
     LWC_JEST_TOOLCHAIN_DIGESTS,
     LWC_JEST_VERSION,
+    LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
     LWC_TEST_PATH,
     SALESFORCE_AGENT_OUTPUT_PATHS,
-    SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS,
     SALESFORCE_CANDIDATE_FAILURE_CODES,
+    SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
+    SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS,
     SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES,
     SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE,
+    SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
-    SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS,
-    SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS,
-    SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS,
-    SALESFORCE_REQUIRED_LWC_BEHAVIORS,
     tree_fingerprint,
 )
 from legacy_migration_agent.platforms.platform_runtime import PlatformRuntimeConfig
@@ -85,6 +91,11 @@ SALESFORCE_SANDBOX_PROBE_COMMAND_ID: Final = "salesforce-jest-sandbox-probe"
 SALESFORCE_LWC_JEST_COMMAND_ID: Final = "salesforce-lwc-jest"
 SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID: Final = "salesforce-lwc-controller-jest"
 SALESFORCE_WORKSPACE_FINGERPRINT_COMMAND_ID: Final = "salesforce-workspace-fingerprint"
+# A small floor discourages a one-assertion smoke file without prescribing how
+# the model decomposes behaviors or titles its own tests.
+SALESFORCE_MIN_CANDIDATE_LWC_JEST_TESTS: Final = 3
+_MAX_MODEL_FACING_JEST_FAILURE_TITLES: Final = 6
+_MAX_MODEL_FACING_JEST_TITLE_CHARS: Final = 120
 
 SALESFORCE_VALIDATION_COMMAND_IDS: Final = (
     SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID,
@@ -129,7 +140,7 @@ SALESFORCE_RUNTIME_CONFIG: Final = PlatformRuntimeConfig(
 )
 
 SALESFORCE_SCOPE_POLICY: Final = MigrationScopePolicy(
-    policy_id="salesforce-vf-to-lwc-v9",
+    policy_id="salesforce-vf-to-lwc-v10",
     platform=Platform.SALESFORCE,
     required_source_input_paths=SALESFORCE_TRANSFORMATION_INPUT_PATHS,
     approved_output_paths=SALESFORCE_AGENT_OUTPUT_PATHS,
@@ -142,7 +153,7 @@ SALESFORCE_SCOPE_POLICY: Final = MigrationScopePolicy(
 )
 
 SALESFORCE_PLATFORM_ADAPTER: Final = PlatformAdapter.bind(
-    adapter_id="salesforce-vf-to-lwc-v9",
+    adapter_id="salesforce-vf-to-lwc-v10",
     policy=SALESFORCE_SCOPE_POLICY,
 )
 
@@ -179,10 +190,11 @@ _HOMEBREW_NODE_CELLARS: Final = {
     Path("/usr/local/bin/node"): Path("/usr/local/Cellar/node"),
     Path("/opt/homebrew/bin/node"): Path("/opt/homebrew/Cellar/node"),
 }
-# Controller-owned identity of the approved external npm installation.  The
-# runtime never enrolls whatever node_modules happens to be present.
-_PINNED_TOOLCHAIN_TREE_FINGERPRINT: Final = (
-    "sha256:1f0423d76c1e5bf2db283977d42d752c203f6f1321629f3cc2c77a97aa5c69cc"
+# Controller-owned identity of the approved external npm installation. Checked-in
+# toolchain files are independently bound by LWC_JEST_TOOLCHAIN_DIGESTS, so changing
+# a controller test cannot drift this node_modules-only authority.
+_PINNED_NODE_MODULES_TREE_FINGERPRINT: Final = (
+    "sha256:0e07e903284f743a968c08ae820d32ff79b8b8ebc7e0b725bd3b74c1ebcfce1d"
 )
 _SANDBOX_PROBE_PROGRAM: Final = r"""
 import errno
@@ -600,15 +612,51 @@ class SalesforceLocalValidator:
         by_command: dict[str, CheckResult] = {}
         verified_sandbox: _VerifiedSandboxEvidence | None = None
 
-        for command_id in SALESFORCE_VALIDATION_COMMAND_IDS:
+        for ordinal, command_id in enumerate(SALESFORCE_VALIDATION_COMMAND_IDS, start=1):
             check = planned[command_id]
             unavailable_reason = availability[command_id]
             prerequisite_reason = _unmet_runtime_prerequisite(command_id, by_command)
             if prerequisite_reason is not None:
                 unavailable_reason = prerequisite_reason
+            lifecycle_event(
+                "validation.command.considered",
+                attempt=attempt,
+                ordinal=ordinal,
+                total=len(SALESFORCE_VALIDATION_COMMAND_IDS),
+                check_id=check.check_id,
+                command_id=command_id,
+            )
+            command_started_ns: int | None = None
             if unavailable_reason is not None:
                 result = _unavailable_result(check, unavailable_reason)
+                blocked_by = tuple(
+                    prerequisite
+                    for prerequisite in SALESFORCE_VALIDATION_COMMAND_IDS
+                    if prerequisite_reason is not None and prerequisite in prerequisite_reason
+                )
+                lifecycle_event(
+                    "validation.command.blocked",
+                    level=logging.WARNING,
+                    attempt=attempt,
+                    check_id=check.check_id,
+                    command_id=command_id,
+                    reason_code=(
+                        "prerequisite_failed"
+                        if prerequisite_reason is not None
+                        else "environment_unavailable"
+                    ),
+                    blocked_by=",".join(blocked_by) or "none",
+                )
             else:
+                command_started_ns = time.perf_counter_ns()
+                lifecycle_event(
+                    "validation.command.started",
+                    attempt=attempt,
+                    ordinal=ordinal,
+                    total=len(SALESFORCE_VALIDATION_COMMAND_IDS),
+                    check_id=check.check_id,
+                    command_id=command_id,
+                )
                 if runner is None:  # pragma: no cover - availability and specs are paired
                     raise AssertionError("available command has no SafeCommandRunner")
                 if command_id == SALESFORCE_SANDBOX_PROBE_COMMAND_ID:
@@ -650,6 +698,20 @@ class SalesforceLocalValidator:
                             self._repository_root,
                         ),
                     )
+                except Exception as error:
+                    lifecycle_event(
+                        "validation.command.failed",
+                        level=logging.ERROR,
+                        attempt=attempt,
+                        check_id=check.check_id,
+                        command_id=command_id,
+                        error_type=type(error).__name__,
+                        elapsed_ms=max(
+                            0,
+                            (time.perf_counter_ns() - command_started_ns) // 1_000_000,
+                        ),
+                    )
+                    raise
                 finally:
                     if is_controller_python_command:
                         self._verify_controller_python()
@@ -702,6 +764,25 @@ class SalesforceLocalValidator:
                             )
                         }
                     )
+            failure_match = re.search(
+                r"\bfailure[-_]code=([a-z][a-z0-9_.:-]{0,159})\b",
+                result.summary,
+            )
+            lifecycle_event(
+                "validation.command.completed",
+                attempt=attempt,
+                check_id=check.check_id,
+                command_id=command_id,
+                status=result.status.value,
+                exit_code=(result.receipt.exit_code if result.receipt is not None else None),
+                diagnostic_ids=",".join(result.diagnostic_ids) or "none",
+                failure_code=(failure_match.group(1) if failure_match is not None else None),
+                elapsed_ms=(
+                    max(0, (time.perf_counter_ns() - command_started_ns) // 1_000_000)
+                    if command_started_ns is not None
+                    else None
+                ),
+            )
             results.append(result)
             by_command[command_id] = result
 
@@ -983,8 +1064,11 @@ class SalesforceLocalValidator:
         candidate_root: Path,
     ) -> None:
         self._verify_bound_probe(evidence, candidate_root)
-        if evidence.binding.toolchain_fingerprint != _PINNED_TOOLCHAIN_TREE_FINGERPRINT:
-            raise PolicyViolation("installed Jest toolchain lost its controller-pinned identity")
+        node_modules = self._toolchain_root / "node_modules"
+        if _full_tree_fingerprint(node_modules) != _PINNED_NODE_MODULES_TREE_FINGERPRINT:
+            raise PolicyViolation(
+                "installed Jest dependencies lost their controller-pinned identity"
+            )
         if (
             evidence.binding.node_digest is None
             or evidence.binding.candidate_profile is None
@@ -1026,9 +1110,7 @@ class SalesforceLocalValidator:
         SALESFORCE_PLATFORM_ADAPTER.validate_manifest(manifest, request)
         validate_change_set(change_set, manifest)
         if manifest.approved_paths != SALESFORCE_AGENT_OUTPUT_PATHS:
-            raise PolicyViolation(
-                "Salesforce manifest must declare the exact thirteen output paths"
-            )
+            raise PolicyViolation("Salesforce manifest must declare the exact eleven output paths")
         if set(workspace.approved_paths) != set(SALESFORCE_AGENT_OUTPUT_PATHS):
             raise PolicyViolation("Salesforce workspace does not have the exact manifest scope")
         if workspace.base_revision != request.base_revision:
@@ -1565,6 +1647,7 @@ def _result_from_execution(
                 status=CheckStatus.FAILED,
                 receipt=execution.receipt,
                 summary=failure_summary,
+                diagnostic_ids=(SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,),
             )
         if check.command_id == SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID:
             if controller_test_path is None:
@@ -1660,7 +1743,7 @@ def _candidate_summary(execution: ExecutionResult, _candidate_root: Path) -> str
             "deployment_claim": False,
         },
     )
-    required_files = _bounded_int(value.get("required_files"), minimum=13, maximum=128)
+    required_files = _bounded_int(value.get("required_files"), minimum=11, maximum=128)
     behavior_states = _bounded_int(value.get("behavior_states"), minimum=1, maximum=64)
     return (
         f"Candidate contract passed files={required_files} states={behavior_states}; "
@@ -1694,27 +1777,26 @@ def _candidate_failure_evidence(
                     diagnostic_id
                     for diagnostic_id in candidate_diagnostics
                     if isinstance(diagnostic_id, str)
-                    and diagnostic_id in SALESFORCE_CANDIDATE_DIAGNOSTIC_IDS
+                    and diagnostic_id in SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS
                 )
             )
             normalized_set = set(normalized)
-            safe_jest_only = bool(normalized) and normalized_set.issubset(
-                SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS
+            specific_stage = {
+                "lwc_forbidden_runtime_capability": "salesforce_lwc_javascript_contract",
+                "jest_forbidden_capability": "salesforce_lwc_jest_contract",
+                APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (
+                    "salesforce_apex_controller_contract"
+                ),
+                APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: (
+                    "salesforce_apex_controller_contract"
+                ),
+                JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: ("salesforce_lwc_jest_contract"),
+                LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: ("salesforce_lwc_template_contract"),
+            }
+            failure_code_matches_diagnostics = failure_code in normalized_set or any(
+                specific_stage.get(diagnostic_id) == failure_code
+                for diagnostic_id in normalized_set
             )
-            if failure_code == "salesforce_lwc_jest_contract":
-                failure_code_matches_diagnostics = bool(normalized) and normalized_set.issubset(
-                    SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS - SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS
-                )
-            elif failure_code == "salesforce_lwc_javascript_contract":
-                failure_code_matches_diagnostics = (
-                    bool(normalized)
-                    and normalized_set.issubset(SALESFORCE_LWC_JEST_DIAGNOSTIC_IDS)
-                    and bool(normalized_set & SALESFORCE_LWC_JAVASCRIPT_DIAGNOSTIC_IDS)
-                )
-            else:
-                failure_code_matches_diagnostics = (
-                    not safe_jest_only and failure_code in normalized_set
-                )
             if len(normalized) == len(candidate_diagnostics) and failure_code_matches_diagnostics:
                 diagnostic_ids = normalized
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -1842,8 +1924,16 @@ def _jest_summary(execution: ExecutionResult, candidate_root: Path) -> str:
     failed_suites = _bounded_int(value.get("numFailedTestSuites"), minimum=0, maximum=100)
     pending_suites = _bounded_int(value.get("numPendingTestSuites"), minimum=0, maximum=100)
     runtime_errors = _bounded_int(value.get("numRuntimeErrorTestSuites"), minimum=0, maximum=100)
-    total_tests = _bounded_int(value.get("numTotalTests"), minimum=1, maximum=_MAX_JEST_TESTS)
-    passed_tests = _bounded_int(value.get("numPassedTests"), minimum=1, maximum=_MAX_JEST_TESTS)
+    total_tests = _bounded_int(
+        value.get("numTotalTests"),
+        minimum=SALESFORCE_MIN_CANDIDATE_LWC_JEST_TESTS,
+        maximum=_MAX_JEST_TESTS,
+    )
+    passed_tests = _bounded_int(
+        value.get("numPassedTests"),
+        minimum=SALESFORCE_MIN_CANDIDATE_LWC_JEST_TESTS,
+        maximum=_MAX_JEST_TESTS,
+    )
     failed_tests = _bounded_int(value.get("numFailedTests"), minimum=0, maximum=_MAX_JEST_TESTS)
     pending_tests = _bounded_int(value.get("numPendingTests"), minimum=0, maximum=_MAX_JEST_TESTS)
     todo_tests = _bounded_int(value.get("numTodoTests"), minimum=0, maximum=_MAX_JEST_TESTS)
@@ -1853,7 +1943,6 @@ def _jest_summary(execution: ExecutionResult, candidate_root: Path) -> str:
         or any(value != 0 for value in (failed_suites, pending_suites, runtime_errors))
         or total_tests != passed_tests
         or any(value != 0 for value in (failed_tests, pending_tests, todo_tests))
-        or total_tests < len(SALESFORCE_REQUIRED_LWC_BEHAVIORS)
     ):
         raise ValueError("Jest terminal counts do not prove complete success")
 
@@ -1881,19 +1970,21 @@ def _jest_summary(execution: ExecutionResult, candidate_root: Path) -> str:
     assertions = suite.get("assertionResults")
     if not isinstance(assertions, list) or len(assertions) != total_tests:
         raise ValueError("Jest assertion results are incomplete")
-    titles: set[str] = set()
     for raw_assertion in assertions:
         assertion = _mapping(raw_assertion)
         title = assertion.get("title")
         status = assertion.get("status")
-        if not isinstance(title, str) or not title or len(title) > 500 or status != "passed":
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or len(title) > 500
+            or status != "passed"
+        ):
             raise ValueError("Jest assertion evidence is invalid")
-        titles.add(title)
-    if not SALESFORCE_REQUIRED_LWC_BEHAVIORS <= titles:
-        raise ValueError("Jest behavior coverage is incomplete")
     return (
-        f"LWC Jest passed suites={total_suites} tests={total_tests} required-behaviors="
-        f"{len(SALESFORCE_REQUIRED_LWC_BEHAVIORS)}; stdout={execution.receipt.stdout_digest}."
+        "Candidate-authored LWC Jest tests passed "
+        f"suites={total_suites} tests={total_tests} evidence-role=supplemental; "
+        f"stdout={execution.receipt.stdout_digest}."
     )
 
 
@@ -2036,6 +2127,8 @@ def _controller_jest_failure_evidence(
             SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE[title] for title in failed_titles
         )
     )
+    if not diagnostic_ids:
+        diagnostic_ids = (SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,)
     return (
         (
             "Controller-owned LWC behavior Jest failed terminally "
@@ -2085,6 +2178,7 @@ def _jest_failure_summary(execution: ExecutionResult, candidate_root: Path) -> s
     assertions = suite.get("assertionResults")
     if not isinstance(assertions, list) or len(assertions) != total_tests:
         raise ValueError("Jest failure assertions are incomplete")
+    failed_titles: list[str] = []
     for raw_assertion in assertions:
         assertion = _mapping(raw_assertion)
         title = assertion.get("title")
@@ -2096,11 +2190,41 @@ def _jest_failure_summary(execution: ExecutionResult, candidate_root: Path) -> s
             or status not in {"passed", "failed", "pending", "todo"}
         ):
             raise ValueError("Jest failure assertion evidence is invalid")
+        if status == "failed":
+            failed_titles.append(_model_facing_jest_title(title))
+    if len(failed_titles) != failed_tests:
+        raise ValueError("Jest failed assertion inventory is inconsistent")
+    exposed_titles = failed_titles[:_MAX_MODEL_FACING_JEST_FAILURE_TITLES]
+    title_evidence = ""
+    if exposed_titles:
+        rendered = " | ".join(
+            f"{ordinal}:{json.dumps(title, ensure_ascii=True)}"
+            for ordinal, title in enumerate(exposed_titles, start=1)
+        )
+        omitted = len(failed_titles) - len(exposed_titles)
+        title_evidence = f" failed-assertions={rendered}"
+        if omitted:
+            title_evidence += f" additional-failed-tests={omitted}"
+        title_evidence += ";"
     return (
         f"LWC Jest failed terminally suites={total_suites} tests={total_tests} "
-        f"failed-suites={failed_suites} failed-tests={failed_tests}; "
+        f"failed-suites={failed_suites} failed-tests={failed_tests};{title_evidence} "
         f"stdout={execution.receipt.stdout_digest}; stderr={execution.receipt.stderr_digest}."
     )
+
+
+def _model_facing_jest_title(title: str) -> str:
+    """Return one bounded redacted test label, never raw Jest failure prose."""
+
+    if any(ord(character) < 32 or ord(character) == 127 for character in title):
+        raise ValueError("Jest assertion titles cannot contain control characters")
+    normalized = " ".join(title.split())
+    if not normalized:
+        raise ValueError("Jest assertion title is blank")
+    normalized = SecretRedactor().redact(normalized).text
+    if len(normalized) > _MAX_MODEL_FACING_JEST_TITLE_CHARS:
+        normalized = normalized[: _MAX_MODEL_FACING_JEST_TITLE_CHARS - 3].rstrip() + "..."
+    return normalized
 
 
 def _workspace_summary(execution: ExecutionResult, _candidate_root: Path) -> str:
@@ -2163,18 +2287,16 @@ def _unmet_runtime_prerequisite(
 ) -> str | None:
     required: tuple[str, ...]
     if command_id == SALESFORCE_SANDBOX_PROBE_COMMAND_ID:
-        required = (
-            SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID,
-            SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID,
-            SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID,
-        )
+        # The probe establishes the execution boundary; it does not consume or
+        # trust either static candidate analysis.  Running it after an ordinary
+        # candidate or dependency failure lets the same validation attempt
+        # collect every independently safe diagnostic.
+        required = (SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID,)
     elif command_id in {
         SALESFORCE_LWC_JEST_COMMAND_ID,
         SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID,
     }:
         required = (
-            SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID,
-            SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID,
             SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID,
             SALESFORCE_SANDBOX_PROBE_COMMAND_ID,
         )
@@ -2185,27 +2307,10 @@ def _unmet_runtime_prerequisite(
         result = completed[prerequisite]
         if result.status is CheckStatus.PASSED:
             continue
-        if (
-            prerequisite == SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID
-            and _candidate_failure_allows_isolated_jest(result)
-        ):
-            continue
         unmet.append(prerequisite)
     if not unmet:
         return None
     return "required prerequisite checks did not pass: " + ", ".join(unmet)
-
-
-def _candidate_failure_allows_isolated_jest(result: CheckResult) -> bool:
-    """Allow only known test-layer defects through the protected Jest boundary."""
-
-    return (
-        result.status is CheckStatus.FAILED
-        and result.receipt is not None
-        and result.receipt.terminal
-        and bool(result.diagnostic_ids)
-        and set(result.diagnostic_ids).issubset(SALESFORCE_JEST_SANDBOX_SAFE_DIAGNOSTIC_IDS)
-    )
 
 
 def _agent_definition_digests(registry: AgentRegistry) -> AgentDefinitionDigests:
@@ -3143,8 +3248,13 @@ def _jest_unavailable_reason(
             or jest_package.get("name") != "jest"
         ):
             raise PolicyViolation("installed Jest packages do not match the pinned toolchain")
-        if _full_tree_fingerprint(safe_toolchain) != _PINNED_TOOLCHAIN_TREE_FINGERPRINT:
-            raise PolicyViolation("installed Jest tree does not match its controller identity")
+        if (
+            _full_tree_fingerprint(safe_toolchain / "node_modules")
+            != _PINNED_NODE_MODULES_TREE_FINGERPRINT
+        ):
+            raise PolicyViolation(
+                "installed Jest dependencies do not match their controller identity"
+            )
         _safe_directory(scratch_root, "session scratch directory")
     except PolicyViolation:
         return "the pinned Jest toolchain or its installed node_modules is unavailable"
@@ -3232,11 +3342,12 @@ __all__ = [
     "SALESFORCE_ANALYZER_VERSION",
     "SALESFORCE_API_RUNTIME",
     "SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID",
+    "SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID",
     "SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID",
     "SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID",
     "SALESFORCE_LWC_JEST_COMMAND_ID",
+    "SALESFORCE_MIN_CANDIDATE_LWC_JEST_TESTS",
     "SALESFORCE_PLATFORM_ADAPTER",
-    "SALESFORCE_REQUIRED_LWC_BEHAVIORS",
     "SALESFORCE_RUNTIME_CONFIG",
     "SALESFORCE_SANDBOX_PROBE_COMMAND_ID",
     "SALESFORCE_SCOPE_POLICY",

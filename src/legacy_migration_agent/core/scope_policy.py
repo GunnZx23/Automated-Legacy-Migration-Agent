@@ -20,6 +20,7 @@ from legacy_migration_agent.contracts import (
     Platform,
     Sha256Digest,
     StrictModel,
+    TransformationStepKind,
     validate_relative_path,
 )
 from legacy_migration_agent.core.integrity import artifact_digest
@@ -313,9 +314,17 @@ def validate_manifest_transformation_scope(
             "manifest approved paths do not match the caller-owned output boundary"
         )
 
+    artifact_transformations = tuple(
+        step
+        for step in transformations
+        if step.kind is TransformationStepKind.ARTIFACT_TRANSFORMATION
+    )
+    if not artifact_transformations:
+        raise PolicyViolation("manifest must contain at least one artifact transformation")
+
     input_union: set[str] = set()
     output_owners: Counter[str] = Counter()
-    for step in transformations:
+    for step in artifact_transformations:
         if not step.input_paths:
             raise PolicyViolation(
                 f"manifest transformation {step.step_id} must declare at least one input"

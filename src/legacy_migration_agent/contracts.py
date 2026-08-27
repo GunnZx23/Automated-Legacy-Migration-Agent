@@ -49,6 +49,11 @@ class ManifestStatus(StrEnum):
     DECISION_REQUIRED = "decision_required"
 
 
+class TransformationStepKind(StrEnum):
+    ARTIFACT_TRANSFORMATION = "artifact_transformation"
+    SEMANTIC_DECISION = "semantic_decision"
+
+
 class ValidationDisposition(StrEnum):
     READY_FOR_HUMAN_REVIEW = "ready_for_human_review"
     RECOVERABLE_FAILURE = "recoverable_failure"
@@ -324,14 +329,30 @@ class ImplementationIntervention(StrictModel):
 
 class TransformationStep(StrictModel):
     step_id: Identifier
+    kind: TransformationStepKind = TransformationStepKind.ARTIFACT_TRANSFORMATION
     description: str = Field(min_length=1, max_length=2000)
     input_paths: tuple[str, ...]
     output_paths: tuple[str, ...]
+    decision_id: Identifier | None = None
+    evidence_ids: tuple[Identifier, ...] = ()
 
     @field_validator("input_paths", "output_paths")
     @classmethod
     def validate_paths(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(validate_relative_path(value) for value in values)
+
+    @model_validator(mode="after")
+    def validate_step_kind(self) -> TransformationStep:
+        if self.kind is TransformationStepKind.SEMANTIC_DECISION:
+            if self.decision_id is None or not self.evidence_ids:
+                raise ValueError("semantic decision steps require a decision ID and evidence IDs")
+            if self.input_paths or self.output_paths:
+                raise ValueError("semantic decision steps cannot own source or output paths")
+            if len(self.evidence_ids) != len(set(self.evidence_ids)):
+                raise ValueError("semantic decision evidence IDs must be unique")
+        elif self.decision_id is not None or self.evidence_ids:
+            raise ValueError("artifact transformation steps cannot carry decision evidence")
+        return self
 
 
 class ValidationCommand(StrictModel):

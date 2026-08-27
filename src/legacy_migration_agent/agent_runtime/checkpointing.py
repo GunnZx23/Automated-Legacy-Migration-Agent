@@ -8,6 +8,7 @@ import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -35,11 +36,13 @@ from legacy_migration_agent.contracts import (
     RiskFinding,
     ToolReceipt,
     TransformationStep,
+    TransformationStepKind,
     ValidationCommand,
     ValidationDisposition,
     ValidationReport,
 )
 from legacy_migration_agent.core.policies import PolicyViolation
+from legacy_migration_agent.core.redaction import assert_no_high_confidence_secrets
 from legacy_migration_agent.workflow import (
     Architect,
     Engineer,
@@ -52,10 +55,21 @@ from legacy_migration_agent.workflow import (
 CHECKPOINT_SUFFIX = ".sqlite3"
 
 
+class _SecretRejectingCheckpointSerializer(JsonPlusSerializer):
+    """Reject credential-shaped state before JsonPlus produces SQLite bytes."""
+
+    def dumps_typed(self, obj: Any) -> tuple[str, bytes]:
+        assert_no_high_confidence_secrets(
+            obj,
+            boundary="checkpoint state",
+        )
+        return super().dumps_typed(obj)
+
+
 def strict_checkpoint_serializer() -> JsonPlusSerializer:
     """Allow only the project's inert typed state plus LangGraph safe types."""
 
-    return JsonPlusSerializer(
+    return _SecretRejectingCheckpointSerializer(
         pickle_fallback=False,
         allowed_msgpack_modules=(
             ApprovalAction,
@@ -81,6 +95,7 @@ def strict_checkpoint_serializer() -> JsonPlusSerializer:
             RiskFinding,
             ToolReceipt,
             TransformationStep,
+            TransformationStepKind,
             ValidationCommand,
             ValidationDisposition,
             ValidationReport,

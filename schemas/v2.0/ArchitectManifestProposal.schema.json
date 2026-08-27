@@ -1,0 +1,154 @@
+{
+  "$defs": {
+    "ArchitectRiskObservation": {
+      "additionalProperties": false,
+      "description": "One public semantic risk authored by the Architect model.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/RiskCategory"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "requires_human_decision": {
+          "default": false,
+          "title": "Requires Human Decision",
+          "type": "boolean"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "summary",
+        "evidence_ids"
+      ],
+      "title": "ArchitectRiskObservation",
+      "type": "object"
+    },
+    "ArchitectSemanticDecision": {
+      "additionalProperties": false,
+      "description": "One public, evidence-bound semantic choice authored by the Architect.",
+      "properties": {
+        "category": {
+          "enum": [
+            "target_architecture",
+            "behavior_preservation",
+            "security",
+            "data_mapping",
+            "validation",
+            "operational_constraint"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "decision_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,139}$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "category",
+        "summary",
+        "evidence_ids"
+      ],
+      "title": "ArchitectSemanticDecision",
+      "type": "object"
+    },
+    "RiskCategory": {
+      "enum": [
+        "security",
+        "public_contract",
+        "destructive_change",
+        "cross_application",
+        "incomplete_evidence",
+        "dynamic_dependency"
+      ],
+      "title": "RiskCategory",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Compact model-authored semantic plan with no execution authority.",
+  "properties": {
+    "cited_graph_nodes": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Cited Graph Nodes",
+      "type": "array"
+    },
+    "cited_wiki_pages": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Cited Wiki Pages",
+      "type": "array"
+    },
+    "risk_observations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ArchitectRiskObservation"
+      },
+      "maxItems": 16,
+      "title": "Risk Observations",
+      "type": "array"
+    },
+    "semantic_decisions": {
+      "items": {
+        "$ref": "#/$defs/ArchitectSemanticDecision"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Semantic Decisions",
+      "type": "array"
+    },
+    "unresolved_questions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "title": "Unresolved Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "semantic_decisions",
+    "cited_graph_nodes",
+    "cited_wiki_pages"
+  ],
+  "title": "ArchitectManifestProposal",
+  "type": "object"
+}

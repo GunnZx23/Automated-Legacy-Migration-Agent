@@ -18,6 +18,100 @@ Evidence is layered:
 - A missing Maven tool, repository-authentication failure, disabled runtime
   authority, or unavailable dependency is `environment_unavailable`, not pass.
 
+Project correction signal
+`mulesoft_candidate.dataweave_contract.response_dataweave`: repair only the
+generated response DataWeave. It must use DataWeave 2.0 and produce the bounded
+`customerId`, `status`, and `source` JSON response fields from runtime state.
+An empty object, `null`, hard-coded arbitrary payload, or header-only `%dw 2.0`
+file is not behavioral evidence. Formatting, field order, locals, and
+equivalent expressions remain candidate choices.
+
+Project correction signal `mulesoft_candidate.munit_contract.candidate_munit`:
+repair only the candidate-owned Mule 4 MUnit suite. It must reach a callable
+from the generated Mule 4 application and make at least one nontrivial assertion
+over a value produced by that call. An always-true assertion, a
+self-comparison, a suite that reaches only the preserved Mule 3 application,
+or a disconnected test file does not validate the candidate. Test identities,
+setup values, and assertion style remain candidate choices.
+
+Project correction signal `mulesoft_candidate.pom_contract.pom_xml`: repair
+only the generated `pom.xml`. Restore the approved Mule application packaging,
+version compatibility set, allowlisted plugins and dependencies, and MuleSoft
+release repository restriction. Do not add credentials, extra build
+capabilities, or change non-POM artifacts without a separate diagnostic.
+
+When MUnit exercises the public HTTP listener, use
+`munit:enable-flow-source` for that exact generated listener flow, a loopback
+`http:request` with the bounded GET route, and meaningful assertions over the
+response. The repository permits loopback HTTP only for this MUnit path; any
+other HTTP request configuration is classified by the artifact-specific
+`mulesoft_candidate.outbound_connector.candidate_munit` signal and rejected.
+
+Artifact parsing signals are exact file boundaries, not recipes. The UTF-8
+signals are `mulesoft_candidate.unsafe_text.mule_artifact_json`,
+`mulesoft_candidate.unsafe_text.pom_xml`,
+`mulesoft_candidate.unsafe_text.application_xml`,
+`mulesoft_candidate.unsafe_text.application_yaml`,
+`mulesoft_candidate.unsafe_text.response_dataweave`, and
+`mulesoft_candidate.unsafe_text.candidate_munit`. Repair only the artifact named
+by the signal so a bounded safe parser accepts its complete text; preserve its
+semantic contract and choose any equivalent private structure.
+
+Secret-material signals are
+`mulesoft_candidate.secret_material.mule_artifact_json`,
+`mulesoft_candidate.secret_material.pom_xml`,
+`mulesoft_candidate.secret_material.application_xml`,
+`mulesoft_candidate.secret_material.application_yaml`,
+`mulesoft_candidate.secret_material.response_dataweave`, and
+`mulesoft_candidate.secret_material.candidate_munit`. Remove embedded
+credentials, private keys, credential-bearing URLs, and secret-shaped
+assignments only from the named generated artifact; never invent a replacement
+secret or weaken the detector.
+
+Safe-XML signals are `mulesoft_candidate.unsafe_xml.pom_xml`,
+`mulesoft_candidate.unsafe_xml.application_xml`,
+`mulesoft_candidate.unsafe_xml.candidate_munit`,
+`mulesoft_candidate.malformed_xml.pom_xml`,
+`mulesoft_candidate.malformed_xml.application_xml`, and
+`mulesoft_candidate.malformed_xml.candidate_munit`. Repair only the named XML
+artifact so a safe parser accepts it without DTD or entity declarations while
+preserving its Maven, Mule application, or MUnit semantic role.
+
+Descriptor parsing signals
+`mulesoft_candidate.malformed_yaml.application_yaml` and
+`mulesoft_candidate.malformed_json.mule_artifact_json` repair only their named
+generated descriptor. YAML must remain a bounded scalar mapping without graph
+features; JSON must remain a valid Mule application descriptor object.
+
+Application contract signals
+`mulesoft_candidate.mule4_contract.application_xml` and
+`mulesoft_candidate.mule4_contract.application_yaml` repair only the generated
+Mule application or loopback configuration named by the signal. Preserve the
+bounded GET route and response behavior; internal flow topology and equivalent
+Mule 4 expressions remain candidate choices.
+
+Descriptor contract signals
+`mulesoft_candidate.artifact_contract.mule_artifact_json` and
+`mulesoft_candidate.version_mismatch.mule_artifact_json` repair only
+`mule-artifact.json`. Restore the approved Mule runtime, Java, required product,
+and project-version alignment without changing unrelated safe metadata.
+
+Outbound signals `mulesoft_candidate.outbound_connector.application_xml` and
+`mulesoft_candidate.outbound_connector.candidate_munit` repair only the named
+generated XML. Remove external connector or request capability; the sole
+permitted request is candidate MUnit loopback HTTP to the approved public route.
+
+Graph signal `mulesoft_dependency_closure.target_graph` permits changes only to
+the generated Mule application XML, response DataWeave, and candidate MUnit
+suite. Repair unresolved generated flow, configuration, transform, or test
+references while leaving internal topology candidate-owned.
+
+Runtime signal `mulesoft_munit_execution.candidate_behavior` permits changes
+only to the generated application XML, loopback configuration, response
+DataWeave, and candidate MUnit suite. Use the terminal controller-owned MUnit
+failure evidence to restore observable behavior. Do not change the pinned POM
+or controller-owned tests without their own diagnostic.
+
 The checked-in capstone runtime authority is intentionally disabled, so its
 honest ceiling is static fixture-contract evidence until a reviewed immutable
 runtime and dependencies are authorized.

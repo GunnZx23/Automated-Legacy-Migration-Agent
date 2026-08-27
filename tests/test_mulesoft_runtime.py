@@ -5,12 +5,13 @@ import json
 import shutil
 import stat
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from mulesoft_candidate_factory import build_mulesoft_candidate, mulesoft_target_outputs
 
 import legacy_migration_agent.platforms.mulesoft_runtime as mulesoft_runtime_module
 from legacy_migration_agent.contracts import (
@@ -38,14 +39,23 @@ from legacy_migration_agent.platforms.local_checks import tree_fingerprint
 from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MULE3_APP,
     MULE3_PROPERTIES,
+    MULE4_APP,
+    MULE4_DATAWEAVE,
     MULE4_POM,
+    MULE4_PROPERTIES,
+    MULE4_TEST,
     MULESOFT_IMPLEMENTATION_CONTRACT,
     SOURCE_FILES,
     TARGET_FILES,
+    MuleSoftLocalCheckCode,
 )
 from legacy_migration_agent.platforms.mulesoft_runtime import (
+    MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID,
+    MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
+    MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID,
     MULESOFT_MUNIT_ARGV,
     MULESOFT_MUNIT_COMMAND_ID,
+    MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID,
     MULESOFT_PLATFORM_ADAPTER,
     MULESOFT_RUNTIME_AUTHORITY_ANCHOR_KIND,
     MULESOFT_RUNTIME_CONFIG,
@@ -57,11 +67,11 @@ from legacy_migration_agent.platforms.mulesoft_runtime import (
     MULESOFT_VALIDATION_COMMAND_IDS,
     MuleSoftLocalValidator,
     build_mulesoft_local_validator,
+    mulesoft_candidate_diagnostic_id,
 )
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 FIXTURE = REPOSITORY / "fixtures/mulesoft/customer-status-api"
-ORACLE = FIXTURE / "expected"
 AGENT_DIGESTS = AgentDefinitionDigests(
     architect="sha256:" + "a" * 64,
     engineer="sha256:" + "b" * 64,
@@ -110,6 +120,18 @@ def _pass_report(suite_name: str, test_name: str) -> bytes:
     ).encode()
 
 
+def _pass_report_many(suite_name: str, test_names: tuple[str, ...]) -> bytes:
+    cases = "".join(
+        f'  <testcase name="{test_name}" classname="{suite_name}"/>\n' for test_name in test_names
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<testsuite name="{suite_name}" tests="{len(test_names)}" '
+        'failures="0" errors="0" skipped="0">\n'
+        f"{cases}</testsuite>\n"
+    ).encode()
+
+
 PASS_GENERATED_REPORT = _pass_report(
     "customer-status-api-test-suite",
     "build-customer-status-response-test",
@@ -134,6 +156,7 @@ class InertContainerRunner:
         self.image_inspections = 0
         self.candidate_reads = 0
         self.controller_suite_digests: list[str] = []
+        self.controller_suite_payloads: list[bytes] = []
         self.manifest = None
 
     def _authority(self):
@@ -354,10 +377,20 @@ class InertContainerRunner:
             mounts["/input"] / "mule4/customer-status-api/src/test/munit/"
             "controller-customer-status-behavior-test.xml"
         )
+        controller_suite_payload = controller_suite.read_bytes()
+        self.controller_suite_payloads.append(controller_suite_payload)
         self.controller_suite_digests.append(
-            f"sha256:{hashlib.sha256(controller_suite.read_bytes()).hexdigest()}"
+            f"sha256:{hashlib.sha256(controller_suite_payload).hexdigest()}"
         )
-        (report_root / "TEST-customer-status-api-test-suite.xml").write_bytes(PASS_GENERATED_REPORT)
+        candidate_report_name = "TEST-customer-status-api-test-suite.xml"
+        candidate_report = PASS_GENERATED_REPORT
+        if self.mode == "alternate-candidate-report":
+            candidate_report_name = "TEST-qwen-selected-behaviors.xml"
+            candidate_report = _pass_report_many(
+                "qwen-selected-behaviors",
+                ("returns-public-status", "preserves-requested-customer"),
+            )
+        (report_root / candidate_report_name).write_bytes(candidate_report)
         if self.mode == "missing-controller-report":
             return
         controller_report = PASS_CONTROLLER_REPORT
@@ -372,7 +405,35 @@ class InertContainerRunner:
 
 
 def _agent_outputs() -> dict[str, bytes]:
-    return {path: (ORACLE / path).read_bytes() for path in TARGET_FILES}
+    return mulesoft_target_outputs()
+
+
+def _http_only_munit_output() -> bytes:
+    return b"""<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools">
+  <http:request-config name="candidate-loopback-request">
+    <http:request-connection host="127.0.0.1" port="8081"/>
+  </http:request-config>
+  <munit:config name="candidate-http-suite"/>
+  <munit:test name="public-status-is-observable">
+    <munit:enable-flow-sources>
+      <munit:enable-flow-source value="customer-status-api-flow"/>
+    </munit:enable-flow-sources>
+    <munit:execution>
+      <http:request method="GET"
+                    path="/api/customers/HTTP-ONLY/status"
+                    config-ref="candidate-loopback-request"/>
+    </munit:execution>
+    <munit:validation>
+      <munit-tools:assert-that expression="#[payload.status]"
+                               is='#[MunitTools::equalTo("ACTIVE")]'/>
+    </munit:validation>
+  </munit:test>
+</mule>
+"""
 
 
 def _request(source: Path) -> MigrationRequest:
@@ -424,7 +485,10 @@ def _manifest(request: MigrationRequest) -> MigrationManifest:
 
 
 @contextmanager
-def _runtime_case(tmp_path: Path) -> Iterator[RuntimeCase]:
+def _runtime_case(
+    tmp_path: Path,
+    outputs: Mapping[str, bytes] | None = None,
+) -> Iterator[RuntimeCase]:
     project = tmp_path / "project"
     source = project / "source"
     shutil.copytree(FIXTURE / "input", source)
@@ -448,7 +512,7 @@ def _runtime_case(tmp_path: Path) -> Iterator[RuntimeCase]:
         expected_revision=request.base_revision,
     )
     try:
-        for path, content in _agent_outputs().items():
+        for path, content in (outputs or _agent_outputs()).items():
             workspace.write_bytes(path, content)
         changes = workspace.audit_changes()
         manifest = _manifest(request)
@@ -752,6 +816,118 @@ def test_production_fails_closed_but_safe_static_checks_still_run(tmp_path: Path
         assert case.session.has_runtime_anchor(MULESOFT_RUNTIME_AUTHORITY_ANCHOR_KIND)
 
 
+def test_http_only_target_munit_is_reachable_through_enable_flow_source(
+    tmp_path: Path,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_TEST] = _http_only_munit_output()
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    assert _result(report, MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID).status is CheckStatus.PASSED
+    assert _result(report, MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID).status is CheckStatus.PASSED
+
+
+def test_legacy_munit_cannot_satisfy_missing_target_munit_reachability(
+    tmp_path: Path,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_TEST] = b"""<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools">
+  <munit:config name="candidate-disconnected-suite"/>
+  <munit:test name="build-customer-status-response-test">
+    <munit:validation>
+      <munit-tools:assert-that expression="#[payload.status]"
+                               is='#[MunitTools::equalTo("ACTIVE")]'/>
+    </munit:validation>
+  </munit:test>
+</mule>
+"""
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    dependency = _result(report, MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID)
+    assert dependency.status is CheckStatus.FAILED
+    assert dependency.diagnostic_ids == (MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID,)
+    assert report.disposition is ValidationDisposition.RECOVERABLE_FAILURE
+
+
+def test_required_static_failure_precedes_runtime_unavailable_disposition(
+    tmp_path: Path,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_DATAWEAVE] = b"%dw 2.0\noutput application/json\n---\nnull\n"
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    candidate = _result(report, MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID)
+    assert candidate.status is CheckStatus.FAILED
+    assert candidate.diagnostic_ids == (
+        mulesoft_candidate_diagnostic_id(
+            MuleSoftLocalCheckCode.DATAWEAVE_CONTRACT,
+            MULE4_DATAWEAVE,
+        ),
+    )
+    assert _result(report, MULESOFT_TOOLCHAIN_CONTRACT_COMMAND_ID).status is CheckStatus.UNAVAILABLE
+    assert report.disposition is ValidationDisposition.RECOVERABLE_FAILURE
+
+
+def test_candidate_munit_failure_carries_exact_artifact_diagnostic(tmp_path: Path) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_TEST] = b"""<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools">
+  <munit:config name="candidate-suite"/>
+  <munit:test name="trivial-candidate-test">
+    <munit:execution>
+      <flow-ref name="build-customer-status-response"/>
+    </munit:execution>
+    <munit:validation>
+      <munit-tools:assert-that expression="#[true]"
+                               is="#[MunitTools::equalTo(true)]"/>
+    </munit:validation>
+  </munit:test>
+</mule>
+"""
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    candidate = _result(report, MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID)
+    assert candidate.status is CheckStatus.FAILED
+    assert candidate.diagnostic_ids == (
+        mulesoft_candidate_diagnostic_id(
+            MuleSoftLocalCheckCode.MUNIT_CONTRACT,
+            MULE4_TEST,
+        ),
+    )
+
+
+def test_pom_failure_carries_exact_artifact_diagnostic(tmp_path: Path) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_POM] = outputs[MULE4_POM].replace(
+        b"<packaging>mule-application</packaging>",
+        b"<packaging>jar</packaging>",
+        1,
+    )
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    candidate = _result(report, MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID)
+    assert candidate.status is CheckStatus.FAILED
+    assert candidate.diagnostic_ids == (
+        mulesoft_candidate_diagnostic_id(
+            MuleSoftLocalCheckCode.POM_CONTRACT,
+            MULE4_POM,
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     "drift",
     ("missing-config", "mutable-image", "execution-contract", "incomplete-probe"),
@@ -841,7 +1017,19 @@ def test_runtime_owned_inert_container_contract_can_supply_bounded_evidence(
         assert "behavior-report:sha256:" in munit.receipt.operation
         assert "evidence:sha256:" in munit.receipt.operation
         assert runner.candidate_reads == 0
+        loaded_behavior = mulesoft_runtime_module._load_controller_behavior_contract()
+        assert loaded_behavior.contract is not None
+        assert loaded_behavior.suite_payload is not None
+        entry_flow = mulesoft_runtime_module._discover_public_listener_flow(case.workspace.root)
+        rendered_suite = mulesoft_runtime_module._render_controller_behavior_suite(
+            loaded_behavior.suite_payload,
+            loaded_behavior.contract,
+            entry_flow,
+        )
         assert runner.controller_suite_digests == [
+            f"sha256:{hashlib.sha256(rendered_suite).hexdigest()}"
+        ]
+        assert runner.controller_suite_digests != [
             mulesoft_runtime_module._RELEASED_CONTROLLER_BEHAVIOR_SUITE_SHA256
         ]
         assert tree_fingerprint(case.session.source_root) == source_before
@@ -859,6 +1047,182 @@ def test_runtime_owned_inert_container_contract_can_supply_bounded_evidence(
             create_index = runner.calls.index(create_call)
             assert runner.calls[create_index + 1][1:3] == ("container", "inspect")
             assert runner.calls[create_index + 2][1] == "start"
+
+
+def test_runtime_accepts_candidate_chosen_munit_suite_titles_and_test_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = InertContainerRunner("alternate-candidate-report")
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+
+    with _runtime_case(tmp_path / "case") as case:
+        report = _run(case, _validator(case))
+
+    munit = _result(report, MULESOFT_MUNIT_COMMAND_ID)
+    assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
+    assert munit.status is CheckStatus.PASSED
+    assert "suites=2 tests=3" in munit.summary
+    assert "candidate-tests-supplemental" in munit.summary
+
+
+def test_controller_http_suite_binds_candidate_chosen_public_flow_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = _agent_outputs()
+    app_path = "mule4/customer-status-api/src/main/mule/customer-status-api.xml"
+    outputs[app_path] = outputs[app_path].replace(
+        b'name="customer-status-api-flow"',
+        b'name="qwen-selected-public-entry"',
+    )
+    runner = InertContainerRunner()
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+
+    with _runtime_case(tmp_path / "case", outputs) as case:
+        report = _run(case, _validator(case))
+
+    assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
+    assert len(runner.controller_suite_payloads) == 1
+    rendered = runner.controller_suite_payloads[0]
+    assert b'value="qwen-selected-public-entry"' in rendered
+    assert b"__CONTROLLER_ENTRY_FLOW__" not in rendered
+
+
+def test_controller_http_suite_binds_an_equivalent_effective_route_decomposition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_APP] = (
+        outputs[MULE4_APP]
+        .replace(
+            b'basePath="/api"',
+            b'basePath="/"',
+        )
+        .replace(
+            b'path="/customers/{customerId}/status"',
+            b'path="/api/customers/{customerId}/status"',
+        )
+    )
+    runner = InertContainerRunner()
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+
+    with _runtime_case(tmp_path / "case", outputs) as case:
+        report = _run(case, _validator(case))
+
+    assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
+    assert len(runner.controller_suite_payloads) == 1
+    assert b'value="customer-status-api-flow"' in runner.controller_suite_payloads[0]
+
+
+def test_controller_http_suite_resolves_candidate_chosen_route_properties(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_PROPERTIES] = (
+        b"listener:\n"
+        b'  bindAddress: "127.0.0.1"\n'
+        b'  bindPort: "8081"\n'
+        b'  publicBase: "/api"\n'
+        b'  statusResource: "/customers/{customerId}/status"\n'
+    )
+    outputs[MULE4_APP] = (
+        outputs[MULE4_APP]
+        .replace(b"${http.host}", b"${listener.bindAddress}")
+        .replace(b"${http.port}", b"${listener.bindPort}")
+        .replace(b'basePath="/api"', b'basePath="${listener.publicBase}"')
+        .replace(
+            b'path="/customers/{customerId}/status"',
+            b"path=\"#[p('listener.statusResource')]\"",
+        )
+    )
+    runner = InertContainerRunner()
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+
+    with _runtime_case(tmp_path / "case", outputs) as case:
+        report = _run(case, _validator(case))
+
+    assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
+    assert len(runner.controller_suite_payloads) == 1
+    assert b'value="customer-status-api-flow"' in runner.controller_suite_payloads[0]
+
+
+@pytest.mark.parametrize(
+    ("original", "unresolved", "failure_pattern"),
+    (
+        (
+            b'basePath="/api"',
+            b'basePath="${missing.publicBase}"',
+            "listener configuration is not safely bounded",
+        ),
+        (
+            b'path="/customers/{customerId}/status"',
+            b"path=\"#[p('missing.statusResource')]\"",
+            "must expose exactly one bounded public listener flow",
+        ),
+    ),
+)
+def test_runtime_public_flow_discovery_rejects_unresolved_route_properties(
+    tmp_path: Path,
+    original: bytes,
+    unresolved: bytes,
+    failure_pattern: str,
+) -> None:
+    candidate = tmp_path / "candidate"
+    build_mulesoft_candidate(FIXTURE / "input", candidate)
+    app_path = candidate / MULE4_APP
+    app_path.write_bytes(app_path.read_bytes().replace(original, unresolved, 1))
+
+    with pytest.raises(PolicyViolation, match=failure_pattern):
+        mulesoft_runtime_module._discover_public_listener_flow(candidate)
+
+
+def test_reserved_controller_ids_do_not_reserve_private_candidate_flow_names(
+    tmp_path: Path,
+) -> None:
+    candidate = tmp_path / "candidate"
+    build_mulesoft_candidate(FIXTURE / "input", candidate)
+    reserved_test_name = "controller-build-customer-status-response-contract"
+    app_path = candidate / MULE4_APP
+    app = app_path.read_text(encoding="utf-8")
+    app = app.replace(
+        '<flow-ref name="build-customer-status-response"/>',
+        f'<flow-ref name="{reserved_test_name}"/>',
+    ).replace(
+        '<sub-flow name="build-customer-status-response">',
+        f'<sub-flow name="{reserved_test_name}">',
+    )
+    app_path.write_text(app, encoding="utf-8")
+    test_path = candidate / MULE4_TEST
+    test_path.write_text(
+        test_path.read_text(encoding="utf-8").replace(
+            '<flow-ref name="build-customer-status-response"/>',
+            f'<flow-ref name="{reserved_test_name}"/>',
+        ),
+        encoding="utf-8",
+    )
+    loaded = mulesoft_runtime_module._load_controller_behavior_contract()
+    assert loaded.contract is not None
+
+    mulesoft_runtime_module._reject_reserved_controller_test_identity(
+        candidate,
+        loaded.contract,
+    )
+
+    test_path.write_text(
+        test_path.read_text(encoding="utf-8").replace(
+            'name="build-customer-status-response-test"',
+            f'name="{reserved_test_name}"',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(PolicyViolation, match="reused a reserved controller ID"):
+        mulesoft_runtime_module._reject_reserved_controller_test_identity(
+            candidate,
+            loaded.contract,
+        )
 
 
 @pytest.mark.parametrize("mode", ("missing-controller-report", "wrong-controller-test"))
@@ -1000,6 +1364,7 @@ def test_completed_container_munit_failure_is_recoverable(
         assert report.disposition is ValidationDisposition.RECOVERABLE_FAILURE
         assert munit.status is CheckStatus.FAILED
         assert munit.receipt is not None and munit.receipt.exit_code == 1
+        assert munit.diagnostic_ids == (MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID,)
 
 
 def test_effective_hostconfig_relaxation_is_rejected_before_start(

@@ -56,10 +56,100 @@ CONTROLLER_OWNED_VALIDATION_COMMAND_IDS: Final[frozenset[str]] = frozenset(
     {*CONTROLLER_ENVIRONMENT_COMMAND_IDS, *CONTROLLER_INTEGRITY_COMMAND_IDS}
 )
 
+_SALESFORCE_CANDIDATE_COMMAND_ID: Final = "salesforce-candidate-contract"
+_NON_ENGINEER_REPAIRABLE_CANDIDATE_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "salesforce_candidate_inventory",
+        "salesforce_candidate_unclassified",
+    }
+)
+_LWC_LOAD_FAILURE_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "salesforce_lwc_javascript_contract",
+        "salesforce_lwc_template_contract",
+    }
+)
+_ZERO_TEST_LOAD_FAILURE_SUMMARY: Final = "suites=1 tests=0 failed-suites=1 failed-tests=0"
+_JEST_LOAD_DEPENDENCIES: Final[tuple[tuple[str, str], ...]] = (
+    ("salesforce-lwc-jest", "candidate_jest_execution_failure"),
+    ("salesforce-lwc-controller-jest", "controller_jest_execution_failure"),
+)
+
+
+def validation_failure_dependencies(
+    report: ValidationReport,
+) -> dict[Identifier, Identifier]:
+    """Identify one exact LWC load-failure cascade without changing its report.
+
+    Candidate and controller Jest are presentation/correction dependants only
+    when both suites failed before running a test and an earlier static LWC
+    JavaScript or template contract failed. A normal Jest assertion failure,
+    partial test execution, extra runtime diagnostic, missing receipt, or
+    different ordering remains an independent failure.
+    """
+
+    results = report.results
+    for root_index, root in enumerate(results):
+        root_diagnostics = set(root.diagnostic_ids)
+        if (
+            not root.required
+            or root.status is not CheckStatus.FAILED
+            or root.command_id != _SALESFORCE_CANDIDATE_COMMAND_ID
+            or root.receipt is None
+            or root.receipt.exit_code == 0
+            or not (root_diagnostics & _LWC_LOAD_FAILURE_DIAGNOSTIC_IDS)
+            or not any(
+                f"failure-code={diagnostic_id}" in root.summary
+                for diagnostic_id in root_diagnostics & _LWC_LOAD_FAILURE_DIAGNOSTIC_IDS
+            )
+        ):
+            continue
+
+        dependencies: dict[Identifier, Identifier] = {}
+        for command_id, diagnostic_id in _JEST_LOAD_DEPENDENCIES:
+            matches = tuple(
+                result
+                for result in results[root_index + 1 :]
+                if (
+                    result.required
+                    and result.status is CheckStatus.FAILED
+                    and result.command_id == command_id
+                    and result.receipt is not None
+                    and result.receipt.exit_code != 0
+                    and result.diagnostic_ids == (diagnostic_id,)
+                    and _ZERO_TEST_LOAD_FAILURE_SUMMARY in result.summary
+                )
+            )
+            if len(matches) != 1:
+                break
+            dependencies[matches[0].check_id] = root.check_id
+        else:
+            return dependencies
+    return {}
+
+
+def correction_failure_ids(report: ValidationReport) -> tuple[Identifier, ...]:
+    """Project actionable root signals while retaining all raw report results."""
+
+    dependent_check_ids = validation_failure_dependencies(report).keys()
+    return tuple(
+        dict.fromkeys(
+            signal_id
+            for result in report.results
+            if (
+                result.required
+                and result.status is not CheckStatus.PASSED
+                and result.check_id not in dependent_check_ids
+            )
+            for signal_id in (result.check_id, *result.diagnostic_ids)
+        )
+    )
+
 
 def implementation_failure_ids(report: ValidationReport) -> tuple[Identifier, ...]:
     """Project only terminal failures that approved output changes can repair."""
 
+    dependent_check_ids = validation_failure_dependencies(report).keys()
     return tuple(
         dict.fromkeys(
             signal_id
@@ -68,6 +158,14 @@ def implementation_failure_ids(report: ValidationReport) -> tuple[Identifier, ..
                 result.required
                 and result.status is CheckStatus.FAILED
                 and result.command_id not in CONTROLLER_OWNED_VALIDATION_COMMAND_IDS
+                and result.check_id not in dependent_check_ids
+                and not (
+                    result.command_id == _SALESFORCE_CANDIDATE_COMMAND_ID
+                    and bool(result.diagnostic_ids)
+                    and set(result.diagnostic_ids).issubset(
+                        _NON_ENGINEER_REPAIRABLE_CANDIDATE_DIAGNOSTIC_IDS
+                    )
+                )
             )
             for signal_id in (result.check_id, *result.diagnostic_ids)
         )
@@ -165,14 +263,7 @@ class CorrectionController:
     ) -> CorrectionRequest:
         validate_report(report, manifest, change_set)
         implementation_failures = implementation_failure_ids(report)
-        failed = tuple(
-            dict.fromkeys(
-                signal_id
-                for result in report.results
-                if result.required and result.status is not CheckStatus.PASSED
-                for signal_id in (result.check_id, *result.diagnostic_ids)
-            )
-        )
+        failed = correction_failure_ids(report)
         if report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW:
             action = CorrectionAction.COMPLETE
             next_attempt = None
@@ -188,6 +279,19 @@ class CorrectionController:
             reason = (
                 "Controller-owned source-integrity evidence failed; bind a new base revision, "
                 "produce a new manifest digest, and obtain exact approval before implementation."
+            )
+        elif any(
+            result.required
+            and result.status is CheckStatus.FAILED
+            and result.command_id == _SALESFORCE_CANDIDATE_COMMAND_ID
+            and bool(set(result.diagnostic_ids) & _NON_ENGINEER_REPAIRABLE_CANDIDATE_DIAGNOSTIC_IDS)
+            for result in report.results
+        ):
+            action = CorrectionAction.REPLAN_WITH_NEW_APPROVAL
+            next_attempt = None
+            reason = (
+                "The generated-candidate inventory or validation stage is structurally invalid; "
+                "do not offer an Engineer retry that cannot repair the approved output boundary."
             )
         elif report.disposition is ValidationDisposition.ENVIRONMENT_UNAVAILABLE:
             action = CorrectionAction.STOP_ENVIRONMENT
@@ -462,6 +566,8 @@ __all__ = [
     "CONTROLLER_ENVIRONMENT_COMMAND_IDS",
     "CONTROLLER_INTEGRITY_COMMAND_IDS",
     "CONTROLLER_OWNED_VALIDATION_COMMAND_IDS",
+    "correction_failure_ids",
     "implementation_failure_ids",
+    "validation_failure_dependencies",
     "validate_correction_attempt_evidence",
 ]

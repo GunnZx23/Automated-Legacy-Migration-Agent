@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "EnvironmentKind": {
+      "enum": [
+        "local",
+        "salesforce_sandbox",
+        "mule_runtime",
+        "production"
+      ],
+      "title": "EnvironmentKind",
+      "type": "string"
+    },
+    "MigrationTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "entry_path": {
+          "title": "Entry Path",
+          "type": "string"
+        },
+        "source_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Source Version",
+          "type": "string"
+        },
+        "target_runtime": {
+          "title": "Target Runtime",
+          "type": "string"
+        },
+        "target_version": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry_path",
+        "target_runtime",
+        "source_version",
+        "target_version",
+        "description"
+      ],
+      "title": "MigrationTarget",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "allowed_environment": {
+      "$ref": "#/$defs/EnvironmentKind",
+      "default": "local"
+    },
+    "base_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "repository": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Repository",
+      "type": "string"
+    },
+    "request_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/MigrationTarget"
+    }
+  },
+  "required": [
+    "request_id",
+    "platform",
+    "repository",
+    "base_revision",
+    "target"
+  ],
+  "title": "MigrationRequest",
+  "type": "object"
+}
