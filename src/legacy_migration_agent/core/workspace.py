@@ -343,10 +343,6 @@ class IsolatedWorkspace:
         )
 
 
-# A descriptive alias for callers that focus on lifecycle rather than isolation.
-DisposableWorkspace = IsolatedWorkspace
-
-
 def _normalize_path(raw_path: str) -> str:
     try:
         return validate_relative_path(raw_path)

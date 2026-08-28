@@ -632,6 +632,7 @@ class AgentFinalReviewView(StrictModel):
     status: Literal[
         "not_requested",
         "awaiting_final_review",
+        "expired",
         "accepted",
         "rejected",
         "changes_requested",
@@ -1365,7 +1366,7 @@ class AgentUiService:
                 current = self._project_view(handle, status)
                 if current.final_review.status == "not_requested":
                     raise AgentUiError("final_review_unavailable")
-                if current.final_review.status != "awaiting_final_review":
+                if current.final_review.status not in {"awaiting_final_review", "expired"}:
                     raise AgentUiError("final_review_already_decided")
                 if not current.final_review.can_decide:
                     raise AgentUiError("final_review_unavailable")
@@ -1729,6 +1730,7 @@ class AgentUiService:
                     or validation.attempt != candidate.attempt
                 ):
                     raise AgentUiError("candidate_unavailable")
+                base_files = self._candidate_base_files(handle, status)
                 result = persist_candidate_export(
                     project_root=self._project_root,
                     platform=view.platform,
@@ -1738,6 +1740,7 @@ class AgentUiService:
                     manifest_digest=manifest.manifest_digest,
                     change_set_digest=candidate.change_set_digest,
                     files=tuple((item.path, item.content) for item in candidate.files),
+                    base_files=base_files,
                 )
                 lifecycle_event(
                     "ui.candidate.exported",
@@ -1766,11 +1769,13 @@ class AgentUiService:
         self._require_known_handle(handle)
         try:
             with self._lock_for(handle):
-                view = self._project_view(handle, self._load_status(handle))
+                status = self._load_status(handle)
+                view = self._project_view(handle, status)
                 if view.candidate is None or not view.candidate.download_available:
                     raise AgentUiError("candidate_unavailable")
                 return build_candidate_archive(
-                    tuple((item.path, item.content) for item in view.candidate.files)
+                    tuple((item.path, item.content) for item in view.candidate.files),
+                    base_files=self._candidate_base_files(handle, status),
                 )
         except AgentUiError:
             raise
@@ -1784,6 +1789,32 @@ class AgentUiService:
                 error_type=type(error).__name__,
             )
             raise AgentUiError("run_unavailable") from None
+
+    def _candidate_base_files(
+        self,
+        handle: str,
+        status: AgentRunStatus,
+    ) -> tuple[tuple[str, str], ...]:
+        """Read the exact frozen source bound to a run for its usable-project ZIP."""
+
+        scenario = migration_scenario(status.platform)
+        snapshot = snapshot_tree(self._source_root(scenario.source_root))
+        request = MigrationRequest.model_validate(
+            ArtifactStore(self._run_dir(handle) / "evidence").read_json("request.json")
+        )
+        if (
+            request.request_id != status.request_id
+            or request.platform is not status.platform
+            or request.base_revision != snapshot.revision
+        ):
+            raise AgentUiError("candidate_unavailable")
+        try:
+            return tuple(
+                (entry.path, entry.content.decode("utf-8", errors="strict"))
+                for entry in snapshot.entries
+            )
+        except UnicodeDecodeError:
+            raise AgentUiError("candidate_unavailable") from None
 
     def _project_view(self, handle: str, status: AgentRunStatus) -> AgentRunView:
         scenario = migration_scenario(status.platform)
@@ -2637,7 +2668,7 @@ def _final_review_view(
     ):
         raise AgentUiError("run_unavailable")
 
-    if status.status == "awaiting_final_review":
+    if status.status in {"awaiting_final_review", "expired"}:
         for path in (FINAL_REVIEW_DECISION_PATH, FINAL_REVIEW_RECORD_PATH):
             try:
                 store.read_json(path)
@@ -2648,7 +2679,7 @@ def _final_review_view(
             status=status.status,
             eligible=eligible,
             can_request=False,
-            can_decide=eligible and datetime.now(UTC) <= request.expires_at,
+            can_decide=eligible,
             review_id=request.review_id,
             requester=request.requester,
             designated_reviewer=request.designated_reviewer,

@@ -16,7 +16,7 @@ import hashlib
 import json
 import re
 import stat
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
 from xml.etree import ElementTree
@@ -49,7 +49,6 @@ LWC_JEST_TOOLCHAIN_DIGESTS = {
     ),
 }
 
-PROJECT_PATH = "sfdx-project.json"
 MANIFEST_PATH = "manifest/package.xml"
 CONTROLLER_PATH = "force-app/main/default/classes/AccountContactExplorerController.cls"
 CONTROLLER_METADATA_PATH = f"{CONTROLLER_PATH}-meta.xml"
@@ -76,6 +75,7 @@ _LWC_SEMANTIC_BINDING_PATTERN: Final = rf"\{{\s*{_LWC_SIMPLE_BINDING_BODY_PATTER
 
 APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: Final = "apex_public_interface_annotation_mismatch"
 APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: Final = "apex_controlled_query_error_missing"
+APEX_MAX_QUERY_ROWS: Final = 200
 JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: Final = "jest_unapproved_module_target"
 LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: Final = "lwc_template_binding_invalid"
 
@@ -158,16 +158,19 @@ SALESFORCE_IMPLEMENTATION_CONTRACT = (
         "Expose public with sharing class AccountContactExplorerController with exactly the two "
         "public static cacheable methods getAccounts() and getContacts(Id accountId). Query only "
         "the required Account and Contact fields, use static SOQL WITH USER_MODE, filter contacts "
-        "by the selected account, preserve the specified ordering and bounded limits, and return "
-        "an empty list for a null selection before querying. Translate query failures to safe "
-        "nontechnical AuraHandledException messages. Include no DML, dynamic query, callout, "
+        "by the selected account, preserve the specified ordering, and cap each query at 1 through "
+        "200 rows with either a literal LIMIT or a positive compile-time Integer constant. Return "
+        "an empty list for a null selection before querying. Catch each query failure and translate "
+        "it to an AuraHandledException whose sole argument is a fixed safe, nontechnical string; "
+        "never pass through exception details. Include no DML, dynamic query, callout, "
         "external endpoint, credential, authorization value or secret. Internal constants, helpers, "
         "control flow, query layout and safe wording are candidate-owned."
     ),
     (
         "Generate an @IsTest Apex class that exercises both public controller methods with "
-        "isolated synthetic Account and Contact data and meaningful normal, null, and empty-state "
-        "assertions. Do not create User records, query Profile, or use System.runAs to fabricate a "
+        "isolated synthetic Account and Contact data and meaningful assertions for account results, "
+        "a selected account with contacts, a selected account without contacts, and a null selection. "
+        "Do not create User records, query Profile, or use System.runAs to fabricate a "
         "permission failure; those tests are org-configuration-dependent, while the controller's "
         "safe exception translation is checked separately. Test names, helpers, setup, counts, "
         "record values and assertion forms are candidate-owned. Do not use SeeAllData=true, "
@@ -192,8 +195,11 @@ SALESFORCE_IMPLEMENTATION_CONTRACT = (
         "Provide an accessible local UI with stable data-role values account-selector, "
         "load-contacts and contact-results, data-state values loading and empty, and role=alert for "
         "controlled guidance and errors. Put the account-selector hook on the interactive control. "
-        "Hooks may be literal values or simple property bindings. LWC template bindings must use "
-        "supported simple identifiers or dotted properties; compute expressions in JavaScript. "
+        "Hooks may be literal values or simple property bindings so their rendered values remain "
+        "stable for the public semantic test surface. Salesforce API 67 supports complex template "
+        "expressions elsewhere in the component; using a JavaScript getter for a nontrivial value "
+        "is a maintainability convention, not a compiler restriction. The pinned LWC compiler and "
+        "Jest runner remain authoritative for expression syntax. "
         "Do not use external scripts, frames, imports or URL-backed CSS."
     ),
     (
@@ -563,26 +569,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _check_project(project: dict[str, Any]) -> None:
-    _require(project.get("sourceApiVersion") == API_VERSION, "project API version")
-    package_directories = project.get("packageDirectories")
-    _require(isinstance(package_directories, list), "project package directories")
-    _require(
-        any(
-            isinstance(entry, dict)
-            and entry.get("path") == "force-app"
-            and entry.get("default") is True
-            for entry in cast(list[Any], package_directories)
-        ),
-        "default source directory",
-    )
-    login_url = project.get("sfdcLoginUrl")
-    _require(
-        login_url in {"https://login.salesforce.com", "https://test.salesforce.com"},
-        "Salesforce login URL",
-    )
-
-
 def _check_manifest(package_root: ElementTree.Element) -> None:
     _require(
         package_root.tag == f"{{{METADATA_NAMESPACE}}}Package",
@@ -609,7 +595,7 @@ def _check_manifest(package_root: ElementTree.Element) -> None:
                 "AccountContactExplorerController",
                 "AccountContactExplorerControllerTest",
                 "LegacyAccountContactExplorerController",
-                "LegacyAccountContactExplorerControllerTest",
+                "LegacyAcctContactExplorerCtrlTest",
             },
             "ApexPage": {"LegacyAccountContactExplorer"},
             "LightningComponentBundle": {"accountContactExplorer"},
@@ -631,14 +617,14 @@ def _check_apex_metadata(root: ElementTree.Element) -> None:
     )
 
 
-def _apex_method_body(
+def _apex_method_bounds(
     code: str,
     *,
     return_type: str,
     method_name: str,
     arguments: str,
-) -> str:
-    """Return one public method body from the comment/string-free Apex view."""
+) -> tuple[int, int]:
+    """Return one public method-body span from the comment/string-free Apex view."""
 
     matches = tuple(
         re.finditer(
@@ -658,7 +644,7 @@ def _apex_method_body(
         elif character == "}":
             depth -= 1
             if depth == 0:
-                return code[opening + 1 : index]
+                return opening + 1, index
             _require(depth >= 0, f"{method_name} Apex method braces")
     raise LocalCheckFailure(f"{method_name} Apex method braces")
 
@@ -675,6 +661,7 @@ def _require_soql_contract(
     object_name: str,
     fields: frozenset[str],
     order_by: tuple[str, ...],
+    integer_constants: Mapping[str, int],
 ) -> None:
     select = re.search(
         rf"\bSELECT\b(?P<fields>.*?)\bFROM\s+{re.escape(object_name)}\b",
@@ -697,13 +684,120 @@ def _require_soql_contract(
         re.search(rf"\bORDER\s+BY\s+{ordered_fields}\b", query, re.I) is not None,
         f"{object_name} query order",
     )
+    limit = re.search(
+        r"\bLIMIT\s+(?:(?P<binding>:[A-Za-z_][A-Za-z0-9_]*)|(?P<literal>[1-9][0-9]*))\b",
+        query,
+        re.I,
+    )
+    _require(limit is not None, f"{object_name} bounded query")
+    assert limit is not None
+    if limit.group("literal") is not None:
+        limit_value = int(limit.group("literal"))
+    else:
+        constant_name = limit.group("binding")[1:].casefold()
+        _require(
+            constant_name in integer_constants,
+            f"{object_name} compile-time query limit",
+        )
+        limit_value = integer_constants[constant_name]
     _require(
-        re.search(r"\bLIMIT\s+(?::[A-Za-z_][A-Za-z0-9_]*|[1-9][0-9]*)\b", query, re.I) is not None,
-        f"{object_name} bounded query",
+        1 <= limit_value <= APEX_MAX_QUERY_ROWS,
+        f"{object_name} query row cap",
     )
     _require(
         re.search(r"\bWITH\s+USER_MODE\b", query, re.I) is not None,
         f"{object_name} user-mode query",
+    )
+
+
+def _apex_integer_constants(code: str) -> dict[str, int]:
+    constants: dict[str, int] = {}
+    for match in re.finditer(
+        r"\b(?:public|private|protected|global)?\s*"
+        r"(?:(?:static\s+final)|(?:final\s+static))\s+Integer\s+"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[0-9]+)\s*;",
+        code,
+        re.I,
+    ):
+        constants[match.group("name").casefold()] = int(match.group("value"))
+    return constants
+
+
+def _matching_block_end(code: str, opening: int, label: str) -> int:
+    _require(0 <= opening < len(code) and code[opening] == "{", f"{label} opening brace")
+    depth = 0
+    for index in range(opening, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+            _require(depth >= 0, f"{label} braces")
+    raise LocalCheckFailure(f"{label} braces")
+
+
+def _require_controlled_query_failure(
+    code_body: str,
+    source_body: str,
+    query: str,
+    *,
+    object_name: str,
+) -> None:
+    query_offset = code_body.find(query)
+    _require(query_offset >= 0, f"{object_name} query position")
+    try_blocks = tuple(re.finditer(r"\btry\s*\{", code_body[:query_offset], re.I))
+    _require(bool(try_blocks), f"{object_name} guarded query")
+    try_opening = try_blocks[-1].end() - 1
+    try_end = _matching_block_end(code_body, try_opening, f"{object_name} try block")
+    _require(query_offset < try_end, f"{object_name} query inside try block")
+
+    catch = re.match(
+        r"\s*catch\s*\(\s*(?:QueryException|Exception)\s+"
+        r"[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\{",
+        code_body[try_end + 1 :],
+        re.I,
+    )
+    _require(catch is not None, f"{object_name} query catch block")
+    assert catch is not None
+    catch_opening = try_end + 1 + catch.end() - 1
+    catch_end = _matching_block_end(code_body, catch_opening, f"{object_name} catch block")
+    catch_code = code_body[catch_opening + 1 : catch_end]
+    catch_source = source_body[catch_opening + 1 : catch_end]
+    throws = tuple(
+        re.finditer(
+            r"\bthrow\s+new\s+AuraHandledException\s*\((?P<argument>.*?)\)\s*;",
+            catch_code,
+            re.I | re.DOTALL,
+        )
+    )
+    _require(len(throws) == 1, f"{object_name} controlled query failure")
+    throw = throws[0]
+    _require(
+        not throw.group("argument").strip(),
+        f"{object_name} fixed safe error argument",
+    )
+    source_argument = catch_source[throw.start("argument") : throw.end("argument")]
+    literal = re.fullmatch(
+        r"\s*'(?P<message>(?:\\.|[^'\\\r\n]){1,200})'\s*",
+        source_argument,
+    )
+    _require(literal is not None, f"{object_name} fixed safe error message")
+    assert literal is not None
+    normalized_message = literal.group("message").casefold()
+    _require(
+        not any(
+            marker in normalized_message
+            for marker in (
+                "exception",
+                "stack trace",
+                "select ",
+                " from ",
+                "accountid",
+                "getmessage",
+            )
+        ),
+        f"{object_name} nontechnical error message",
     )
 
 
@@ -756,18 +850,22 @@ def _check_controller(controller: str) -> None:
             diagnostic_ids=(APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,),
         )
 
-    get_accounts_body = _apex_method_body(
+    get_accounts_bounds = _apex_method_bounds(
         code,
         return_type="Account",
         method_name="getAccounts",
         arguments=r"\(\s*\)",
     )
-    get_contacts_body = _apex_method_body(
+    get_contacts_bounds = _apex_method_bounds(
         code,
         return_type="Contact",
         method_name="getContacts",
         arguments=r"\(\s*Id\s+accountId\s*\)",
     )
+    get_accounts_body = code[slice(*get_accounts_bounds)]
+    get_contacts_body = code[slice(*get_contacts_bounds)]
+    get_accounts_source = controller[slice(*get_accounts_bounds)]
+    get_contacts_source = controller[slice(*get_contacts_bounds)]
     all_static_queries = _apex_static_queries(code)
     _require(
         all(re.search(r"\bWITH\s+USER_MODE\b", query, re.I) for query in all_static_queries),
@@ -787,17 +885,20 @@ def _check_controller(controller: str) -> None:
         len(account_queries) == 1 and len(contact_queries) == 1,
         "method-bound Account and Contact static queries",
     )
+    integer_constants = _apex_integer_constants(code)
     _require_soql_contract(
         account_queries[0],
         object_name="Account",
         fields=frozenset({"Id", "Name"}),
         order_by=("Name",),
+        integer_constants=integer_constants,
     )
     _require_soql_contract(
         contact_queries[0],
         object_name="Contact",
         fields=frozenset({"Id", "FirstName", "LastName", "Email", "Phone"}),
         order_by=("LastName", "FirstName"),
+        integer_constants=integer_constants,
     )
     _require(
         re.search(
@@ -821,25 +922,24 @@ def _check_controller(controller: str) -> None:
         is not None,
         "Contact null-selection guard",
     )
-    controlled_query_failures = (
-        re.search(
-            r"\bthrow\s+new\s+AuraHandledException\s*\(",
+    try:
+        _require_controlled_query_failure(
             get_accounts_body,
-            re.I,
+            get_accounts_source,
+            account_queries[0],
+            object_name="Account",
         )
-        is not None
-        and re.search(
-            r"\bthrow\s+new\s+AuraHandledException\s*\(",
+        _require_controlled_query_failure(
             get_contacts_body,
-            re.I,
+            get_contacts_source,
+            contact_queries[0],
+            object_name="Contact",
         )
-        is not None
-    )
-    if not controlled_query_failures:
+    except LocalCheckFailure as exc:
         raise LocalCheckFailure(
             "local Apex controlled-query error assertion failed",
             diagnostic_ids=(APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,),
-        )
+        ) from exc
     _require(
         re.search(
             r"(?m)^[ \t]*(?:[A-Z][A-Z0-9_]*[ \t]+){2,}[A-Z][A-Z0-9_]*[ \t]*;[ \t]*$",
@@ -980,30 +1080,64 @@ def _check_controller_test(test_source: str) -> None:
         is not None,
         "Apex test class",
     )
-    _require(
-        re.search(
+    test_methods = tuple(
+        re.finditer(
             r"@IsTest\b(?:\s*\(\s*\))?\s+static\s+void\s+"
             r"[A-Za-z_][A-Za-z0-9_]*\s*\(",
             code,
             re.I,
         )
-        is not None,
+    )
+    _require(
+        len(test_methods) >= 2,
         "Apex test method",
     )
-    for method_name in ("getAccounts", "getContacts"):
-        _require(
-            re.search(
-                rf"\bAccountContactExplorerController\s*\.\s*{method_name}\s*\(",
-                code,
-                re.I,
-            )
-            is not None,
-            "Apex public method coverage",
-        )
     _require(
-        re.search(r"\b(?:System\s*\.\s*)?Assert\s*\.", code, re.I) is not None
-        or re.search(r"\bSystem\s*\.\s*assert(?:Equals|NotEquals)?\s*\(", code, re.I) is not None,
-        "Apex test assertion",
+        re.search(
+            r"\bAccountContactExplorerController\s*\.\s*getAccounts\s*\(\s*\)",
+            code,
+            re.I,
+        )
+        is not None,
+        "Apex account-result coverage",
+    )
+    contact_calls = tuple(
+        re.finditer(
+            r"\bAccountContactExplorerController\s*\.\s*getContacts\s*"
+            r"\(\s*(?P<argument>[^()]*)\s*\)",
+            code,
+            re.I,
+        )
+    )
+    _require(
+        len(contact_calls) >= 3,
+        "Apex populated, empty, and null Contact coverage",
+    )
+    _require(
+        any(call.group("argument").strip().casefold() == "null" for call in contact_calls),
+        "Apex null-selection coverage",
+    )
+    _require(
+        sum(call.group("argument").strip().casefold() != "null" for call in contact_calls) >= 2,
+        "Apex selected-account Contact coverage",
+    )
+    _require(
+        len(re.findall(r"\bnew\s+Account\s*\(", code, re.I)) >= 2
+        and re.search(r"\bnew\s+Contact\s*\(", code, re.I) is not None
+        and len(re.findall(r"\binsert\b", code, re.I)) >= 2,
+        "isolated Apex Account and Contact test records",
+    )
+    assertions = tuple(
+        re.finditer(
+            r"\b(?:Assert\s*\.\s*[A-Za-z_][A-Za-z0-9_]*|"
+            r"System\s*\.\s*assert(?:Equals|NotEquals)?)\s*\(",
+            code,
+            re.I,
+        )
+    )
+    _require(
+        len(assertions) >= 4,
+        "meaningful Apex test assertions",
     )
     _require(
         re.search(
@@ -1013,6 +1147,10 @@ def _check_controller_test(test_source: str) -> None:
         )
         is None,
         "isolated Apex test data",
+    )
+    _require(
+        re.search(r"\bnew\s+User\s*\(|\bProfile\b|\bSystem\s*\.\s*runAs\s*\(", code, re.I) is None,
+        "portable Apex test identity assumptions",
     )
     _require(
         re.search(
@@ -1278,24 +1416,6 @@ def _check_lwc_template(template: str) -> None:
         is None,
         "forbidden LWC template capability",
     )
-    binding_tokens = tuple(re.finditer(r"\{(?P<body>[^{}\r\n]*)\}", template))
-    template_without_bindings = re.sub(r"\{[^{}\r\n]*\}", "", template)
-    bindings_are_simple = (
-        "{" not in template_without_bindings and "}" not in template_without_bindings
-    )
-    bindings_are_simple = bindings_are_simple and all(
-        re.fullmatch(
-            rf"\s*{_LWC_SIMPLE_BINDING_BODY_PATTERN}\s*",
-            match.group("body"),
-        )
-        is not None
-        for match in binding_tokens
-    )
-    if not bindings_are_simple:
-        raise LocalCheckFailure(
-            "local LWC template binding assertion failed",
-            diagnostic_ids=(LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,),
-        )
     for attribute, values in (
         ("data-role", LWC_SEMANTIC_DATA_ROLES),
         ("data-state", LWC_SEMANTIC_DATA_STATES),
@@ -1315,10 +1435,11 @@ def _check_lwc_template(template: str) -> None:
             template,
             re.DOTALL,
         )
-        _require(
-            not missing_literals or bounded_binding is not None,
-            f"LWC semantic hook {attribute}",
-        )
+        if missing_literals and bounded_binding is None:
+            raise LocalCheckFailure(
+                f"LWC semantic hook {attribute} assertion failed",
+                diagnostic_ids=(LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,),
+            )
 
 
 def _check_lwc_styles(styles: str) -> None:
@@ -1393,34 +1514,6 @@ def _jest_static_import_modules(source: str, code_view: str) -> tuple[str, ...] 
         modules.append(parsed.group("module"))
 
     return tuple(modules)
-
-
-def _jest_globals_named_imports(source: str, code_view: str) -> frozenset[str]:
-    """Return Jest APIs named-imported from the non-injected globals module."""
-
-    imported: set[str] = set()
-    for token in re.finditer(r"\bimport\b", code_view):
-        declaration = source[token.start() : token.start() + 4096]
-        parsed = re.match(
-            r"import[ \t\r\n]+(?P<bindings>[A-Za-z0-9_$,*{} \t\r\n]{1,2048}?)"
-            r"\bfrom[ \t\r\n]*(?P<quote>['\"])(?P<module>[^'\"\r\n]{1,256})"
-            r"(?P=quote)",
-            declaration,
-        )
-        if parsed is None or parsed.group("module") != "@jest/globals":
-            continue
-        named = re.fullmatch(r"\s*\{(?P<items>[\s\S]*?)\}\s*", parsed.group("bindings"))
-        if named is None:
-            continue
-        for item in named.group("items").split(","):
-            binding = re.fullmatch(
-                r"\s*(?P<api>[A-Za-z_$][A-Za-z0-9_$]*)"
-                r"(?:\s+as\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*",
-                item,
-            )
-            if binding is not None:
-                imported.add(binding.group("api"))
-    return frozenset(imported)
 
 
 def _dangerous_jest_module_target(target: str) -> bool:
@@ -1962,15 +2055,6 @@ def _json_object_bytes(content: bytes) -> dict[str, Any]:
         raise LocalCheckFailure("validation JSON is malformed") from exc
     _require(isinstance(value, dict), "JSON object")
     return cast(dict[str, Any], value)
-
-
-def _json_array(path: Path) -> list[Any]:
-    try:
-        value = json.loads(_text(path))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise LocalCheckFailure("validation JSON is malformed") from exc
-    _require(isinstance(value, list), "JSON array")
-    return cast(list[Any], value)
 
 
 def _xml_root(path: Path) -> ElementTree.Element:

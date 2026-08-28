@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import AnyHttpUrl, BaseModel
 
+import legacy_migration_agent.application.final_review as final_review_module
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectContext,
     ArchitectManifestProposal,
@@ -469,6 +470,133 @@ def test_final_review_is_durable_and_grants_no_external_authority(tmp_path: Path
     assert status.status == "accepted"
     assert status.external_actions_authorized == ()
     assert session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND)
+
+
+def test_interrupted_review_request_resumes_the_same_immutable_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, migration_request, manifest, change_set, report = _completed_session(tmp_path)
+    requested_at = datetime.now(UTC)
+    expires_at = requested_at + timedelta(days=2)
+    freeze = final_review_module._freeze_lifecycle
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(final_review_module, "_freeze_lifecycle", interrupt)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        request_final_review(
+            session,
+            migration_request,
+            manifest,
+            change_set,
+            report,
+            requester="migration-owner",
+            designated_reviewer="final-reviewer",
+            requested_at=requested_at,
+            expires_at=expires_at,
+        )
+    assert not session.has_runtime_anchor(FINAL_REVIEW_REQUESTED_KIND)
+
+    monkeypatch.setattr(final_review_module, "_freeze_lifecycle", freeze)
+    recovered = request_final_review(
+        session,
+        migration_request,
+        manifest,
+        change_set,
+        report,
+        requester="migration-owner",
+        designated_reviewer="final-reviewer",
+        requested_at=requested_at + timedelta(minutes=1),
+        expires_at=expires_at + timedelta(minutes=1),
+    )
+
+    assert recovered.requested_at == requested_at
+    assert recovered.expires_at == expires_at
+    assert session.has_runtime_anchor(FINAL_REVIEW_REQUESTED_KIND)
+
+
+def test_interrupted_review_decision_resumes_the_same_immutable_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, migration_request, manifest, change_set, report = _completed_session(tmp_path)
+    _request(session, migration_request, manifest, change_set, report)
+    decided_at = datetime.now(UTC)
+    freeze = final_review_module._freeze_lifecycle
+
+    def interrupt(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(final_review_module, "_freeze_lifecycle", interrupt)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        decide_final_review(
+            session,
+            reviewer="final-reviewer",
+            selection="accept",
+            decided_at=decided_at,
+            comment="Reviewed candidate.",
+        )
+    assert not session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND)
+
+    monkeypatch.setattr(final_review_module, "_freeze_lifecycle", freeze)
+    recovered = decide_final_review(
+        session,
+        reviewer="final-reviewer",
+        selection="accept",
+        decided_at=decided_at + timedelta(minutes=1),
+        comment="Reviewed candidate.",
+    )
+
+    assert recovered.decided_at == decided_at
+    assert recovered.outcome == "accepted"
+    assert session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND)
+
+
+def test_expired_review_can_be_closed_but_not_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, migration_request, manifest, change_set, report = _completed_session(tmp_path)
+    requested_at = datetime.now(UTC)
+    expires_at = requested_at + timedelta(hours=1)
+    request_final_review(
+        session,
+        migration_request,
+        manifest,
+        change_set,
+        report,
+        requester="migration-owner",
+        designated_reviewer="final-reviewer",
+        requested_at=requested_at,
+        expires_at=expires_at,
+    )
+    future = expires_at + timedelta(minutes=1)
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return future if tz is not None else future.replace(tzinfo=None)
+
+    monkeypatch.setattr(final_review_module, "datetime", FutureDateTime)
+    assert get_final_review_status(session).status == "expired"
+    with pytest.raises(PolicyViolation, match="cannot be accepted"):
+        decide_final_review(
+            session,
+            reviewer="final-reviewer",
+            selection="accept",
+            decided_at=future,
+        )
+
+    record = decide_final_review(
+        session,
+        reviewer="final-reviewer",
+        selection="request_changes",
+        decided_at=future,
+        comment="Review window expired; start a fresh review after revision.",
+    )
+    assert record.outcome == "changes_requested"
 
 
 def test_final_review_accepts_explicit_validator_advisory_unavailable_evidence(

@@ -50,7 +50,7 @@ def salesforce_candidate_outputs() -> dict[str, bytes]:
                     <members>AccountContactExplorerController</members>
                     <members>AccountContactExplorerControllerTest</members>
                     <members>LegacyAccountContactExplorerController</members>
-                    <members>LegacyAccountContactExplorerControllerTest</members>
+                    <members>LegacyAcctContactExplorerCtrlTest</members>
                     <name>ApexClass</name>
                 </types>
                 <types>
@@ -120,19 +120,51 @@ def salesforce_candidate_outputs() -> dict[str, bytes]:
             """
             @IsTest
             private class AccountContactExplorerControllerTest {
-                @IsTest
-                static void exercisesPublicReadMethods() {
-                    Account sampleAccount = new Account(Name = 'Synthetic Candidate Account');
-                    insert sampleAccount;
+                @TestSetup
+                static void createRecords() {
+                    List<Account> accounts = new List<Account>{
+                        new Account(Name = 'Synthetic Empty Account'),
+                        new Account(Name = 'Synthetic Populated Account')
+                    };
+                    insert accounts;
+                    insert new Contact(
+                        AccountId = accounts[1].Id,
+                        FirstName = 'Synthetic',
+                        LastName = 'Contact'
+                    );
+                }
 
+                @IsTest
+                static void returnsAccountsAndSelectedContacts() {
+                    Account populatedAccount = [
+                        SELECT Id FROM Account
+                        WHERE Name = 'Synthetic Populated Account'
+                        LIMIT 1
+                    ];
                     Test.startTest();
                     List<Account> visibleAccounts =
                         AccountContactExplorerController.getAccounts();
                     List<Contact> visibleContacts =
-                        AccountContactExplorerController.getContacts(sampleAccount.Id);
+                        AccountContactExplorerController.getContacts(populatedAccount.Id);
                     Test.stopTest();
 
-                    Assert.isNotNull(visibleAccounts);
+                    Assert.areEqual(2, visibleAccounts.size());
+                    Assert.areEqual(1, visibleContacts.size());
+                    Assert.areEqual('Contact', visibleContacts[0].LastName);
+                }
+
+                @IsTest
+                static void returnsEmptyContactsForAccountWithoutContacts() {
+                    Account emptyAccount = [
+                        SELECT Id FROM Account
+                        WHERE Name = 'Synthetic Empty Account'
+                        LIMIT 1
+                    ];
+                    Test.startTest();
+                    List<Contact> visibleContacts =
+                        AccountContactExplorerController.getContacts(emptyAccount.Id);
+                    Test.stopTest();
+
                     Assert.areEqual(0, visibleContacts.size());
                 }
 

@@ -1,5 +1,5 @@
 @IsTest
-private class LegacyAccountContactExplorerControllerTest {
+private class LegacyAcctContactExplorerCtrlTest {
     @TestSetup
     static void createRecords() {
         List<Account> accounts = new List<Account>{

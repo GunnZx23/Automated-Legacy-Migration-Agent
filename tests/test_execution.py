@@ -1,11 +1,16 @@
 import hashlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from legacy_migration_agent.contracts import ApprovalAction, EnvironmentKind
-from legacy_migration_agent.core.execution import SafeCommandRunner, execution_binding
+from legacy_migration_agent.core.execution import (
+    OUTPUT_LIMIT_EXIT_CODE,
+    SafeCommandRunner,
+    execution_binding,
+)
 from legacy_migration_agent.core.policies import (
     CommandRegistry,
     CommandSpec,
@@ -319,6 +324,53 @@ def test_timeout_is_a_terminal_failure_with_bounded_evidence(tmp_path: Path):
     assert result.receipt.exit_code == 124
     assert "timed out" in result.stderr
     assert result.receipt.stdout_digest.startswith("sha256:")
+
+
+def test_output_limit_terminates_process_before_unbounded_capture(tmp_path: Path):
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    command = spec(
+        "fixture-output-limit",
+        "import os; chunk = b'x' * 8192; exec(\"while True:\\n    os.write(1, chunk)\")",
+        repository,
+    )
+
+    result = run_command(
+        runner(repository, (command,), max_output_chars=64),
+        "fixture-output-limit",
+        repository,
+    )
+
+    assert result.receipt.exit_code == OUTPUT_LIMIT_EXIT_CODE
+    assert result.timed_out is False
+    assert len(result.stdout) == 64
+    assert result.stdout.endswith("...[output truncated]")
+    assert "output limit" in result.stderr
+
+
+def test_timeout_terminates_descendant_processes(tmp_path: Path):
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    child = (
+        "import time; from pathlib import Path; time.sleep(0.4); "
+        "Path('descendant-survived.txt').write_text('survived')"
+    )
+    parent = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
+        "time.sleep(2)"
+    )
+    command = spec("fixture-descendant-timeout", parent, repository)
+
+    result = run_command(
+        runner(repository, (command,), timeout_seconds=0.05),
+        "fixture-descendant-timeout",
+        repository,
+    )
+    time.sleep(0.6)
+
+    assert result.timed_out is True
+    assert not (repository / "descendant-survived.txt").exists()
 
 
 def test_unknown_command_is_rejected_before_execution(tmp_path: Path):

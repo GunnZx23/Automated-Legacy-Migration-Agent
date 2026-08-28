@@ -14,7 +14,9 @@ public static List<Contact> getContacts(Id accountId)
 
 Place the annotation directly on each method. Both methods are read-only, and
 every SOQL statement must use `WITH USER_MODE`, static bind variables, bounded
-ordering, and a limit. These exact names and signatures are this project's
+ordering, and a limit of 1 through 200 rows. A bound limit must resolve to a
+positive compile-time `Integer` constant; the exact value inside that range is
+candidate-owned. These exact names and signatures are this project's
 candidate contract; the underlying `@AuraEnabled static` exposure and user-mode
 security behavior are Salesforce platform features.
 
@@ -26,8 +28,9 @@ does not depend on changing API defaults.
 
 Expose only required `public static` methods with `@AuraEnabled`. Use
 `cacheable=true` only for methods that read data and do not mutate it. In this
-project's generated service, each query method must translate query failures to
-a new `AuraHandledException` with a short safe literal message. Never return
+project's generated service, each query must be inside a `try` block whose
+matching `catch` translates the failure to a new `AuraHandledException`. Its
+sole argument must be a short, fixed, safe literal message. Never return
 `Exception.getMessage()`, stack traces, raw SOQL, record data, or secrets;
 catch/helper layout and exact safe wording remain candidate-owned. Users also
 require Apex class access; an LWC bundle does not grant that permission itself.
@@ -35,6 +38,10 @@ For this bounded fixture, update only the approved
 `AccountContactExplorerUser` permission set to add the new controller while
 preserving its legacy controller, Visualforce page, and read-only object and
 field access. Do not create a second permission set or modify a profile.
+Portable Apex tests use synthetic data. Do not create `User` records, query
+`Profile`, or use `System.runAs` to fabricate a permission failure.
+The local controller contract checks safe exception translation; an authorized
+org validation proves Apex execution.
 
 Project correction rule `apex_controlled_query_error_missing` applies only to
 the generated service class. Repair each query method's safe exception
@@ -47,6 +54,5 @@ boundaries, and avoid manual DOM/HTML injection. CSP blocks inline scripts and
 unknown resource origins; third-party libraries belong in reviewed static
 resources, and required external origins need narrowly scoped trusted URLs.
 
-Portable Apex unit tests prove functional behavior. Restricted-user acceptance
-in the target sandbox is separate evidence because org sharing, profiles, and
-field permissions vary.
+Restricted-user acceptance in the target sandbox is separate evidence because
+org sharing, profiles, and field permissions vary.

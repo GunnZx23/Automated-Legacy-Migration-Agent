@@ -889,8 +889,7 @@ def test_frontend_restores_only_a_valid_persistent_run_handle() -> None:
     assert "window.localStorage.getItem(RUN_HANDLE_STORAGE_KEY)" in script
     assert "window.localStorage.setItem(RUN_HANDLE_STORAGE_KEY, handle)" in script
     assert "window.localStorage.removeItem(RUN_HANDLE_STORAGE_KEY)" in script
-    assert "NEW_CONVERSATION_STORAGE_KEY" in script
-    assert "window.localStorage.removeItem(NEW_CONVERSATION_STORAGE_KEY)" in script
+    assert "NEW_CONVERSATION_STORAGE_KEY" not in script
     assert "if (!handle) {" in restore_block
     no_handle = restore_block[
         restore_block.index("if (!handle) {") : restore_block.index(
@@ -1402,6 +1401,24 @@ def test_all_responses_set_security_headers_and_never_enable_cors(
     status, headers, _ = _request(ui_server, "OPTIONS", "/api/conversations")
     assert status == HTTPStatus.METHOD_NOT_ALLOWED
     assert not any(name.startswith("access-control-allow-") for name in headers)
+
+
+@pytest.mark.parametrize("method", ("PUT", "PATCH", "DELETE", "TRACE", "BREW"))
+def test_unsupported_http_methods_use_the_json_error_contract(
+    ui_server: server_module.ThreadingHTTPServer,
+    method: str,
+) -> None:
+    status, headers, body = _request(ui_server, method, "/api/conversations")
+
+    assert status == HTTPStatus.METHOD_NOT_ALLOWED
+    assert headers["content-type"] == "application/json; charset=utf-8"
+    assert headers["cache-control"] == "no-store"
+    assert _payload(body) == {
+        "error": {
+            "code": "method_not_allowed",
+            "message": "That HTTP method is not allowed.",
+        }
+    }
 
 
 @pytest.mark.parametrize(

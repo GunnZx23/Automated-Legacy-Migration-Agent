@@ -220,6 +220,7 @@ class FinalReviewStatus(StrictModel):
     request_id: Identifier
     status: Literal[
         "awaiting_final_review",
+        "expired",
         "accepted",
         "rejected",
         "changes_requested",
@@ -276,16 +277,31 @@ def request_final_review(
 ) -> FinalReviewRequest:
     """Persist the exact final-review request for a terminally passing run."""
 
-    if _artifact_exists(session, FINAL_REVIEW_REQUEST_PATH):
+    if session.has_runtime_anchor(FINAL_REVIEW_REQUESTED_KIND):
         raise PolicyViolation("final review has already been requested for this run")
+    existing_request = _load_optional_request(session)
+    if existing_request is not None:
+        if (
+            existing_request.requester != requester
+            or existing_request.designated_reviewer != designated_reviewer
+        ):
+            raise PolicyViolation("incomplete final-review request differs from the retry")
+        # The first immutable request owns its timestamps. A retried UI request
+        # can therefore resume after an interrupted lifecycle write even when
+        # the server generated a new current timestamp for the retry.
+        requested_at = existing_request.requested_at
+        expires_at = existing_request.expires_at
     role_evidence = _validate_completed_run(session, request, manifest, change_set, report)
     now = datetime.now(UTC)
     if requested_at > now + timedelta(minutes=5):
         raise PolicyViolation("final-review request time cannot be in the future")
-    if expires_at <= now:
+    if existing_request is None and expires_at <= now:
         raise PolicyViolation("final-review request is already expired")
 
-    lifecycle_kind, lifecycle_digest = _completed_lifecycle(session)
+    lifecycle_kind, lifecycle_digest = _completed_lifecycle(
+        session,
+        exact=existing_request is None,
+    )
     required = tuple(result for result in report.results if result.required)
     receipt_digests = tuple(
         artifact_digest(result.receipt) for result in required if result.receipt is not None
@@ -348,6 +364,8 @@ def request_final_review(
         expires_at=expires_at,
     )
     session.validate_portable_evidence(review)
+    if existing_request is not None and existing_request != review:
+        raise PolicyViolation("incomplete final-review request differs from the retry")
     session.store.write_json(FINAL_REVIEW_REQUEST_PATH, review)
     _freeze_lifecycle(session, FINAL_REVIEW_REQUESTED_KIND, artifact_digest(review))
     return review
@@ -419,10 +437,20 @@ def decide_final_review(
 ) -> FinalReviewRecord:
     """Consume the pending final-review request exactly once."""
 
-    if _artifact_exists(session, FINAL_REVIEW_DECISION_PATH) or _artifact_exists(
-        session, FINAL_REVIEW_RECORD_PATH
-    ):
+    if session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND):
         raise PolicyViolation("final review has already been decided")
+    existing_decision = _load_optional_decision(session)
+    existing_record = _load_optional_record(session)
+    if existing_record is not None and existing_decision is None:
+        raise PolicyViolation("final-review decision lifecycle is incomplete")
+    if existing_decision is not None:
+        if (
+            existing_decision.selection != selection
+            or existing_decision.reviewer != reviewer
+            or existing_decision.comment != comment
+        ):
+            raise PolicyViolation("incomplete final-review decision differs from the retry")
+        decided_at = existing_decision.decided_at
     request = _load_request(session)
     _verify_lifecycle(
         session,
@@ -435,8 +463,9 @@ def decide_final_review(
         raise PolicyViolation("final-review decision time cannot be in the future")
     if decided_at < request.requested_at:
         raise PolicyViolation("final-review decision cannot predate its request")
-    if decided_at > request.expires_at or now > request.expires_at:
-        raise PolicyViolation("final-review request has expired")
+    expired = decided_at > request.expires_at or now > request.expires_at
+    if expired and selection == "accept":
+        raise PolicyViolation("expired final-review request cannot be accepted")
     if reviewer != request.designated_reviewer:
         raise PolicyViolation("final review cannot be transferred to another reviewer")
     if reviewer == request.requester:
@@ -460,6 +489,8 @@ def decide_final_review(
         comment=comment,
     )
     session.validate_portable_evidence(decision)
+    if existing_decision is not None and existing_decision != decision:
+        raise PolicyViolation("incomplete final-review decision differs from the retry")
 
     if selection == "accept":
         outcome: FinalReviewOutcome = "accepted"
@@ -498,6 +529,8 @@ def decide_final_review(
         decided_at=decided_at,
     )
     session.validate_portable_evidence(record)
+    if existing_record is not None and existing_record != record:
+        raise PolicyViolation("incomplete final-review record differs from the retry")
     session.store.write_json(FINAL_REVIEW_DECISION_PATH, decision)
     session.store.write_json(FINAL_REVIEW_RECORD_PATH, record)
     _freeze_lifecycle(session, FINAL_REVIEW_DECIDED_KIND, artifact_digest(record))
@@ -572,12 +605,15 @@ def get_final_review_status(session: AgentRunSession) -> FinalReviewStatus:
         artifact_digest(request),
         exact=True,
     )
+    pending_status: Literal["expired", "awaiting_final_review"] = (
+        "expired" if datetime.now(UTC) > request.expires_at else "awaiting_final_review"
+    )
     return FinalReviewStatus(
         review_id=request.review_id,
         run_id=request.run_id,
         thread_id=request.thread_id,
         request_id=request.request_id,
-        status="awaiting_final_review",
+        status=pending_status,
         request_digest=artifact_digest(request),
     )
 
@@ -723,11 +759,15 @@ def _validate_persisted_role_artifacts(
     )
 
 
-def _completed_lifecycle(session: AgentRunSession) -> tuple[str, Sha256Digest]:
+def _completed_lifecycle(
+    session: AgentRunSession,
+    *,
+    exact: bool = True,
+) -> tuple[str, Sha256Digest]:
     for kind in ("agent-run-retried", "agent-run-resumed", "agent-run-planned"):
         if not session.has_runtime_anchor(kind):
             continue
-        session.verify_index(kind, exact=True)
+        session.verify_index(kind, exact=exact)
         index_payload = session.store.read_json(f"indexes/{kind}.json")
         session.verify_runtime_anchor(
             kind,
@@ -797,6 +837,39 @@ def _load_request(session: AgentRunSession) -> FinalReviewRequest:
     if request.session_context_digest != artifact_digest(session.context):
         raise PolicyViolation("final-review request session binding does not match")
     return request
+
+
+def _load_optional_request(session: AgentRunSession) -> FinalReviewRequest | None:
+    try:
+        return _load_request(session)
+    except PolicyViolation as exc:
+        try:
+            session.store.read_json(FINAL_REVIEW_REQUEST_PATH)
+        except FileNotFoundError:
+            return None
+        raise exc
+
+
+def _load_optional_decision(session: AgentRunSession) -> FinalReviewDecision | None:
+    try:
+        payload = session.store.read_json(FINAL_REVIEW_DECISION_PATH)
+    except FileNotFoundError:
+        return None
+    try:
+        return FinalReviewDecision.model_validate(payload)
+    except (TypeError, ValueError) as exc:
+        raise PolicyViolation("final-review decision evidence is malformed") from exc
+
+
+def _load_optional_record(session: AgentRunSession) -> FinalReviewRecord | None:
+    try:
+        payload = session.store.read_json(FINAL_REVIEW_RECORD_PATH)
+    except FileNotFoundError:
+        return None
+    try:
+        return FinalReviewRecord.model_validate(payload)
+    except (TypeError, ValueError) as exc:
+        raise PolicyViolation("final-review record evidence is malformed") from exc
 
 
 def _load_record(session: AgentRunSession) -> FinalReviewRecord:

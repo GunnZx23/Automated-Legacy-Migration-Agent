@@ -116,20 +116,43 @@ def structurally_distinct_safe_outputs() -> dict[str, bytes]:
 """
     outputs[CONTROLLER_TEST_PATH] = b"""@IsTest
 private class AccountContactExplorerControllerTest {
+    @TestSetup
+    static void arrangeSyntheticRecords() {
+        List<Account> tenants = new List<Account>{
+            new Account(Name = 'Different Empty Tenant'),
+            new Account(Name = 'Different Populated Tenant')
+        };
+        insert tenants;
+        insert new Contact(
+            AccountId = tenants[1].Id,
+            FirstName = 'Model',
+            LastName = 'Selected'
+        );
+    }
+
     @IsTest
     static void modelSelectedThisScenarioName() {
-        Account sampleAccount = new Account(Name = 'Different Synthetic Tenant');
-        insert sampleAccount;
+        List<Account> tenants = [SELECT Id, Name FROM Account ORDER BY Name];
 
         Test.startTest();
         List<Account> visibleAccounts =
             AccountContactExplorerController.getAccounts();
-        List<Contact> visibleContacts =
-            AccountContactExplorerController.getContacts(sampleAccount.Id);
+        List<Contact> emptyContacts =
+            AccountContactExplorerController.getContacts(tenants[0].Id);
+        List<Contact> populatedContacts =
+            AccountContactExplorerController.getContacts(tenants[1].Id);
         Test.stopTest();
 
-        Assert.isNotNull(visibleAccounts);
-        Assert.areEqual(0, visibleContacts.size());
+        Assert.areEqual(2, visibleAccounts.size());
+        Assert.areEqual(0, emptyContacts.size());
+        Assert.areEqual(1, populatedContacts.size());
+    }
+
+    @IsTest
+    static void modelSelectedNullScenarioName() {
+        List<Contact> noContacts =
+            AccountContactExplorerController.getContacts(null);
+        Assert.areEqual(0, noContacts.size());
     }
 }
 """
@@ -246,9 +269,14 @@ def test_implementation_contract_assigns_candidate_owned_behavior_to_runtime_tes
     assert "validated by the pinned Jest runner" in contract
     assert "inline in the test file" in contract
     assert "stable data-role values" in contract
-    assert "supported simple identifiers or dotted properties" in contract
+    assert "Salesforce API 67 supports complex template expressions" in contract
+    assert "maintainability convention, not a compiler restriction" in contract
     assert "public static cacheable methods" in contract
-    assert "safe nontechnical AuraHandledException" in contract
+    assert (
+        "AuraHandledException whose sole argument is a fixed safe, nontechnical string" in contract
+    )
+    assert "cap each query at 1 through 200 rows" in contract
+    assert "a selected account with contacts" in contract
     assert "Do not create User records, query Profile, or use System.runAs" in contract
     assert "stale by an account change" in contract
     assert "Do not render the contact-results hook" in contract
@@ -373,7 +401,7 @@ def test_candidate_contract_rejects_unbounded_semantic_hook_expression() -> None
         "computeDisabled()",
     ),
 )
-def test_candidate_contract_reports_unsupported_lwc_template_expression(
+def test_candidate_contract_allows_api_67_lwc_template_expression(
     expression: str,
 ) -> None:
     outputs = structurally_distinct_safe_outputs()
@@ -384,10 +412,8 @@ def test_candidate_contract_reports_unsupported_lwc_template_expression(
         1,
     ).encode("utf-8")
 
-    failure = rejected_candidate(outputs)
-
-    assert failure.failure_code == "salesforce_lwc_template_contract"
-    assert failure.diagnostic_ids == (LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,)
+    with candidate_from_memory(outputs) as workspace:
+        assert check_salesforce_candidate(workspace.root)["passed"] is True
 
 
 def test_candidate_contract_accepts_semicolon_free_aliased_lwc_base_import() -> None:
@@ -530,6 +556,28 @@ def test_candidate_contract_rejects_queries_without_user_mode() -> None:
     assert failure.failure_code == "salesforce_apex_controller_contract"
 
 
+@pytest.mark.parametrize(
+    ("old", "new"),
+    (
+        ("MAX_ACCOUNTS = 50", "MAX_ACCOUNTS = 201"),
+        ("LIMIT :MAX_ACCOUNTS", "LIMIT 201"),
+        ("LIMIT :MAX_ACCOUNTS", "LIMIT :runtimeLimit"),
+    ),
+)
+def test_candidate_contract_rejects_missing_or_excessive_query_caps(
+    old: str,
+    new: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    assert old in source
+    outputs[CONTROLLER_PATH] = source.replace(old, new, 1).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+
+
 def test_candidate_contract_rejects_extra_non_user_mode_query() -> None:
     outputs = salesforce_candidate_outputs()
     source = outputs[CONTROLLER_PATH].decode()
@@ -584,6 +632,30 @@ def test_candidate_contract_rejects_uncontrolled_query_failure(
     source = outputs[CONTROLLER_PATH].decode()
     assert safe_exception in source
     outputs[CONTROLLER_PATH] = source.replace(safe_exception, unsafe_fallback, 1).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,)
+
+
+@pytest.mark.parametrize(
+    "unsafe_exception",
+    (
+        "throw new AuraHandledException(queryError.getMessage());",
+        "throw new AuraHandledException('Query exception while selecting from Account.');",
+    ),
+)
+def test_candidate_contract_rejects_technical_or_dynamic_error_disclosure(
+    unsafe_exception: str,
+) -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    outputs[CONTROLLER_PATH] = source.replace(
+        "throw new AuraHandledException('Accounts could not be read.');",
+        unsafe_exception,
+        1,
+    ).encode()
 
     failure = rejected_candidate(outputs)
 
@@ -724,6 +796,20 @@ def test_candidate_contract_requires_generated_tests_to_call_public_methods(
     outputs[CONTROLLER_TEST_PATH] = source.replace(
         f"AccountContactExplorerController.{method_name}",
         f"AccountContactExplorerController.unrelated{method_name}",
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_test_contract"
+
+
+def test_candidate_contract_requires_distinct_populated_empty_and_null_apex_scenarios() -> None:
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_TEST_PATH].decode()
+    outputs[CONTROLLER_TEST_PATH] = source.replace(
+        "AccountContactExplorerController.getContacts(null)",
+        "AccountContactExplorerController.getContacts(emptyAccount.Id)",
+        1,
     ).encode()
 
     failure = rejected_candidate(outputs)

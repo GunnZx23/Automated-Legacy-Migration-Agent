@@ -36,7 +36,6 @@ from legacy_migration_agent.core.workspace import SnapshotEntry, TreeSnapshot, s
 
 CORE = "http://www.mulesoft.org/schema/mule/core"
 DW1 = "http://www.mulesoft.org/schema/mule/ee/dw"
-EE = "http://www.mulesoft.org/schema/mule/ee/core"
 HTTP = "http://www.mulesoft.org/schema/mule/http"
 MUNIT = "http://www.mulesoft.org/schema/mule/munit"
 MUNIT_TOOLS = "http://www.mulesoft.org/schema/mule/munit-tools"
@@ -116,7 +115,6 @@ MULESOFT_IMPLEMENTATION_CONTRACT = (
     ),
 )
 
-MULE3_RUNTIME = "3.9.5"
 MULE4_RUNTIME = "4.9.20"
 JAVA_VERSION = "17"
 DATAWEAVE_VERSION = "2.0"

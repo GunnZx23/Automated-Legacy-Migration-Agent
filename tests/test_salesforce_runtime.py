@@ -800,8 +800,8 @@ def test_salesforce_preset_is_exact_and_excludes_model_owned_tooling() -> None:
     assert SALESFORCE_RUNTIME_CONFIG.analyzer_version == SALESFORCE_ANALYZER_VERSION
     assert SALESFORCE_RUNTIME_CONFIG.graph_builder is build_salesforce_dependency_graph
     assert SALESFORCE_PLATFORM_ADAPTER.scope_policy == SALESFORCE_SCOPE_POLICY
-    assert SALESFORCE_PLATFORM_ADAPTER.adapter_id == "salesforce-vf-to-lwc-v10"
-    assert SALESFORCE_SCOPE_POLICY.policy_id == "salesforce-vf-to-lwc-v10"
+    assert SALESFORCE_PLATFORM_ADAPTER.adapter_id == "salesforce-vf-to-lwc-v11"
+    assert SALESFORCE_SCOPE_POLICY.policy_id == "salesforce-vf-to-lwc-v11"
     assert len(SALESFORCE_AGENT_OUTPUT_PATHS) == 11
     assert (
         SALESFORCE_SCOPE_POLICY.required_source_input_paths == SALESFORCE_TRANSFORMATION_INPUT_PATHS

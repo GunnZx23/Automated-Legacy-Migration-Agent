@@ -16,10 +16,14 @@
   mock before `createElement` and append the component; do not call a non-`@api`
   component method through the host element.
 - Generated Apex tests use isolated synthetic `Account` and `Contact` data for
-  normal, null, and empty behavior. Do not create `User` records, query
+  account results, a selected account with contacts, a selected account without
+  contacts, and a null selection. Assert each observable result. Do not create `User` records, query
   `Profile`, or use `System.runAs` to fabricate a permission failure; those
   assumptions are org-dependent. The local controller contract checks safe
   exception translation; authorized org validation proves Apex execution.
+- LWC Jest files belong under `__tests__` and run locally. Keep
+  `**/__tests__/**` in `.forceignore` so Salesforce CLI does not send Jest
+  JavaScript to Metadata API as part of the LWC bundle.
 
 Rule `jest_unapproved_module_target` removes a bare `@salesforce/apex` target,
 an Apex `require()`, or any target other than
@@ -79,7 +83,8 @@ approved generated-file boundary.
 Local LWC Jest proves browser-side behavior in isolation. It does not connect
 to a Salesforce org, compile Apex, confirm sharing or field permissions, or
 prove metadata deployability. Generated Apex tests should use synthetic data,
-call both public methods, and cover normal, null, and empty paths. Do not create
+call both public methods, and cover populated-account, empty-account, and null
+selection paths. Do not create
 `User` records, query `Profile`, or use `System.runAs` with an assumed profile
 to manufacture a query failure: profile names, licenses, required user fields,
 and effective permissions are org-dependent. The local controller contract

@@ -121,10 +121,11 @@ SALESFORCE_API_RUNTIME: Final = "Salesforce API 67.0"
 SALESFORCE_TRANSFORMATION_INPUT_PATHS: Final = tuple(
     sorted(
         (
+            ".forceignore",
             "force-app/main/default/classes/LegacyAccountContactExplorerController.cls",
             "force-app/main/default/classes/LegacyAccountContactExplorerController.cls-meta.xml",
-            "force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls",
-            "force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/classes/LegacyAcctContactExplorerCtrlTest.cls",
+            "force-app/main/default/classes/LegacyAcctContactExplorerCtrlTest.cls-meta.xml",
             "force-app/main/default/pages/LegacyAccountContactExplorer.page",
             "force-app/main/default/pages/LegacyAccountContactExplorer.page-meta.xml",
             "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
@@ -140,7 +141,7 @@ SALESFORCE_RUNTIME_CONFIG: Final = PlatformRuntimeConfig(
 )
 
 SALESFORCE_SCOPE_POLICY: Final = MigrationScopePolicy(
-    policy_id="salesforce-vf-to-lwc-v10",
+    policy_id="salesforce-vf-to-lwc-v11",
     platform=Platform.SALESFORCE,
     required_source_input_paths=SALESFORCE_TRANSFORMATION_INPUT_PATHS,
     approved_output_paths=SALESFORCE_AGENT_OUTPUT_PATHS,
@@ -153,7 +154,7 @@ SALESFORCE_SCOPE_POLICY: Final = MigrationScopePolicy(
 )
 
 SALESFORCE_PLATFORM_ADAPTER: Final = PlatformAdapter.bind(
-    adapter_id="salesforce-vf-to-lwc-v10",
+    adapter_id="salesforce-vf-to-lwc-v11",
     policy=SALESFORCE_SCOPE_POLICY,
 )
 

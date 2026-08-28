@@ -20,7 +20,6 @@ Identifier = Annotated[
 ]
 Revision = Annotated[str, Field(min_length=7, max_length=160)]
 Sha256Digest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
-GitRevision = Annotated[str, Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")]
 ActorIdentifier = Annotated[
     str, Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._@+-]*$")
 ]

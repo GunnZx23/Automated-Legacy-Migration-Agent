@@ -110,6 +110,19 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
         self._respond_error(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed")
 
+    def send_error(
+        self,
+        code: int,
+        message: str | None = None,
+        explain: str | None = None,
+    ) -> None:
+        """Keep unknown-method failures inside the public JSON API contract."""
+
+        if code == HTTPStatus.NOT_IMPLEMENTED:
+            self._respond_error(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed")
+            return
+        super().send_error(code, message, explain)
+
     def log_message(self, format: str, *args: object) -> None:
         """Suppress default logging so request input is never echoed to the console."""
 

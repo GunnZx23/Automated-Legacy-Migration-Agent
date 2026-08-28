@@ -24,7 +24,6 @@ const state = {
 
 const RUN_HANDLE_STORAGE_KEY = "legacy-migration-agent.current-run-handle";
 const CONVERSATION_ID_STORAGE_KEY = "legacy-migration-agent.current-conversation-id";
-const NEW_CONVERSATION_STORAGE_KEY = "legacy-migration-agent.new-conversation";
 const RUN_HANDLE_PATTERN = /^[0-9a-f]{24}$/;
 const CONVERSATION_ID_PATTERN = /^[0-9a-f]{24}$/;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
@@ -290,29 +289,15 @@ function rememberConversationId(conversationId) {
   }
   try {
     window.localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, conversationId);
-    window.localStorage.setItem(NEW_CONVERSATION_STORAGE_KEY, "true");
   } catch (_error) {
     // Storage is optional; the durable server conversation remains authoritative.
   }
   return true;
 }
 
-function newConversationRequested() {
-  try {
-    return window.localStorage.getItem(NEW_CONVERSATION_STORAGE_KEY) === "true";
-  } catch (_error) {
-    return false;
-  }
-}
-
 function markNewConversationRequested() {
   clearStoredRunHandle();
   clearStoredConversationId();
-  try {
-    window.localStorage.setItem(NEW_CONVERSATION_STORAGE_KEY, "true");
-  } catch (_error) {
-    // Storage is optional; the current page still resets safely.
-  }
 }
 
 function storedRunHandle() {
@@ -336,7 +321,6 @@ function rememberRunHandle(handle) {
   }
   try {
     window.localStorage.setItem(RUN_HANDLE_STORAGE_KEY, handle);
-    window.localStorage.removeItem(NEW_CONVERSATION_STORAGE_KEY);
   } catch (_error) {
     // Storage is optional; durable server evidence remains authoritative.
   }
@@ -374,12 +358,6 @@ async function api(path, options = {}) {
     throw new AgentUiApiError(message, code, response.status);
   }
   return response;
-}
-
-function platformLabel(platform) {
-  return platform === "salesforce"
-    ? "Salesforce: Visualforce → LWC"
-    : "MuleSoft: Mule 3 → Mule 4";
 }
 
 function scenarioById(scenarioId) {
@@ -1354,6 +1332,8 @@ function finalReviewGate(run) {
         ? "Request final human review"
         : review.status === "awaiting_final_review"
           ? "Record the designated reviewer's decision"
+          : review.status === "expired"
+            ? "Close the expired final review"
           : "Final human review recorded",
     ),
   );
@@ -1422,7 +1402,7 @@ function finalReviewGate(run) {
   );
   article.append(facts);
 
-  if (review.status === "awaiting_final_review" && review.can_decide) {
+  if (["awaiting_final_review", "expired"].includes(review.status) && review.can_decide) {
     const form = document.createElement("form");
     form.id = "final-review-decision-form";
     form.className = "decision-form";
@@ -1444,11 +1424,17 @@ function finalReviewGate(run) {
     comment.maxLength = 2000;
     const actions = document.createElement("div");
     actions.className = "decision-actions";
-    [
-      ["accept", "Accept candidate"],
-      ["request_changes", "Request changes"],
-      ["reject", "Reject candidate"],
-    ].forEach(([selection, label], index) => {
+    const decisions = review.status === "expired"
+      ? [
+          ["request_changes", "Close and request changes"],
+          ["reject", "Close and reject candidate"],
+        ]
+      : [
+          ["accept", "Accept candidate"],
+          ["request_changes", "Request changes"],
+          ["reject", "Reject candidate"],
+        ];
+    decisions.forEach(([selection, label], index) => {
       const button = textElement(
         "button",
         index === 0 ? "button button-primary" : "button button-secondary",

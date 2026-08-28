@@ -749,13 +749,15 @@ def test_salesforce_approval_projects_persisted_candidate_and_advisory_and_safe_
     assert "/Users/" not in lifecycle_log
 
     payload = service.candidate_zip(started.handle)
+    expected_project = {entry.path: entry.content for entry in before.entries}
+    expected_project.update(SALESFORCE_TEST_CANDIDATE)
     with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
-        assert set(bundle.namelist()) == set(SALESFORCE_AGENT_OUTPUT_PATHS)
+        assert set(bundle.namelist()) == set(expected_project)
         assert all(
             not path.startswith("/") and ".." not in path.split("/") for path in bundle.namelist()
         )
-        for path in SALESFORCE_AGENT_OUTPUT_PATHS:
-            assert bundle.read(path) == SALESFORCE_TEST_CANDIDATE[path]
+        for path, content in expected_project.items():
+            assert bundle.read(path) == content
 
     exported = service.export_candidate(started.handle)
     assert exported.platform == "salesforce"
@@ -764,6 +766,8 @@ def test_salesforce_approval_projects_persisted_candidate_and_advisory_and_safe_
     assert exported.validation_disposition == "environment_unavailable"
     assert exported.ready_for_human_review is False
     assert exported.file_count == len(SALESFORCE_AGENT_OUTPUT_PATHS)
+    assert exported.archive_kind == "source_plus_candidate_overlay"
+    assert exported.archive_file_count == len(expected_project)
     assert (project / exported.archive_path).read_bytes() == payload
     exported_root = project / exported.candidate_path
     for path in SALESFORCE_AGENT_OUTPUT_PATHS:

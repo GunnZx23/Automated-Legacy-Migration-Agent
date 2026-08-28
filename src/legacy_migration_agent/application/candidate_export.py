@@ -63,6 +63,8 @@ class CandidateExportResult(StrictModel):
     file_count: int = Field(ge=1)
     files: tuple[CandidateFileDigest, ...]
     candidate_digest: Sha256Digest
+    archive_kind: Literal["candidate_changes", "source_plus_candidate_overlay"]
+    archive_file_count: int = Field(ge=1)
     archive_sha256: Sha256Digest
     receipt_sha256: Sha256Digest
     validation_disposition: str
@@ -89,13 +91,20 @@ class _CandidateExportReceipt(StrictModel):
     file_count: int = Field(ge=1)
     files: tuple[CandidateFileDigest, ...]
     candidate_digest: Sha256Digest
+    archive_kind: Literal["candidate_changes", "source_plus_candidate_overlay"]
+    archive_file_count: int = Field(ge=1)
     archive_sha256: Sha256Digest
 
 
-def build_candidate_archive(files: Sequence[tuple[str, str]]) -> bytes:
-    """Return the deterministic ZIP representation used by every export surface."""
+def build_candidate_archive(
+    files: Sequence[tuple[str, str]],
+    *,
+    base_files: Sequence[tuple[str, str]] = (),
+) -> bytes:
+    """Return a deterministic candidate ZIP, optionally overlaid on frozen source."""
 
-    return _candidate_archive(_prepare_files(files))
+    prepared_base = _prepare_files(base_files) if base_files else ()
+    return _candidate_archive(_overlay_files(prepared_base, _prepare_files(files)))
 
 
 def export_candidate(
@@ -108,8 +117,9 @@ def export_candidate(
     manifest_digest: str,
     change_set_digest: str,
     files: Sequence[tuple[str, str]],
+    base_files: Sequence[tuple[str, str]] = (),
 ) -> CandidateExportResult:
-    """Publish exact candidate bytes and a deterministic archive and receipt.
+    """Publish exact changed bytes plus a deterministic usable-project archive.
 
     Replaying an identical export is idempotent.  Existing content is never
     replaced: a different byte, unsafe path component, special file, symlink,
@@ -126,14 +136,19 @@ def export_candidate(
         change_set_digest=change_set_digest,
     )
     prepared = _prepare_files(files)
+    prepared_base = _prepare_files(base_files) if base_files else ()
+    archived_files = _overlay_files(prepared_base, prepared)
     inventory = tuple(
         CandidateFileDigest(path=path, size_bytes=len(payload), sha256=_digest(payload))
         for path, payload in prepared
     )
     inventory_value = [entry.model_dump(mode="json") for entry in inventory]
     candidate_digest = _digest(canonical_json_bytes(inventory_value))
-    archive = _candidate_archive(prepared)
+    archive = _candidate_archive(archived_files)
     archive_sha256 = _digest(archive)
+    archive_kind: Literal["candidate_changes", "source_plus_candidate_overlay"] = (
+        "source_plus_candidate_overlay" if prepared_base else "candidate_changes"
+    )
 
     export_root = f"output/{platform}-{handle}/attempt-{attempt}"
     candidate_path = f"{export_root}/candidate"
@@ -156,6 +171,8 @@ def export_candidate(
         file_count=len(inventory),
         files=inventory,
         candidate_digest=candidate_digest,
+        archive_kind=archive_kind,
+        archive_file_count=len(archived_files),
         archive_sha256=archive_sha256,
     )
     receipt_payload = canonical_json_bytes(receipt) + b"\n"
@@ -180,6 +197,14 @@ def export_candidate(
         )
         descriptors.append(candidate_fd)
 
+        # Detect every conflict before publishing any missing file. Without this
+        # preflight, a replay with an additional candidate path could mutate the
+        # candidate directory and only then discover that the immutable archive
+        # or receipt belonged to a different export.
+        _preflight_immutable_file(attempt_fd, "candidate.zip", archive)
+        _preflight_immutable_file(attempt_fd, "export.json", receipt_payload)
+        _preflight_candidate_inventory(candidate_fd, prepared)
+
         for path, payload in prepared:
             _publish_candidate_file(candidate_fd, path, payload)
         _verify_candidate_inventory(candidate_fd, prepared)
@@ -202,6 +227,8 @@ def export_candidate(
         file_count=len(inventory),
         files=inventory,
         candidate_digest=candidate_digest,
+        archive_kind=archive_kind,
+        archive_file_count=len(archived_files),
         archive_sha256=archive_sha256,
         receipt_sha256=receipt_sha256,
         validation_disposition=terminal_validation_disposition,
@@ -270,6 +297,23 @@ def _prepare_files(files: Sequence[tuple[str, str]]) -> tuple[tuple[str, bytes],
         prefix = f"{path}/"
         if any(other.startswith(prefix) for other in paths[index + 1 :]):
             raise ValueError(f"candidate file conflicts with a descendant path: {path}")
+    return ordered
+
+
+def _overlay_files(
+    base_files: tuple[tuple[str, bytes], ...],
+    candidate_files: tuple[tuple[str, bytes], ...],
+) -> tuple[tuple[str, bytes], ...]:
+    """Overlay candidate bytes on source bytes without inventing extra artifacts."""
+
+    merged = dict(base_files)
+    merged.update(candidate_files)
+    ordered = tuple(sorted(merged.items()))
+    paths = [path for path, _payload in ordered]
+    for index, path in enumerate(paths):
+        prefix = f"{path}/"
+        if any(other.startswith(prefix) for other in paths[index + 1 :]):
+            raise ValueError(f"archive file conflicts with a descendant path: {path}")
     return ordered
 
 
@@ -403,6 +447,17 @@ def _publish_immutable_file(parent_fd: int, name: str, payload: bytes) -> None:
         raise PolicyViolation(f"immutable export file failed read-back verification: {name}")
 
 
+def _preflight_immutable_file(parent_fd: int, name: str, payload: bytes) -> None:
+    """Reject an existing conflicting immutable file without changing the export tree."""
+
+    try:
+        existing = _read_private_regular_file(parent_fd, name)
+    except FileNotFoundError:
+        return
+    if existing != payload:
+        raise PolicyViolation(f"immutable export file already has different bytes: {name}")
+
+
 def _read_private_regular_file(parent_fd: int, name: str) -> bytes:
     expected = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     if (
@@ -448,6 +503,30 @@ def _verify_candidate_inventory(
             raise PolicyViolation(f"candidate file failed exact-byte verification: {path}")
 
 
+def _preflight_candidate_inventory(
+    candidate_fd: int,
+    expected_files: tuple[tuple[str, bytes], ...],
+) -> None:
+    """Require all existing candidate entries to be a matching subset of the requested export."""
+
+    actual_files: dict[str, bytes] = {}
+    actual_directories: set[str] = set()
+    _scan_candidate_directory(candidate_fd, "", actual_files, actual_directories)
+    expected = dict(expected_files)
+    expected_directories: set[str] = set()
+    for path in expected:
+        parts = path.split("/")[:-1]
+        for depth in range(1, len(parts) + 1):
+            expected_directories.add("/".join(parts[:depth]))
+    unexpected_directories = actual_directories - expected_directories
+    unexpected_files = set(actual_files) - set(expected)
+    if unexpected_directories or unexpected_files:
+        raise PolicyViolation("candidate directory contains entries outside the requested export")
+    for path, payload in actual_files.items():
+        if payload != expected[path]:
+            raise PolicyViolation(f"candidate file already has different bytes: {path}")
+
+
 def _scan_candidate_directory(
     directory_fd: int,
     prefix: str,
@@ -473,8 +552,10 @@ def _scan_candidate_directory(
                 os.close(child_fd)
         elif stat.S_ISREG(metadata.st_mode):
             files[path] = _read_private_regular_file(directory_fd, name)
+        elif stat.S_ISLNK(metadata.st_mode):
+            raise PolicyViolation(f"candidate path uses a symlink: {path}")
         else:
-            raise PolicyViolation(f"candidate path is a symlink or special file: {path}")
+            raise PolicyViolation(f"candidate path is not a regular file: {path}")
 
 
 def _verify_export_root(attempt_fd: int, archive: bytes, receipt: bytes) -> None:

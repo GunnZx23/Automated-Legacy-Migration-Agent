@@ -17,11 +17,13 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import selectors
+import signal
 import stat
 import subprocess
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,6 +47,7 @@ from legacy_migration_agent.core.redaction import SecretRedactor
 DEFAULT_MAX_OUTPUT_CHARS = 16_384
 DEFAULT_TIMEOUT_SECONDS = 60.0
 TIMEOUT_EXIT_CODE = 124
+OUTPUT_LIMIT_EXIT_CODE = 125
 
 
 @dataclass(frozen=True)
@@ -190,32 +193,19 @@ class SafeCommandRunner:
 
         started_at = datetime.now(UTC)
         started_monotonic = time.monotonic()
-        timed_out = False
-        try:
-            completed = subprocess.run(
-                resolved_command.argv,
-                cwd=resolved_workdir,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=effective_timeout,
-                check=False,
-                shell=False,
-                env=resolved_command.spec.environment_map(),
-            )
-            exit_code = completed.returncode
-            raw_stdout = completed.stdout
-            raw_stderr = completed.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            exit_code = TIMEOUT_EXIT_CODE
-            raw_stdout = _coerce_output(exc.stdout)
-            partial_stderr = _coerce_output(exc.stderr)
+        exit_code, raw_stdout, raw_stderr, timed_out, output_exceeded = _run_bounded_process(
+            resolved_command.argv,
+            cwd=resolved_workdir,
+            environment=resolved_command.spec.environment_map(),
+            timeout_seconds=effective_timeout,
+            max_output_bytes=self._max_output_chars * 4,
+        )
+        if timed_out:
             timeout_message = f"command timed out after {effective_timeout:g} seconds"
-            raw_stderr = (
-                f"{partial_stderr}\n{timeout_message}" if partial_stderr else timeout_message
-            )
+            raw_stderr = f"{raw_stderr}\n{timeout_message}" if raw_stderr else timeout_message
+        elif output_exceeded:
+            limit_message = "command exceeded the controller output limit"
+            raw_stderr = f"{raw_stderr}\n{limit_message}" if raw_stderr else limit_message
 
         duration_seconds = max(0.0, time.monotonic() - started_monotonic)
         ended_at = datetime.now(UTC)
@@ -370,12 +360,94 @@ class SafeCommandRunner:
             self._consumed_approval_nonces.add(nonce)
 
 
-def _coerce_output(output: str | bytes | None) -> str:
-    if output is None:
-        return ""
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return output
+def _run_bounded_process(
+    argv: tuple[str, ...],
+    *,
+    cwd: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: float,
+    max_output_bytes: int,
+) -> tuple[int, str, str, bool, bool]:
+    """Stream bounded output and terminate the full child process group."""
+
+    process = subprocess.Popen(  # noqa: S603 - argv is resolved by CommandRegistry
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        env=dict(environment),
+        close_fds=True,
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    chunks: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
+    lengths = {"stdout": 0, "stderr": 0}
+    deadline = time.monotonic() + timeout_seconds
+    timed_out = False
+    output_exceeded = False
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                _kill_process_group(process)
+                break
+            for key, _ in selector.select(min(remaining, 0.1)):
+                payload = os.read(key.fd, 8192)
+                stream = str(key.data)
+                if not payload:
+                    selector.unregister(key.fileobj)
+                    continue
+                available = max_output_bytes - lengths[stream]
+                if available > 0:
+                    retained = payload[:available]
+                    chunks[stream].append(retained)
+                    lengths[stream] += len(retained)
+                if len(payload) > available:
+                    output_exceeded = True
+                    _kill_process_group(process)
+                    break
+            if output_exceeded:
+                break
+        if timed_out:
+            exit_code = TIMEOUT_EXIT_CODE
+        elif output_exceeded:
+            exit_code = OUTPUT_LIMIT_EXIT_CODE
+        else:
+            exit_code = process.wait(timeout=5)
+        if timed_out or output_exceeded:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _kill_process_group(process)
+                process.wait(timeout=5)
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+        if process.poll() is None:
+            _kill_process_group(process)
+            process.wait(timeout=5)
+    stdout = b"".join(chunks["stdout"]).decode("utf-8", errors="replace")
+    stderr = b"".join(chunks["stderr"]).decode("utf-8", errors="replace")
+    return exit_code, stdout, stderr, timed_out, output_exceeded
+
+
+def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError:
+        process.kill()
 
 
 def _redact_output(redactor: SecretRedactor, output: str) -> tuple[str, bool]:

@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "salesforce-capstone-dev-qwen38-run-18d5d840-2026-08-27",
+  "recorded_at": "2026-08-28T01:02:49Z",
+  "platform": "salesforce",
+  "validation_mode": "metadata_api_check_only",
+  "deployment_performed": false,
+  "source_run": {
+    "handle": "18d5d840ecaaab678ef337cb",
+    "run_id": "ui-run-18d5d840ecaaab678ef337cb",
+    "thread_id": "ui-thread-18d5d840ecaaab678ef337cb",
+    "request_id": "ui-request-18d5d840ecaaab678ef337cb",
+    "attempt": 1,
+    "provider": "ollama",
+    "model_id": "qwen3.8:latest",
+    "model_revision": "sha256:22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643",
+    "base_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+    "candidate_change_set_digest": "sha256:8b29dee52982fd2a340678e706136eade9d796ab246d675e9efc06df57cff67e",
+    "export_archive_digest": "sha256:7afb8ab20d88038a03bdc86db341328f2f65b2dfff8b8fa63b614e07ff8a5cd9",
+    "local_validation_disposition": "ready_for_human_review",
+    "local_required_checks_passed": 7,
+    "local_required_checks_total": 7,
+    "candidate_authored_jest_tests_passed": 10,
+    "controller_owned_jest_tests_passed": 9
+  },
+  "candidate_export": {
+    "archive_kind": "source_plus_candidate_overlay",
+    "archive_file_count": 19,
+    "generated_change_file_count": 11,
+    "generated_implementation_modified_before_platform_validation": false,
+    "jest_metadata_exclusion_verified": true,
+    "ignored_path": "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js"
+  },
+  "salesforce_evidence": {
+    "command": "sf project deploy start --dry-run",
+    "org_alias": "CapstoneDev",
+    "job_id": "0Afak00000ifJ71CAE",
+    "manifest_digest": "sha256:8df1c7fd8520678034e3161fb137c20efe27cc360c59f2c30e4f7309dae44ac2",
+    "test_level": "RunSpecifiedTests",
+    "specified_test_classes": [
+      "LegacyAcctContactExplorerCtrlTest",
+      "AccountContactExplorerControllerTest"
+    ],
+    "command_exit_code": 0,
+    "platform_status": "Succeeded",
+    "check_status": "passed",
+    "platform_terminal": true,
+    "tests_total": 7,
+    "tests_completed": 7,
+    "tests_failed": 0,
+    "components_total": 7,
+    "components_succeeded": 7,
+    "component_failures": 0
+  },
+  "validated_components": {
+    "generated_apex_class_compiled": true,
+    "generated_apex_test_compiled": true,
+    "generated_lwc_bundle_compiled": true,
+    "generated_permission_set_compiled": true,
+    "legacy_source_compiled": true
+  },
+  "limitations": [
+    "This was a no-save check-only validation in a Developer Edition org, not a deployment or production-readiness claim.",
+    "Salesforce validated metadata compilation and the specified Apex tests; LWC behavior is supported separately by the local candidate-authored and controller-owned Jest suites.",
+    "The pilot records one successful Salesforce Qwen run. It is not a statistically meaningful model benchmark, and the MuleSoft pilot cell remains not_performed."
+  ]
+}

@@ -38,6 +38,12 @@
           "url": "https://developer.salesforce.com/docs/platform/lwc/guide/reference-directives.html",
           "publisher": "Salesforce",
           "authority": "official"
+        },
+        {
+          "title": "Considerations and Limitations for Complex Template Expressions",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/create-components-html-expressions-considerations.html",
+          "publisher": "Salesforce",
+          "authority": "official"
         }
       ]
     },
@@ -144,6 +150,12 @@
         {
           "title": "Run LWC Jest Tests",
           "url": "https://developer.salesforce.com/docs/platform/lwc/guide/unit-testing-using-jest-run-tests.html",
+          "publisher": "Salesforce",
+          "authority": "official"
+        },
+        {
+          "title": "Create LWC Jest Tests",
+          "url": "https://developer.salesforce.com/docs/platform/lwc/guide/unit-testing-using-jest-create-tests.html",
           "publisher": "Salesforce",
           "authority": "official"
         },

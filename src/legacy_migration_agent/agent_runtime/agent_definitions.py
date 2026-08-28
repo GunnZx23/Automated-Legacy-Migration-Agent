@@ -23,7 +23,6 @@ from pydantic import ConfigDict, Field, field_validator
 
 from legacy_migration_agent.contracts import StrictModel
 
-AGENT_DEFINITION_SCHEMA_VERSION = "1.0"
 MAX_AGENT_FILE_BYTES = 64 * 1024
 MIN_AGENT_PROMPT_CHARS = 1_200
 MAX_AGENT_PROMPT_CHARS = 60_000

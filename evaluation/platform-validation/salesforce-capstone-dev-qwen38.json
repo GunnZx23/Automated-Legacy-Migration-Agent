@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "salesforce-capstone-dev-qwen38-2026-08-27",
+  "recorded_at": "2026-08-28T00:20:47Z",
+  "platform": "salesforce",
+  "validation_mode": "metadata_api_check_only",
+  "deployment_performed": false,
+  "source_run": {
+    "request_id": "ui-request-552484af18111d762e114033",
+    "attempt": 1,
+    "provider": "ollama",
+    "model_id": "qwen3.8:latest",
+    "model_revision": "sha256:22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643",
+    "candidate_change_set_digest": "sha256:31683303e0ccaffbceedc87d95640725e42a5441a34cdfc9ed279d188d7e9236",
+    "local_validation_disposition": "ready_for_human_review",
+    "local_required_checks_passed": 7,
+    "local_required_checks_total": 7,
+    "candidate_authored_jest_tests_passed": 9,
+    "controller_owned_jest_tests_passed": 9
+  },
+  "fixture_packaging_correction": {
+    "applied_before_platform_validation": true,
+    "generated_implementation_modified": false,
+    "changes": [
+      "Renamed the legacy fixture test class to LegacyAcctContactExplorerCtrlTest because Apex identifiers are limited to 40 characters.",
+      "Added .forceignore so local LWC Jest files under __tests__ are not sent to Metadata API.",
+      "Updated the temporary validation manifest to reference the renamed legacy fixture test."
+    ]
+  },
+  "salesforce_evidence": {
+    "command": "sf_project_deploy_report",
+    "org_alias": "CapstoneDev",
+    "job_id": "0Afak00000ifr8fCAA",
+    "manifest_digest": "sha256:731520ab9805ca4de94566313099a722fcd6d16000bcf6125817c3b91d6367a2",
+    "test_level": "RunSpecifiedTests",
+    "command_exit_code": 0,
+    "local_process_exited": true,
+    "platform_status": "succeeded",
+    "check_status": "passed",
+    "platform_terminal": true,
+    "tests_total": 7,
+    "tests_completed": 7,
+    "tests_failed": 0,
+    "component_failures": 0,
+    "availability_reason": null,
+    "evidence_binding": "sha256:3546380cc583fe5db7bedb58791cbd182d8999c35d31410acf4cc3c9d7baab3f"
+  },
+  "validated_components": {
+    "metadata_components_total": 7,
+    "metadata_components_succeeded": 7,
+    "generated_apex_class_compiled": true,
+    "generated_apex_test_compiled": true,
+    "generated_lwc_bundle_compiled": true,
+    "generated_permission_set_compiled": true,
+    "legacy_source_compiled": true
+  },
+  "limitations": [
+    "This is a no-save check-only validation in a Developer Edition org, not a deployment or production-readiness claim.",
+    "The org validated Apex compilation and specified Apex tests; LWC behavior remains supported by the separate local Jest evidence recorded by the source run.",
+    "The source run predates the fixture packaging correction, so this receipt does not claim that the uncorrected generated manifest was independently deployable."
+  ]
+}

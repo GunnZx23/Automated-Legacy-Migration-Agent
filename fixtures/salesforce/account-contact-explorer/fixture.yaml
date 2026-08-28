@@ -15,7 +15,7 @@ source:
   root: input
   entrypoint: force-app/main/default/pages/LegacyAccountContactExplorer.page
   controller: force-app/main/default/classes/LegacyAccountContactExplorerController.cls
-  unit_test: force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls
+  unit_test: force-app/main/default/classes/LegacyAcctContactExplorerCtrlTest.cls
   permission_set: force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml
 
 behavior:
@@ -69,7 +69,7 @@ validation:
   org_required_for_deployment_claim:
     - id: apex-tests
       tests:
-        - LegacyAccountContactExplorerControllerTest
+        - LegacyAcctContactExplorerCtrlTest
         - AccountContactExplorerControllerTest
       assertions:
         - Account results are ordered and capped at 50.

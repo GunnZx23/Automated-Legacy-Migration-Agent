@@ -20,9 +20,11 @@ validation, retry eligibility, evidence, and terminal disposition. Model prose
 is advisory unless it satisfies a typed role contract, and even typed model
 output cannot approve work or expand scope.
 
-This repository produces local candidate code and evidence. It never commits,
+The agent runtime produces local candidate code and evidence. It never commits,
 pushes, opens a pull request, connects to a Salesforce org, calls Anypoint,
-deploys, publishes, or claims production readiness.
+deploys, publishes, or claims production readiness. A human may separately run
+an explicitly authorized check-only platform validation; the repository records
+that evidence without granting the agent external authority.
 
 ## Contents
 
@@ -327,8 +329,9 @@ manifest/package.xml
 The model is free to choose internal helpers, state shape, accessible markup,
 test titles, inline synthetic test records, and assertion style within the
 public behavior and safety contracts. Generated Apex tests are review artifacts
-until a separately authorized Salesforce org validation proves that they
-compile and run.
+until a separately authorized Salesforce org validation proves that the exact
+candidate compiles and runs. The current first-attempt Qwen 3.8 candidate has
+that separate check-only evidence; see [Evaluation status](#evaluation-status).
 
 ## MuleSoft migration slice
 
@@ -532,20 +535,24 @@ Portable evidence rejects local absolute paths, credentials, remote URLs where
 not allowed, and secret-shaped values.
 
 The source fixture remains unchanged. When the user selects **Save candidate
-to output/**, the controller materializes only the persisted candidate as:
+to output/**, the controller materializes the generated delta and a complete
+source-plus-candidate project archive as:
 
 ```text
 output/<platform>-<handle>/attempt-<n>/
-├── candidate/<approved generated paths>
-├── candidate.zip
+├── candidate/<approved generated paths>  # reviewable generated delta only
+├── candidate.zip                         # complete source + delta overlay
 └── export.json
 ```
 
-`export.json` binds the file inventory, candidate/archive digests, manifest and
-change-set digests, attempt, and actual validation disposition. Export is
-idempotent for identical bytes and never relabels a failed or unavailable
-candidate as accepted. `.runs/` and `output/` are ignored by Git and are never
-used as fixed-scenario model input.
+`export.json` binds the generated file inventory, archive kind and file count,
+candidate/archive digests, manifest and change-set digests, attempt, and actual
+validation disposition. The ZIP overlays the generated files on the exact
+source snapshot bound to the run, so it is usable as a complete project without
+turning legacy inputs into generated output. Export is idempotent for identical
+bytes and never relabels a failed or unavailable candidate as accepted.
+`.runs/` and `output/` are ignored by Git and are never used as fixed-scenario
+model input.
 
 ## Loopback API
 
@@ -571,7 +578,7 @@ loopback surface.
 | `POST /api/sessions/<handle>/final-review/request` | Bind `{requester, designated_reviewer}` to an eligible candidate |
 | `POST /api/sessions/<handle>/final-review/decision` | Record `{selection, reviewer, comment}` for final review |
 | `POST /api/sessions/<handle>/export` | Persist the exact candidate under `output/`; body is `{}` |
-| `GET /api/sessions/<handle>/candidate.zip` | Download the verified isolated candidate archive |
+| `GET /api/sessions/<handle>/candidate.zip` | Download the verified complete source-plus-candidate project archive |
 
 A migration run can be created only by consuming a ready conversation's exact
 launch token. The browser has no arbitrary-prompt run-creation route.
@@ -695,7 +702,7 @@ evaluation verification do not invoke Qwen by themselves.
 
 ## Testing and schemas
 
-Run the same provider-free quality gates as CI:
+Run the provider-free local quality gates:
 
 ```bash
 uv lock --check
@@ -769,8 +776,8 @@ Known limitations:
 - the local workspace/sandbox is an application-level control, not a hardened
   hostile multi-user container boundary;
 - local reviewer labels are not authenticated identities;
-- Salesforce Apex and metadata have not been compiled or tested in an
-  authorized org;
+- one exact Salesforce candidate has passed a separately authorized Developer
+  Edition check-only validation, but the agent does not perform org operations;
 - Mule runtime/MUnit execution is disabled pending an attested runtime;
 - Qwen can still produce plausible but incomplete code, which is why
   deterministic checks and final human review are mandatory; and
@@ -783,36 +790,48 @@ public issue or submission artifact.
 
 ## Evaluation status
 
-The repository separates harness tests from model-quality evidence.
+The repository separates harness tests, one-run pilot evidence, external
+platform evidence, and a statistically meaningful benchmark.
 
 - `evaluation/benchmark-v1/registry.json` predeclares six cases, four
   treatments, and three repetitions: 72 cells. Every cell in
   `evaluation/results.json` is currently `not_performed`.
-- `evaluation/pilot-v1/` predeclares one Qwen end-to-end cell for Salesforce and
-  one for MuleSoft. Both are currently `not_performed` with zero measured
-  cells.
+- `evaluation/pilot-v1/` is the immutable zero-measurement pilot baseline.
+  `evaluation/pilot-v1-salesforce-qwen38-20260827/` is its verified successor:
+  the Salesforce cell succeeded and the MuleSoft cell remains
+  `not_performed`.
 - Repository tests, temporary synthetic candidates, and model doubles are not
   ingested as migration-quality results.
-- Local exploratory browser runs have been performed, but they have not been
-  ingested into the formal benchmark or pilot. No Salesforce org result, Mule
-  runtime result, deployment, statistically controlled latency or token
-  comparison, or acceptance result is claimed by this README.
+- The measured Salesforce pilot run used `qwen3.8:latest`, completed on attempt
+  one, invoked exactly Architect, Engineer, and Validator once each, consumed
+  45,629 recorded tokens, and accumulated 754,808 ms of model-call latency. It
+  reached `ready_for_human_review` with all 7 required local checks passing.
+- The exported project from that exact run then passed a separately authorized
+  Salesforce Developer Edition check-only deployment: job
+  `0Afak00000ifJ71CAE`, 7/7 metadata components, 7/7 specified Apex tests, and
+  zero failures. The generated Jest file was correctly excluded from Metadata
+  API and remained part of local Jest validation. The durable receipt is
+  `evaluation/platform-validation/salesforce-capstone-dev-qwen38-run-18d5d840.json`.
+- No Mule runtime result, deployment, human acceptance, or statistically
+  controlled latency/token comparison is claimed.
 
 ### Exploratory local model comparison
 
-These single-run observations are debugging evidence, not benchmark results:
+These observations are model-selection evidence, not benchmark results. The
+older Qwen3-Coder run used an earlier harness, so its counts are not directly
+comparable with the current Qwen 3.8 run.
 
 | Model | Salesforce slice result | Interpretation |
 |---|---|---|
-| `qwen3.8:latest` | 6/7 controller checks passed; the candidate's Jest suite passed 9/10 tests and correctly exposed one controlled-error rendering defect | Current default. It produced the strongest candidate and reduced the remaining failure to one bounded LWC state bug. |
-| `qwen3-coder:30b` | 4/7 controller checks passed; candidate Jest executed 0 tests and the controller suite failed 8/9 tests | Not a replacement for `qwen3.8` on the current Salesforce slice. |
+| `qwen3.8:latest` | Current harness: 7/7 controller checks, 10/10 candidate-authored Jest tests, 9/9 independent controller Jest tests, and the exact project passed the 7-component/7-test Salesforce check-only validation on attempt one | Current default because it has the strongest current end-to-end and platform evidence. |
+| `qwen3-coder:30b` | Historical earlier-harness run: 4/7 checks; candidate Jest executed 0 tests and the controller suite failed 8/9 tests | Retained only as exploratory history; it was not rerun because the current Qwen 3.8 result already satisfies the capstone demonstration goal. |
 
-The `qwen3.8` reproduction also exposed an under-assertion in the independent
-controller suite: it checked that failed contact loading left no populated rows,
-but not that the `contact-results` rendering hook was absent. The controller
-test and Wiki contract now require that absence in loading, empty, guidance,
-stale-response, and controlled-error states. The original run receipt remains
-immutable; the strengthened harness applies to subsequent runs.
+An earlier Qwen 3.8 reproduction exposed an under-assertion in the independent
+controller suite: it checked that failed contact loading left no populated
+rows, but not that the `contact-results` rendering hook was absent. The
+controller test and Wiki contract now require that absence in loading, empty,
+guidance, stale-response, and controlled-error states. The successful measured
+run above used the strengthened harness.
 
 A pilot cell becomes measured only when an actual terminal Qwen run is
 explicitly ingested with its bound source, contract, definitions, graph, Wiki,
@@ -842,7 +861,6 @@ platform success still requires separate terminal platform evidence.
 | `docs/diagrams/` | Mermaid source and rendered supporting architecture asset |
 | `.runs/` | Ignored private conversations, checkpoints, workspaces, and run evidence |
 | `output/` | Ignored attempt-specific candidate exports |
-| `.github/workflows/ci.yml` | Locked provider-free CI gates |
 | `SECURITY.md`, `ATTRIBUTIONS.md`, `LICENSE` | Governance, notices, and Apache 2.0 license |
 
 `.venv/`, `node_modules/`, caches, `.runs/`, and `output/` are generated local
@@ -853,8 +871,8 @@ state, not submission source.
 Submission repository:
 [github.com/GunnZx23/Automated-Legacy-Migration-Agent](https://github.com/GunnZx23/Automated-Legacy-Migration-Agent)
 
-Before publication, run the complete provider-free gates above, record the
-separate browser/Qwen evidence honestly, inspect `git status`, and confirm that
+Before publication, run the complete provider-free local gates above, record
+the separate browser/Qwen evidence honestly, inspect `git status`, and confirm that
 `.runs/`, `output/`, `.env*`, credentials, model weights, `.venv/`, and
 `node_modules/` are absent from the commit. A Git commit, push, or pull request
 is a separate human-owned action and is never authorized by a migration run or

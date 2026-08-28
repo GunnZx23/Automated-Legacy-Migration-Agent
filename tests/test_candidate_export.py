@@ -38,6 +38,7 @@ def _export(
     files: tuple[tuple[str, str], ...] = FILES,
     disposition: str = "ready_for_human_review",
     manifest_digest: str = MANIFEST_DIGEST,
+    base_files: tuple[tuple[str, str], ...] = (),
 ):
     return export_candidate(
         project_root=project_root,
@@ -48,6 +49,7 @@ def _export(
         manifest_digest=manifest_digest,
         change_set_digest=CHANGE_SET_DIGEST,
         files=files,
+        base_files=base_files,
     )
 
 
@@ -76,6 +78,8 @@ def test_export_writes_exact_candidate_archive_and_sanitized_receipt(tmp_path: P
     assert result.archive_path == f"{result.export_root}/candidate.zip"
     assert result.receipt_path == f"{result.export_root}/export.json"
     assert result.file_count == 2
+    assert result.archive_kind == "candidate_changes"
+    assert result.archive_file_count == 2
     assert result.validation_disposition == "ready_for_human_review"
     assert result.ready_for_human_review is True
     assert tuple(entry.path for entry in result.files) == tuple(sorted(path for path, _ in FILES))
@@ -102,6 +106,8 @@ def test_export_writes_exact_candidate_archive_and_sanitized_receipt(tmp_path: P
     assert receipt["changed_paths"] == sorted(path for path, _content in FILES)
     assert receipt["candidate_digest"] == result.candidate_digest
     assert receipt["archive_sha256"] == result.archive_sha256
+    assert receipt["archive_kind"] == "candidate_changes"
+    assert receipt["archive_file_count"] == 2
     assert receipt["manifest_digest"] == MANIFEST_DIGEST
     assert receipt["change_set_digest"] == CHANGE_SET_DIGEST
     assert "prompt" not in receipt
@@ -109,6 +115,37 @@ def test_export_writes_exact_candidate_archive_and_sanitized_receipt(tmp_path: P
     assert result.receipt_sha256 == "sha256:" + hashlib.sha256(receipt_bytes).hexdigest()
     assert source.read_bytes() == source_before
     _assert_private_tree(tmp_path / "output")
+
+
+def test_archive_can_overlay_changes_on_frozen_source_without_expanding_candidate_delta(
+    tmp_path: Path,
+) -> None:
+    base_files = (
+        ("sfdx-project.json", '{"packageDirectories":[{"path":"force-app"}]}\n'),
+        (FILES[0][0], "legacy implementation\n"),
+        ("force-app/main/default/pages/Legacy.page", "<apex:page/>\n"),
+    )
+
+    result = _export(tmp_path, base_files=base_files)
+
+    assert result.file_count == len(FILES)
+    assert result.archive_kind == "source_plus_candidate_overlay"
+    assert result.archive_file_count == 4
+    with zipfile.ZipFile(tmp_path / result.archive_path) as archive:
+        assert archive.namelist() == sorted(
+            {
+                "sfdx-project.json",
+                "force-app/main/default/pages/Legacy.page",
+                *(path for path, _content in FILES),
+            }
+        )
+        assert archive.read(FILES[0][0]) == FILES[0][1].encode()
+        assert archive.read("force-app/main/default/pages/Legacy.page") == b"<apex:page/>\n"
+    assert sorted(
+        path.relative_to(tmp_path / result.candidate_path).as_posix()
+        for path in (tmp_path / result.candidate_path).rglob("*")
+        if path.is_file()
+    ) == sorted(path for path, _content in FILES)
 
 
 def test_identical_replay_is_idempotent_and_does_not_replace_files(tmp_path: Path) -> None:
@@ -171,6 +208,34 @@ def test_different_receipt_binding_is_rejected(tmp_path: Path) -> None:
     assert receipt.read_bytes() == original
 
 
+def test_conflicting_replay_with_additional_file_leaves_original_export_unchanged(
+    tmp_path: Path,
+) -> None:
+    first_files = (("a.txt", "original\n"),)
+    first = _export(tmp_path, files=first_files)
+    export_root = tmp_path / first.export_root
+    before = {
+        path.relative_to(export_root).as_posix(): (path.stat().st_ino, path.read_bytes())
+        for path in export_root.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(PolicyViolation, match="candidate.zip"):
+        _export(
+            tmp_path,
+            files=(*first_files, ("b.txt", "must not be published\n")),
+        )
+
+    after = {
+        path.relative_to(export_root).as_posix(): (path.stat().st_ino, path.read_bytes())
+        for path in export_root.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+    assert not (export_root / "candidate/b.txt").exists()
+    assert _export(tmp_path, files=first_files) == first
+
+
 @pytest.mark.parametrize(
     "path",
     (
@@ -207,7 +272,7 @@ def test_symlink_parent_is_rejected_without_writing_outside(tmp_path: Path) -> N
     outside.mkdir(mode=0o700)
     (candidate / "force-app").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(PolicyViolation, match="safe directory"):
+    with pytest.raises(PolicyViolation, match="symlink"):
         _export(tmp_path)
 
     assert list(outside.iterdir()) == []

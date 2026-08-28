@@ -75,7 +75,7 @@ def test_input_fixture_builds_evidence_bearing_legacy_graph() -> None:
     )
     assert _edge_exists(
         graph,
-        "LegacyAccountContactExplorerControllerTest",
+        "LegacyAcctContactExplorerCtrlTest",
         "LegacyAccountContactExplorerController",
         EdgeKind.APEX_CLASS_REFERENCE,
     )

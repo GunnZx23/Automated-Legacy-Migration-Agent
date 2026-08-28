@@ -82,7 +82,7 @@ def test_source_permission_set_is_read_only_and_legacy_scoped() -> None:
 
 def test_input_uses_only_public_synthetic_names() -> None:
     legacy_test = (
-        INPUT / "force-app/main/default/classes/LegacyAccountContactExplorerControllerTest.cls"
+        INPUT / "force-app/main/default/classes/LegacyAcctContactExplorerCtrlTest.cls"
     ).read_text(encoding="utf-8")
 
     for value in ("Skynet", "Weyland-Yutani", "Grace", "Hopper", "Ada", "Lovelace"):

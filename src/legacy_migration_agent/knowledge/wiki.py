@@ -266,12 +266,6 @@ class LlmWiki:
             index_body=index_body,
         )
 
-    def read_page(self, page_id: str) -> str:
-        try:
-            return self._pages[page_id].body
-        except KeyError as exc:
-            raise KeyError(f"unknown wiki page: {page_id}") from exc
-
     def search(
         self,
         query: str,

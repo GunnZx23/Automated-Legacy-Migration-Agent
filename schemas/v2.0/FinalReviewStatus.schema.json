@@ -69,6 +69,7 @@
     "status": {
       "enum": [
         "awaiting_final_review",
+        "expired",
         "accepted",
         "rejected",
         "changes_requested"

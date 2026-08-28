@@ -11,10 +11,13 @@ imperative because the user explicitly starts it with **Load**. Do not reject a
 candidate merely for choosing wire versus imperative Account retrieval when
 the rendered behavior and safe-error handling are correct.
 
-Project correction rule `lwc_template_binding_invalid`: the pinned LWC compiler
-accepts simple identifier or dotted-property bindings in this candidate
-template. Put negation, comparisons, indexing, calls, and compound conditions
-in standard JavaScript getters and bind the getter by name.
+Project correction rule `lwc_template_binding_invalid`: Salesforce API 67
+supports complex template expressions. Prefer standard JavaScript getters when
+they make nontrivial presentation logic easier to read and test, but treat that
+as a project maintainability convention rather than a Salesforce compiler
+restriction. The pinned LWC compiler and Jest runner are authoritative for
+expression syntax. Keep `data-role` and `data-state` hooks literal or bound to a
+simple property so the public semantic test surface remains stable.
 
 For a combobox, a placeholder is not the required blank choice. Include a
 rendered option whose value is the empty string, followed by the returned
