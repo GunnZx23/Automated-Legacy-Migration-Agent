@@ -10,10 +10,8 @@ must be internally possible, and those counts must match the actual direct
 ``testcase`` outcome markers.  Test names, class names, file paths, properties,
 console output, failure messages, and stack traces are intentionally ignored.
 
-Queued, running, explicitly not-applicable, and unavailable states cannot be
-proven by a completed JUnit document.  Callers represent those states with the
-strict :class:`MUnitLocalResult` contract, which accepts controlled reason codes
-but no free-form diagnostic text.
+Queued, unavailable, and other non-completed states are represented by the
+controller's validation checks rather than fabricated MUnit report evidence.
 """
 
 from __future__ import annotations
@@ -41,6 +39,7 @@ class MuleSoftEvidenceError(ValueError):
 
 class MuleSoftEvidenceSource(StrEnum):
     SUREFIRE_XML = "surefire_xml"
+    # Retained for backward-compatible parsing of previously persisted evidence.
     LOCAL_RESULT = "local_result"
 
 
@@ -88,92 +87,6 @@ class MuleSoftValidationContext(StrictModel):
     run_id: Identifier
     base_revision: Revision
     artifact_digest: Sha256Digest
-
-
-class MUnitLocalResult(StrictModel):
-    """Controlled local state used when completed Surefire XML is unavailable.
-
-    ``COMPLETED`` accepts sanitized aggregate counts.  ``QUEUED`` and
-    ``RUNNING`` must not claim a process exit or final counts.
-    ``NOT_APPLICABLE`` requires an explicit planning reason.  ``UNAVAILABLE``
-    requires an environment/tool reason and may record a nonzero process exit
-    if the tool started before the boundary failed.
-    """
-
-    phase: MUnitExecutionPhase
-    command_exit_code: int | None = Field(default=None, ge=-255, le=255)
-    suites: int | None = Field(default=None, ge=0)
-    tests: int | None = Field(default=None, ge=0)
-    failures: int | None = Field(default=None, ge=0)
-    errors: int | None = Field(default=None, ge=0)
-    skipped: int | None = Field(default=None, ge=0)
-    unavailable_reason: MUnitUnavailableReason | None = None
-    not_applicable_reason: MUnitNotApplicableReason | None = None
-
-    @field_validator(
-        "command_exit_code",
-        "suites",
-        "tests",
-        "failures",
-        "errors",
-        "skipped",
-        mode="before",
-    )
-    @classmethod
-    def require_strict_optional_integers(cls, value: Any) -> Any:
-        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
-            raise ValueError("MUnit numeric fields must be integers, not coerced values")
-        return value
-
-    @model_validator(mode="after")
-    def validate_state_shape(self) -> MUnitLocalResult:
-        counts = (self.suites, self.tests, self.failures, self.errors, self.skipped)
-        if self.phase is MUnitExecutionPhase.COMPLETED:
-            if self.command_exit_code is None or any(count is None for count in counts):
-                raise ValueError(
-                    "completed MUnit result requires an exit code and every aggregate count"
-                )
-            assert self.suites is not None
-            assert self.tests is not None
-            assert self.failures is not None
-            assert self.errors is not None
-            assert self.skipped is not None
-            _validate_aggregate_counts(
-                suites=self.suites,
-                tests=self.tests,
-                failures=self.failures,
-                errors=self.errors,
-                skipped=self.skipped,
-                require_executed_tests=True,
-            )
-            if self.unavailable_reason is not None or self.not_applicable_reason is not None:
-                raise ValueError(
-                    "completed MUnit result cannot include availability/applicability reasons"
-                )
-        elif self.phase in {MUnitExecutionPhase.QUEUED, MUnitExecutionPhase.RUNNING}:
-            if self.command_exit_code is not None or any(count is not None for count in counts):
-                raise ValueError(
-                    "nonterminal MUnit result cannot claim an exit code or final counts"
-                )
-            if self.unavailable_reason is not None or self.not_applicable_reason is not None:
-                raise ValueError("nonterminal MUnit result cannot include final reason codes")
-        elif self.phase is MUnitExecutionPhase.NOT_APPLICABLE:
-            if self.not_applicable_reason is None:
-                raise ValueError("not-applicable MUnit result requires an explicit reason")
-            if self.command_exit_code is not None or any(count is not None for count in counts):
-                raise ValueError("not-applicable MUnit result cannot claim execution evidence")
-            if self.unavailable_reason is not None:
-                raise ValueError("not-applicable MUnit result cannot also be unavailable")
-        else:
-            if self.unavailable_reason is None:
-                raise ValueError("unavailable MUnit result requires an explicit reason")
-            if self.command_exit_code == 0:
-                raise ValueError("unavailable MUnit result cannot use command_exit_code 0")
-            if any(count is not None for count in counts):
-                raise ValueError("unavailable MUnit result cannot claim completed test counts")
-            if self.not_applicable_reason is not None:
-                raise ValueError("unavailable MUnit result cannot also be not applicable")
-        return self
 
 
 class MuleSoftValidationEvidence(StrictModel):
@@ -439,82 +352,6 @@ def parse_munit_surefire_xml(
         errors=totals.errors,
         skipped=totals.skipped,
         failure_reason=failure_reason,
-    )
-
-
-def parse_munit_local_result(
-    result: MUnitLocalResult,
-    *,
-    context: MuleSoftValidationContext,
-) -> MuleSoftValidationEvidence:
-    """Normalize an already sanitized, explicitly classified local result."""
-
-    if result.phase is MUnitExecutionPhase.COMPLETED:
-        assert result.command_exit_code is not None
-        assert result.suites is not None
-        assert result.tests is not None
-        assert result.failures is not None
-        assert result.errors is not None
-        assert result.skipped is not None
-        passed = result.tests - result.failures - result.errors - result.skipped
-        failure_reason = _completed_failure_reason(
-            passed=passed,
-            failures=result.failures,
-            errors=result.errors,
-            command_exit_code=result.command_exit_code,
-        )
-        return _make_evidence(
-            context=context,
-            source=MuleSoftEvidenceSource.LOCAL_RESULT,
-            phase=result.phase,
-            status=(
-                MuleSoftValidationStatus.PASSED
-                if failure_reason is None
-                else MuleSoftValidationStatus.FAILED
-            ),
-            applicable=True,
-            validation_terminal=True,
-            local_process_exited=True,
-            command_exit_code=result.command_exit_code,
-            suites=result.suites,
-            tests=result.tests,
-            passed=passed,
-            failures=result.failures,
-            errors=result.errors,
-            skipped=result.skipped,
-            failure_reason=failure_reason,
-        )
-    if result.phase in {MUnitExecutionPhase.QUEUED, MUnitExecutionPhase.RUNNING}:
-        return _make_evidence(
-            context=context,
-            source=MuleSoftEvidenceSource.LOCAL_RESULT,
-            phase=result.phase,
-            status=MuleSoftValidationStatus.NONTERMINAL,
-            applicable=True,
-            validation_terminal=False,
-            local_process_exited=False,
-        )
-    if result.phase is MUnitExecutionPhase.NOT_APPLICABLE:
-        return _make_evidence(
-            context=context,
-            source=MuleSoftEvidenceSource.LOCAL_RESULT,
-            phase=result.phase,
-            status=MuleSoftValidationStatus.NOT_APPLICABLE,
-            applicable=False,
-            validation_terminal=True,
-            local_process_exited=False,
-            not_applicable_reason=result.not_applicable_reason,
-        )
-    return _make_evidence(
-        context=context,
-        source=MuleSoftEvidenceSource.LOCAL_RESULT,
-        phase=result.phase,
-        status=MuleSoftValidationStatus.UNAVAILABLE,
-        applicable=True,
-        validation_terminal=False,
-        local_process_exited=result.command_exit_code is not None,
-        command_exit_code=result.command_exit_code,
-        unavailable_reason=result.unavailable_reason,
     )
 
 

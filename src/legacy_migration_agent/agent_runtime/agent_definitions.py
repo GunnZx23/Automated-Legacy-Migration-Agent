@@ -178,7 +178,7 @@ _OUTPUT_CONTRACTS: Mapping[AgentRole, str] = MappingProxyType(
 _VERSIONS: Mapping[AgentRole, str] = MappingProxyType(
     {
         AgentRole.ARCHITECT: "architect/v8",
-        AgentRole.ENGINEER: "engineer/v21",
+        AgentRole.ENGINEER: "engineer/v23",
         AgentRole.VALIDATOR: "validator/v5",
     }
 )

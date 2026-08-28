@@ -15,6 +15,7 @@ from legacy_migration_agent.platforms.local_checks import (
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     CONTROLLER_PATH,
     CONTROLLER_TEST_PATH,
+    JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
     JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
     LWC_JAVASCRIPT_PATH,
     LWC_JEST_TOOLCHAIN_DIGESTS,
@@ -954,7 +955,8 @@ def test_candidate_contract_rejects_dangerous_jest_capabilities(
     expected_diagnostics: tuple[str, ...],
 ) -> None:
     outputs = structurally_distinct_safe_outputs()
-    outputs[LWC_TEST_PATH] = (injection + outputs[LWC_TEST_PATH].decode()).encode()
+    jest_globals_import, remaining_source = outputs[LWC_TEST_PATH].decode().split("\n", 1)
+    outputs[LWC_TEST_PATH] = (jest_globals_import + "\n" + injection + remaining_source).encode()
 
     failure = rejected_candidate(outputs)
 
@@ -974,7 +976,8 @@ def test_candidate_contract_rejects_dangerous_jest_capabilities(
 )
 def test_candidate_contract_reports_unapproved_jest_module_target(injection: str) -> None:
     outputs = structurally_distinct_safe_outputs()
-    outputs[LWC_TEST_PATH] = (injection + outputs[LWC_TEST_PATH].decode()).encode()
+    jest_globals_import, remaining_source = outputs[LWC_TEST_PATH].decode().split("\n", 1)
+    outputs[LWC_TEST_PATH] = (jest_globals_import + "\n" + injection + remaining_source).encode()
 
     failure = rejected_candidate(outputs)
 
@@ -1043,9 +1046,12 @@ test.each(requiredAccounts)('accepts candidate row %s', (account) => {
 
 def test_candidate_contract_accepts_static_sfdx_lwc_jest_import() -> None:
     outputs = structurally_distinct_safe_outputs()
+    original = outputs[LWC_TEST_PATH].decode()
+    jest_globals_import, remaining_source = original.split("\n", 1)
     source = (
-        "import { createApexTestWireAdapter } from '@salesforce/sfdx-lwc-jest';\n"
-        + outputs[LWC_TEST_PATH].decode()
+        jest_globals_import
+        + "\nimport { createApexTestWireAdapter } from '@salesforce/sfdx-lwc-jest';\n"
+        + remaining_source
         + """
 
 it('uses the public wire adapter helper', () => {
@@ -1057,6 +1063,22 @@ it('uses the public wire adapter helper', () => {
 
     with candidate_from_memory(outputs) as workspace:
         assert check_salesforce_candidate(workspace.root)["passed"] is True
+
+
+def test_candidate_contract_rejects_jest_globals_import_after_component_loading() -> None:
+    outputs = structurally_distinct_safe_outputs()
+    source = outputs[LWC_TEST_PATH].decode()
+    import_block, remainder = source.split("\n\n", 1)
+    import_lines = import_block.splitlines()
+    assert "from '@jest/globals'" in import_lines[0]
+    outputs[LWC_TEST_PATH] = (
+        "\n".join((*import_lines[1:], import_lines[0])) + "\n\n" + remainder
+    ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_lwc_jest_contract"
+    assert failure.diagnostic_ids == (JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,)
 
 
 def test_candidate_contract_ignores_skip_and_capability_words_in_jest_text() -> None:

@@ -1693,11 +1693,11 @@ function failureMessage(run) {
     [
       `The workflow ended in a controlled failure during ${failure.operation}.`,
       outcome,
-      failure.summary,
+      `Controller reason (${failure.reason_code}): ${failure.summary}`,
       failure.guidance || "Use New chat to discuss or select a supported scenario and start a new immutable run.",
     ],
     {
-      meta: `Failure category: ${failure.category.replaceAll("_", " ")} · seam: ${failure.seam.replaceAll("_", " ")} · ${failure.retry_eligible ? "retry eligible" : "not retry eligible"}`,
+      meta: `Reason code: ${failure.reason_code} · category: ${failure.category.replaceAll("_", " ")} · seam: ${failure.seam.replaceAll("_", " ")} · ${failure.retry_eligible ? "retry eligible" : "not retry eligible"}`,
     },
   );
 }
@@ -2044,6 +2044,16 @@ function renderFailureDiagnostic(run) {
     implementation_contract_invalid: "The Controller-expanded manifest failed its controller-owned implementation-contract check.",
     transformation_scope_invalid: "The Controller-expanded manifest crossed the frozen transformation boundary.",
     unresolved_question_risk_missing: "The Architect returned blocking questions without a corresponding human-decision risk.",
+    correction_delta_required: "Engineer attempt 2 did not return the required changed-file correction delta.",
+    correction_no_material_changes: "Engineer attempt 2 returned no material content changes.",
+    correction_signal_coverage_missing: "Engineer attempt 2 did not cover every repair signal.",
+    correction_scope_invalid: "Engineer attempt 2 crossed the allowed repair boundary.",
+    correction_identical_candidate: "Engineer attempt 2 reproduced the attempt-1 candidate.",
+    file_plan_scope_mismatch: "The Engineer file plan did not match the approved output scope.",
+    file_plan_delta_mismatch: "The workspace changes did not match the Engineer file plan.",
+    workspace_scope_mismatch: "The Engineer workspace did not match the manifest scope.",
+    workspace_not_clean: "The Engineer workspace was not clean before applying the plan.",
+    attempt_two_scope_expansion_invalid: "Engineer attempt 2 requested an invalid scope expansion.",
     policy_rejected: "The controller rejected the structured response at its policy boundary.",
     provider_timeout: "The local model exceeded the inference deadline.",
     provider_unavailable: "The local Ollama request could not be completed.",

@@ -76,6 +76,7 @@ from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     CONTROLLER_PATH,
+    JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
     LWC_CSS_PATH,
     LWC_HTML_PATH,
     LWC_JAVASCRIPT_PATH,
@@ -1302,7 +1303,7 @@ def test_engineer_intervention_is_zero_update_terminal_evidence_and_replays_read
         assert run.file_plan is None
         assert run.change_set is None
         assert run.workspace_after_revision is None
-        assert run.model_call.agent_version == "engineer/v21"
+        assert run.model_call.agent_version == "engineer/v23"
         assert workspace.audit_changes().changed_paths == ()
 
     with IsolatedWorkspace(
@@ -1403,7 +1404,7 @@ def test_engineer_intervention_replay_rejects_binding_or_output_tamper(
         (
             registry_with_definition_drift(
                 AgentRole.ENGINEER,
-                version="engineer/v22",
+                version="engineer/v24",
             ),
             "agent version",
         ),
@@ -2290,6 +2291,7 @@ def test_engineer_correction_normalizes_live_mixed_zero_test_failure(
     assert "createElement from lwc" in candidate_jest_guidance
     assert "__esModule: true" in candidate_jest_guidance
     assert "bounded microtask" in candidate_jest_guidance
+    assert "element.shadowRoot.querySelector" in candidate_jest_guidance
     controller_guidance = directives[
         SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID
     ].instruction
@@ -2871,6 +2873,25 @@ def test_precise_salesforce_static_correction_directive_is_file_bounded(
     else:
         assert "Never call jest.requireActual" in directive.instruction
         assert "never spread an actual module" in directive.instruction
+
+
+def test_jest_import_order_correction_is_explicit_and_test_file_bounded(
+    tmp_path: Path,
+) -> None:
+    signal_id = JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID
+    *_, authority = correction_delta_case(
+        tmp_path,
+        target_paths=(CONTROLLER_PATH, LWC_TEST_PATH),
+        diagnostic_ids=(signal_id,),
+    )
+    context = authority.model_context
+    directive = context.repair_directives[0]
+
+    assert context.repair_signal_ids == (signal_id,)
+    assert context.allowed_correction_paths == (LWC_TEST_PATH,)
+    assert directive.allowed_paths == (LWC_TEST_PATH,)
+    assert "@jest/globals" in directive.instruction
+    assert "first static import" in directive.instruction
 
 
 @pytest.mark.parametrize("changed_files", (1, 2))

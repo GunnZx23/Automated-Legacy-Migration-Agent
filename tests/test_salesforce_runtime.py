@@ -51,6 +51,7 @@ from legacy_migration_agent.graphs.dependency_graph import (
 from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+    JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
     JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
     LWC_CONTROLLER_TEST_PATH,
     LWC_JEST_TOOLCHAIN_DIGESTS,
@@ -2225,6 +2226,7 @@ def test_candidate_failure_summary_rejects_untrusted_diagnostics(stdout: str) ->
             "salesforce_apex_controller_contract",
             APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
         ),
+        ("salesforce_lwc_jest_contract", JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID),
         ("salesforce_lwc_jest_contract", JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID),
         ("salesforce_lwc_template_contract", LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID),
     ),

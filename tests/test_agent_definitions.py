@@ -28,13 +28,14 @@ def test_project_registry_contains_exactly_three_versioned_domain_agents() -> No
     assert tuple(definition.role for definition in registry.definitions) == tuple(AgentRole)
     assert tuple(definition.version for definition in registry.definitions) == (
         "architect/v8",
-        "engineer/v21",
+        "engineer/v23",
         "validator/v5",
     )
     assert all("Visualforce" in definition.system_prompt for definition in registry.definitions)
     assert all("Mule 3" in definition.system_prompt for definition in registry.definitions)
     assert registry.get("engineer").header.permissions.isolated_workspace_write is True
     assert registry.get("engineer").header.output_contract == "EngineerModelOutcome"
+    assert "element.shadowRoot.querySelector" in registry.get("engineer").system_prompt
     assert registry.get("architect").header.permissions.isolated_workspace_write is False
     assert registry.get("architect").header.input_contracts == (
         "ArchitectModelContext",

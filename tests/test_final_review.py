@@ -339,6 +339,7 @@ def _write_role_evidence(
     validator_unavailable: bool,
 ) -> None:
     root = f"model-runs/{request.request_id}"
+    session.store.write_json("request.json", request)
     context = _architect_context(request)
     agent_output = _architect_output(context)
     proposal = expand_architect_proposal(agent_output, context)

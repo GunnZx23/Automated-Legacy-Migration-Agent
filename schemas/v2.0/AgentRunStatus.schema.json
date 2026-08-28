@@ -150,6 +150,21 @@
           "title": "Failure Id",
           "type": "string"
         },
+        "guidance": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed controller-owned next step; absent on legacy evidence.",
+          "title": "Guidance"
+        },
         "operation": {
           "enum": [
             "start",
@@ -179,6 +194,16 @@
                 "implementation_contract_invalid",
                 "transformation_scope_invalid",
                 "unresolved_question_risk_missing",
+                "correction_delta_required",
+                "correction_no_material_changes",
+                "correction_signal_coverage_missing",
+                "correction_scope_invalid",
+                "correction_identical_candidate",
+                "file_plan_scope_mismatch",
+                "file_plan_delta_mismatch",
+                "workspace_scope_mismatch",
+                "workspace_not_clean",
+                "attempt_two_scope_expansion_invalid",
                 "policy_rejected",
                 "provider_timeout",
                 "provider_unavailable",
@@ -245,6 +270,21 @@
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Source Revision",
           "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed controller-owned public explanation; absent on legacy evidence.",
+          "title": "Summary"
         },
         "terminal": {
           "const": true,

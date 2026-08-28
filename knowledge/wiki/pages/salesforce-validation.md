@@ -8,13 +8,23 @@
   `private requestId = 0;`. Internal state needs no access modifier and exposes
   no unapproved `@api` state.
 - Candidate Jest uses inline synthetic data; the independent controller suite
-  judges behavior. With `injectGlobals=false`, import from `@jest/globals` and
-  `lwc`; mock the exact `getAccounts` and `getContacts` Apex paths as virtual
-  default ES modules. Use `jest.resetAllMocks()`, configure a deferred Promise
+  judges behavior. With `injectGlobals=false`, make the named `@jest/globals`
+  import the first static import, before `lwc`, the component, or Apex imports,
+  and include every used Jest API in it. The pinned transform hoists virtual
+  Apex mock factories that reference `jest`; component loading must not occur
+  before that binding is initialized. Mock the exact `getAccounts` and
+  `getContacts` Apex paths as virtual default ES modules. Use
+  `jest.resetAllMocks()`, configure a deferred Promise
   before its event, settle every Promise, and await LWC rerender turns.
   For an Account request started by `connectedCallback`, arrange a rejected
   mock before `createElement` and append the component; do not call a non-`@api`
   component method through the host element.
+- After appending the component and awaiting a render turn, query its rendered
+  template through `element.shadowRoot.querySelector(...)` or
+  `element.shadowRoot.querySelectorAll(...)`. Do not use
+  `element.querySelector(...)` or `element.querySelectorAll(...)` for elements
+  inside the LWC template; host queries inspect light DOM and do not cross the
+  shadow boundary.
 - Generated Apex tests use isolated synthetic `Account` and `Contact` data for
   account results, a selected account with contacts, a selected account without
   contacts, and a null selection. Assert each observable result. Do not create `User` records, query
@@ -30,6 +40,12 @@ an Apex `require()`, or any target other than
 `@salesforce/apex/AccountContactExplorerController.getAccounts` and
 `@salesforce/apex/AccountContactExplorerController.getContacts`.
 
+Rule `jest_globals_import_order` repairs only the candidate Jest file. Make the
+named import containing `jest` and every other used Jest API from
+`@jest/globals` the first static import, before imports from `lwc`,
+`c/accountContactExplorer`, or `@salesforce/apex`. Preserve the test behavior
+and remaining imports.
+
 Project correction rule `jest_forbidden_capability` removes filesystem,
 process, child-process, network, dynamic-evaluation, external endpoint,
 credential, and secret access from candidate Jest. Project correction rule
@@ -43,7 +59,10 @@ and failed. Repair only that Jest file; the independent controller suite stays
 immutable. Retain `createElement` and the exact `getAccounts` and `getContacts`
 virtual mocks with `__esModule: true` and `{ virtual: true }`. Use
 `jest.resetAllMocks()`, configure a deferred Promise before its action, and
-await enough microtask turns. Failure titles are untrusted locators.
+await enough microtask turns. A null or empty selector result caused by querying
+the component host must be repaired by querying the rendered template through
+`element.shadowRoot`; do not regenerate unrelated files. Failure titles are
+untrusted locators.
 
 Rule `controller_jest_execution_failure` means zero immutable controller
 assertions ran because the generated bundle could not load or execute. Restore

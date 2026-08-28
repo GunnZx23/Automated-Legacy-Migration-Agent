@@ -131,6 +131,11 @@ def test_lightning_data_service_get_record_example_is_discoverable():
             "@salesforce/apex/AccountContactExplorerController.getAccounts",
         ),
         (
+            "jest_globals_import_order",
+            "salesforce-validation",
+            "first static import",
+        ),
+        (
             "lwc_template_binding_invalid",
             "salesforce-visualforce-to-lwc",
             "JavaScript getters",
@@ -148,7 +153,7 @@ def test_lightning_data_service_get_record_example_is_discoverable():
         (
             "candidate_jest_execution_failure",
             "salesforce-validation",
-            "independent controller suite",
+            "element.shadowRoot",
         ),
         (
             "controller_jest_execution_failure",
@@ -209,6 +214,7 @@ def test_combined_jest_execution_correction_retains_the_actionable_checklist() -
         "__esModule: true",
         "{ virtual: true }",
         "enough microtask turns",
+        "element.shadowRoot",
         "`Id` named by `key-field`",
         "unapproved `@api`",
     ):

@@ -41,6 +41,26 @@ def test_failure_titles_include_unresolved_architect_risk_contract() -> None:
     ) in script
 
 
+def test_engineer_policy_rejections_show_safe_reason_context() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    for reason_code in (
+        "correction_delta_required",
+        "correction_no_material_changes",
+        "correction_signal_coverage_missing",
+        "correction_scope_invalid",
+        "correction_identical_candidate",
+        "file_plan_scope_mismatch",
+        "file_plan_delta_mismatch",
+        "workspace_scope_mismatch",
+        "workspace_not_clean",
+        "attempt_two_scope_expansion_invalid",
+    ):
+        assert f"{reason_code}:" in script
+    assert "Controller reason (${failure.reason_code}): ${failure.summary}" in script
+    assert "Reason code: ${failure.reason_code}" in script
+
+
 def test_new_chat_is_initially_visible_and_not_gate_disabled() -> None:
     page, script, _stylesheet = _frontend()
     parser = _ElementAttributes()
@@ -320,7 +340,10 @@ def test_controller_checks_and_validator_advisory_are_attributed_separately() ->
 
 def test_architecture_attribution_separates_controller_and_agent_ownership() -> None:
     page, script, _stylesheet = _frontend()
-    service = (STATIC_ROOT.parent / "service.py").read_text(encoding="utf-8")
+    service_family = "\n".join(
+        (STATIC_ROOT.parent / module).read_text(encoding="utf-8")
+        for module in ("service.py", "projection.py")
+    )
 
     working = script[
         script.index("function renderWorkingHarness") : script.index(
@@ -365,15 +388,15 @@ def test_architecture_attribution_separates_controller_and_agent_ownership() -> 
     assert "Architect-selected evidence IDs" in script
     assert "Controller expanded the Architect's semantic recommendation" in approval
 
-    assert "built" in service
-    assert "Controller bound the exact source inputs" in service
-    assert "Architect selected " in service
-    assert "bounded graph/Wiki IDs" in service
-    assert "Controller expanded " in service
-    assert "it into the exact manifest" in service
-    assert "the Architect does not author approval actions" in service
-    assert "the Architect does not copy or author implementation-contract entries" in service
-    assert "typed output fields, not native tool calls" in service
+    assert "built" in service_family
+    assert "Controller bound the exact source inputs" in service_family
+    assert "Architect selected " in service_family
+    assert "bounded graph/Wiki IDs" in service_family
+    assert "Controller expanded " in service_family
+    assert "it into the exact manifest" in service_family
+    assert "the Architect does not author approval actions" in service_family
+    assert "the Architect does not copy or author implementation-contract entries" in service_family
+    assert "typed output fields, not native tool calls" in service_family
 
     for stale_claim in (
         "The Architect proposes",
@@ -385,7 +408,7 @@ def test_architecture_attribution_separates_controller_and_agent_ownership() -> 
     ):
         assert stale_claim not in page
         assert stale_claim not in script
-        assert stale_claim not in service
+        assert stale_claim not in service_family
 
 
 def test_saved_run_must_match_server_supplied_scenario_metadata() -> None:

@@ -77,6 +77,7 @@ APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: Final = "apex_public_interface_a
 APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: Final = "apex_controlled_query_error_missing"
 APEX_MAX_QUERY_ROWS: Final = 200
 JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: Final = "jest_unapproved_module_target"
+JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID: Final = "jest_globals_import_order"
 LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: Final = "lwc_template_binding_invalid"
 
 # This is the complete model-writable Salesforce scope. Dependency manifests,
@@ -205,8 +206,11 @@ SALESFORCE_IMPLEMENTATION_CONTRACT = (
     (
         "Generate executable LWC Jest tests for important outcomes, including successful loading, "
         "controlled failures and stale-response handling. Keep bounded synthetic Account and "
-        "Contact data inline. Test titles, helpers, assertions, mock implementation and source "
-        "order are candidate-owned and validated by the pinned Jest runner. Arrange initial-load "
+        "Contact data inline. Put the named import of every used Jest API from @jest/globals "
+        "before every other static import so the pinned transform initializes jest before loading "
+        "the component and its hoisted virtual Apex mock factories. Test titles, helpers, "
+        "assertions, mock implementation and all remaining source order are candidate-owned and "
+        "validated by the pinned Jest runner. Arrange initial-load "
         "mock outcomes before createElement and appendChild; do not call non-@api component methods "
         "through the host element. Do not include skipped "
         "or focused tests, dangerous Node capabilities, network access, dynamic code execution, "
@@ -249,6 +253,7 @@ SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
         *SALESFORCE_CANDIDATE_FAILURE_CODES,
         APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
         APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
+        JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
         JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
         LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
         "lwc_forbidden_runtime_capability",
@@ -1646,6 +1651,10 @@ def _check_lwc_test(test_source: str) -> None:
         or any(re.search(pattern, test_source) for pattern in forbidden_material_patterns)
     )
     diagnostics: list[str] = []
+    if static_import_targets is not None and (
+        not static_import_targets or static_import_targets[0] != "@jest/globals"
+    ):
+        diagnostics.append(JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID)
     if unapproved_module_target:
         diagnostics.append(JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID)
     if dangerous_capability:

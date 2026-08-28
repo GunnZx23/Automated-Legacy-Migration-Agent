@@ -60,11 +60,6 @@ from legacy_migration_agent.platforms.mulesoft_local_checks import (
 from legacy_migration_agent.platforms.mulesoft_validation import (
     MuleSoftValidationContext,
     MuleSoftValidationEvidence,
-    MUnitLocalResult,
-)
-from legacy_migration_agent.platforms.salesforce_validation import (
-    SalesforceValidationContext,
-    SalesforceValidationEvidence,
 )
 from legacy_migration_agent.workflow import ManifestApproval
 
@@ -106,11 +101,8 @@ PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     # LLM Wiki catalog and retrieval evidence.
     WikiCatalog,
     RetrievalTrace,
-    # Salesforce and MuleSoft normalized validation evidence boundaries.
-    SalesforceValidationContext,
-    SalesforceValidationEvidence,
+    # Active MuleSoft normalized validation evidence boundary.
     MuleSoftValidationContext,
-    MUnitLocalResult,
     MuleSoftValidationEvidence,
     MuleSoftCandidateValidationSummary,
     # Compact, honest evaluation protocol and current result boundary.

@@ -9,7 +9,6 @@ from legacy_migration_agent.core.redaction import (
     assert_no_high_confidence_secrets,
     assert_no_request_secrets,
     high_confidence_secret_findings,
-    redact_high_confidence_secrets,
 )
 
 
@@ -148,7 +147,6 @@ def test_does_not_redact_normal_salesforce_source():
 )
 def test_high_confidence_detector_allows_references_and_placeholders(source: str) -> None:
     assert high_confidence_secret_findings(source) == ()
-    assert redact_high_confidence_secrets(source).text == source
     assert_no_high_confidence_secrets({"content": source}, boundary="candidate")
 
 
@@ -175,10 +173,6 @@ def test_high_confidence_detector_allows_references_and_placeholders(source: str
 def test_high_confidence_detector_rejects_literal_secret_shapes(source: str) -> None:
     findings = high_confidence_secret_findings(source)
     assert findings
-
-    redacted = redact_high_confidence_secrets(source)
-    assert redacted.changed is True
-    assert REDACTED in redacted.text
 
     with pytest.raises(PolicyViolation, match="forbidden secret-shaped material") as caught:
         assert_no_high_confidence_secrets({"content": source}, boundary="candidate")

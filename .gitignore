@@ -16,6 +16,7 @@ target/
 output/
 .playwright-cli/
 .workspaces/
+evaluation/model-comparison-*/runtime/
 .env
 .env.*
 .DS_Store

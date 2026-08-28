@@ -2473,10 +2473,13 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
     assert failed.failure.operation == operation
     assert failed.failure.seam == role
     assert failed.failure.category == "invalid"
-    assert failed.failure.reason_code in {
-        "policy_rejected",
-        "structured_output_invalid",
-    }
+    if role == "engineer":
+        assert failed.failure.reason_code == "file_plan_scope_mismatch"
+    else:
+        assert failed.failure.reason_code in {
+            "policy_rejected",
+            "structured_output_invalid",
+        }
     assert failed.failure.terminal is True
     assert failed.failure.retry_eligible is False
     assert (run_dir / "evidence/agent-run-failure.json").is_file()

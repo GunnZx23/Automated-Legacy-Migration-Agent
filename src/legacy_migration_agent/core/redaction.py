@@ -219,21 +219,6 @@ def high_confidence_secret_findings(text: str) -> tuple[RedactionFinding, ...]:
     return tuple(RedactionFinding(kind=kind, count=count) for kind, count in sorted(counts.items()))
 
 
-def redact_high_confidence_secrets(text: str) -> RedactionResult:
-    """Redact high-confidence secret values from non-authoritative public prose."""
-
-    if not isinstance(text, str):
-        raise TypeError("secret redaction requires text")
-    spans = _secret_spans(text)
-    redacted = text
-    for span in reversed(spans):
-        redacted = f"{redacted[: span.start]}{REDACTED}{redacted[span.end :]}"
-    return RedactionResult(
-        text=redacted,
-        findings=high_confidence_secret_findings(text),
-    )
-
-
 def assert_no_high_confidence_secrets(
     value: object,
     *,

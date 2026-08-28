@@ -13,25 +13,34 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
-
-from legacy_migration_agent.agent_runtime.model_agents import (
-    ArchitectContext,
-    ArchitectRun,
-    EngineerRun,
-    ValidatorAssessment,
-    ValidatorEvidenceContext,
-    ValidatorModelAdvisory,
-    expand_architect_proposal,
-    validate_architect_proposal,
+from legacy_migration_agent.application.final_review_status import (
+    FINAL_REVIEW_DECIDED_KIND,
+    FINAL_REVIEW_DECISION_PATH,
+    FINAL_REVIEW_POLICY_VERSION,
+    FINAL_REVIEW_RECORD_PATH,
+    FINAL_REVIEW_REQUEST_PATH,
+    FINAL_REVIEW_REQUESTED_KIND,
+    FinalReviewDecision,
+    FinalReviewNextAction,
+    FinalReviewOutcome,
+    FinalReviewRecord,
+    FinalReviewRequest,
+    FinalReviewSelection,
+    FinalReviewStatus,
+    freeze_final_review_lifecycle,
+    load_final_review_request,
+    read_final_review_status,
+    verify_final_review_lifecycle,
+)
+from legacy_migration_agent.application.run_query import (
+    VerifiedRunSnapshot,
+    load_verified_run_snapshot,
 )
 from legacy_migration_agent.contracts import (
-    ActorIdentifier,
     ChangeSet,
     Identifier,
     MigrationManifest,
     MigrationRequest,
-    Platform,
     Sha256Digest,
     StrictModel,
     ValidationDisposition,
@@ -44,200 +53,7 @@ from legacy_migration_agent.core.policies import (
     validate_manifest_for_request,
     validate_report,
 )
-from legacy_migration_agent.core.run_session import AgentDefinitionDigests, AgentRunSession
-
-FINAL_REVIEW_POLICY_VERSION: Literal["final-review/1.0"] = "final-review/1.0"
-FINAL_REVIEW_REQUEST_PATH = "final-review/request.json"
-FINAL_REVIEW_DECISION_PATH = "final-review/decision.json"
-FINAL_REVIEW_RECORD_PATH = "final-review/record.json"
-FINAL_REVIEW_REQUESTED_KIND = "final-review-requested"
-FINAL_REVIEW_DECIDED_KIND = "final-review-decided"
-MAX_REVIEW_WINDOW = timedelta(days=14)
-
-FinalReviewSelection = Literal["accept", "reject", "request_changes"]
-FinalReviewOutcome = Literal["accepted", "rejected", "changes_requested"]
-FinalReviewNextAction = Literal[
-    "separate_external_action_required",
-    "stop_request",
-    "revise_and_start_new_review",
-]
-
-
-class FinalReviewRequest(StrictModel):
-    """Exact evidence package presented to one independent reviewer."""
-
-    schema_version: Literal["1.0"] = "1.0"
-    policy_version: Literal["final-review/1.0"] = FINAL_REVIEW_POLICY_VERSION
-    review_id: Identifier
-    status: Literal["awaiting_final_review"] = "awaiting_final_review"
-    requested_action: Literal["accept_candidate_for_next_manual_action"] = (
-        "accept_candidate_for_next_manual_action"
-    )
-    run_id: Identifier
-    thread_id: Identifier
-    request_id: Identifier
-    manifest_id: Identifier
-    change_set_id: Identifier
-    validation_report_id: Identifier
-    platform: Platform
-    source_revision: Sha256Digest
-    session_context_digest: Sha256Digest
-    request_digest: Sha256Digest
-    manifest_digest: Sha256Digest
-    change_set_digest: Sha256Digest
-    validation_report_digest: Sha256Digest
-    architect_context_digest: Sha256Digest
-    dependency_graph_digest: Sha256Digest
-    wiki_trace_digest: Sha256Digest
-    scope_policy_digest: Sha256Digest
-    architect_run_digest: Sha256Digest
-    engineer_run_digest: Sha256Digest
-    validator_assessment_digest: Sha256Digest
-    required_command_ids: tuple[Identifier, ...] = Field(min_length=1, max_length=64)
-    required_receipt_digests: tuple[Sha256Digest, ...] = Field(min_length=1, max_length=64)
-    changed_paths: tuple[str, ...] = Field(min_length=1, max_length=256)
-    completed_attempt: int = Field(ge=1, le=2)
-    agent_definition_digests: AgentDefinitionDigests
-    provider_id: str = Field(min_length=1, max_length=160)
-    model_id: str = Field(min_length=1, max_length=300)
-    completed_lifecycle_kind: Identifier
-    completed_lifecycle_index_digest: Sha256Digest
-    requester: ActorIdentifier
-    designated_reviewer: ActorIdentifier
-    reviewer_identity_assurance: Literal["declarative_unverified"] = "declarative_unverified"
-    requested_at: datetime
-    expires_at: datetime
-    options: tuple[FinalReviewSelection, ...] = (
-        "accept",
-        "reject",
-        "request_changes",
-    )
-    authority_granted: Literal[False] = False
-
-    @field_validator("requested_at", "expires_at")
-    @classmethod
-    def require_utc_timestamp(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() != timedelta(0):
-            raise ValueError("final-review timestamps must be timezone-aware UTC values")
-        return value
-
-    @model_validator(mode="after")
-    def validate_review_boundary(self) -> FinalReviewRequest:
-        if self.requester == self.designated_reviewer:
-            raise ValueError("final review requires an independent designated reviewer")
-        if self.expires_at <= self.requested_at:
-            raise ValueError("final review expiry must be after its request time")
-        if self.expires_at - self.requested_at > MAX_REVIEW_WINDOW:
-            raise ValueError("final review window cannot exceed fourteen days")
-        if len(self.required_command_ids) != len(set(self.required_command_ids)):
-            raise ValueError("final review required command IDs must be unique")
-        if len(self.required_receipt_digests) != len(set(self.required_receipt_digests)):
-            raise ValueError("final review receipt digests must be unique")
-        if len(self.changed_paths) != len(set(self.changed_paths)):
-            raise ValueError("final review changed paths must be unique")
-        if self.options != ("accept", "reject", "request_changes"):
-            raise ValueError("final review options cannot be changed or reordered")
-        return self
-
-
-class FinalReviewDecision(StrictModel):
-    """One named human's decision on one exact final-review request."""
-
-    schema_version: Literal["1.0"] = "1.0"
-    policy_version: Literal["final-review/1.0"] = FINAL_REVIEW_POLICY_VERSION
-    decision_id: Identifier
-    review_id: Identifier
-    review_request_digest: Sha256Digest
-    selection: FinalReviewSelection
-    reviewer: ActorIdentifier
-    reviewer_identity_assurance: Literal["declarative_unverified"] = "declarative_unverified"
-    decided_at: datetime
-    comment: str = Field(default="", max_length=2000)
-    authority_granted: Literal[False] = False
-
-    @field_validator("decided_at")
-    @classmethod
-    def require_utc_timestamp(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() != timedelta(0):
-            raise ValueError("final-review timestamps must be timezone-aware UTC values")
-        return value
-
-
-class FinalReviewRecord(StrictModel):
-    """Terminal, non-authorizing final-review outcome."""
-
-    schema_version: Literal["1.0"] = "1.0"
-    policy_version: Literal["final-review/1.0"] = FINAL_REVIEW_POLICY_VERSION
-    record_id: Identifier
-    review_id: Identifier
-    review_request_digest: Sha256Digest
-    decision_id: Identifier
-    decision_digest: Sha256Digest
-    outcome: FinalReviewOutcome
-    next_action: FinalReviewNextAction
-    candidate_accepted: bool
-    run_id: Identifier
-    thread_id: Identifier
-    request_id: Identifier
-    manifest_digest: Sha256Digest
-    change_set_digest: Sha256Digest
-    validation_report_digest: Sha256Digest
-    source_revision: Sha256Digest
-    reviewer: ActorIdentifier
-    reviewer_identity_assurance: Literal["declarative_unverified"] = "declarative_unverified"
-    decided_at: datetime
-    external_actions_authorized: tuple[()] = ()
-    source_mutated: Literal[False] = False
-    deployment_performed: Literal[False] = False
-    publication_performed: Literal[False] = False
-
-    @field_validator("decided_at")
-    @classmethod
-    def require_utc_timestamp(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() != timedelta(0):
-            raise ValueError("final-review timestamps must be timezone-aware UTC values")
-        return value
-
-    @model_validator(mode="after")
-    def validate_outcome(self) -> FinalReviewRecord:
-        expected = {
-            "accepted": (True, "separate_external_action_required"),
-            "rejected": (False, "stop_request"),
-            "changes_requested": (False, "revise_and_start_new_review"),
-        }[self.outcome]
-        if (self.candidate_accepted, self.next_action) != expected:
-            raise ValueError("final-review outcome does not match its next action")
-        return self
-
-
-class FinalReviewStatus(StrictModel):
-    """Provider-free status projection for the final-review checkpoint."""
-
-    schema_version: Literal["1.0"] = "1.0"
-    review_id: Identifier
-    run_id: Identifier
-    thread_id: Identifier
-    request_id: Identifier
-    status: Literal[
-        "awaiting_final_review",
-        "expired",
-        "accepted",
-        "rejected",
-        "changes_requested",
-    ]
-    request_digest: Sha256Digest
-    decision_digest: Sha256Digest | None = None
-    candidate_accepted: bool | None = None
-    external_actions_authorized: tuple[()] = ()
-
-
-class _FinalReviewLifecycleAnchor(StrictModel):
-    schema_version: Literal["1.0"] = "1.0"
-    lifecycle_kind: Identifier
-    run_id: Identifier
-    thread_id: Identifier
-    request_digest: Sha256Digest
-    lifecycle_index_digest: Sha256Digest
+from legacy_migration_agent.core.run_session import AgentRunSession
 
 
 class _CompletedAgentRunLifecycleAnchor(StrictModel):
@@ -249,18 +65,6 @@ class _CompletedAgentRunLifecycleAnchor(StrictModel):
     thread_id: Identifier
     request_digest: Sha256Digest
     lifecycle_index_digest: Sha256Digest
-
-
-class _FinalReviewRoleEvidence(StrictModel):
-    """Digests derived from the canonical persisted three-role handoff."""
-
-    architect_context_digest: Sha256Digest
-    dependency_graph_digest: Sha256Digest
-    wiki_trace_digest: Sha256Digest
-    scope_policy_digest: Sha256Digest
-    architect_run_digest: Sha256Digest
-    engineer_run_digest: Sha256Digest
-    validator_assessment_digest: Sha256Digest
 
 
 def request_final_review(
@@ -277,6 +81,35 @@ def request_final_review(
 ) -> FinalReviewRequest:
     """Persist the exact final-review request for a terminally passing run."""
 
+    return _request_final_review(
+        session,
+        request,
+        manifest,
+        change_set,
+        report,
+        requester=requester,
+        designated_reviewer=designated_reviewer,
+        requested_at=requested_at,
+        expires_at=expires_at,
+        verified_snapshot=None,
+    )
+
+
+def _request_final_review(
+    session: AgentRunSession,
+    request: MigrationRequest,
+    manifest: MigrationManifest,
+    change_set: ChangeSet,
+    report: ValidationReport,
+    *,
+    requester: str,
+    designated_reviewer: str,
+    requested_at: datetime,
+    expires_at: datetime,
+    verified_snapshot: VerifiedRunSnapshot | None,
+) -> FinalReviewRequest:
+    """Implement final review with an optional already-verified read snapshot."""
+
     if session.has_runtime_anchor(FINAL_REVIEW_REQUESTED_KIND):
         raise PolicyViolation("final review has already been requested for this run")
     existing_request = _load_optional_request(session)
@@ -291,7 +124,14 @@ def request_final_review(
         # the server generated a new current timestamp for the retry.
         requested_at = existing_request.requested_at
         expires_at = existing_request.expires_at
-    role_evidence = _validate_completed_run(session, request, manifest, change_set, report)
+    role_evidence = _validate_completed_run(
+        session,
+        request,
+        manifest,
+        change_set,
+        report,
+        verified_snapshot=verified_snapshot,
+    )
     now = datetime.now(UTC)
     if requested_at > now + timedelta(minutes=5):
         raise PolicyViolation("final-review request time cannot be in the future")
@@ -400,30 +240,21 @@ def request_final_review_for_run(
     ):
         raise PolicyViolation("final review requires one completed ready-for-review agent run")
     session = AgentRunSession.load(project_root, run_dir)
-    request = MigrationRequest.model_validate(session.store.read_json("request.json"))
-    root = f"model-runs/{request.request_id}"
     try:
-        architect = ArchitectRun.model_validate(session.store.read_json(f"{root}/architect.json"))
-        engineer = EngineerRun.model_validate(
-            session.store.read_json(f"{root}/engineer-attempt-{status.execution_attempt}.json")
-        )
-        report = ValidationReport.model_validate(
-            session.store.read_json(f"{root}/report-attempt-{status.execution_attempt}.json")
-        )
-    except (FileNotFoundError, TypeError, ValueError) as exc:
+        snapshot = load_verified_run_snapshot(session, attempt=status.execution_attempt)
+    except PolicyViolation as exc:
         raise PolicyViolation("completed run lacks canonical final-review artifacts") from exc
-    if engineer.change_set is None:
-        raise PolicyViolation("completed run has no Engineer change set for final review")
-    return request_final_review(
+    return _request_final_review(
         session,
-        request,
-        architect.proposal.manifest,
-        engineer.change_set,
-        report,
+        snapshot.request,
+        snapshot.manifest,
+        snapshot.change_set,
+        snapshot.report,
         requester=requester,
         designated_reviewer=designated_reviewer,
         requested_at=requested_at,
         expires_at=expires_at,
+        verified_snapshot=snapshot,
     )
 
 
@@ -580,42 +411,7 @@ def get_final_review_status_for_run(
 def get_final_review_status(session: AgentRunSession) -> FinalReviewStatus:
     """Read final-review state without a provider call or external action."""
 
-    request = _load_request(session)
-    if session.has_runtime_anchor(FINAL_REVIEW_DECIDED_KIND):
-        record = _load_record(session)
-        _verify_lifecycle(
-            session,
-            FINAL_REVIEW_DECIDED_KIND,
-            artifact_digest(record),
-            exact=True,
-        )
-        return FinalReviewStatus(
-            review_id=request.review_id,
-            run_id=request.run_id,
-            thread_id=request.thread_id,
-            request_id=request.request_id,
-            status=record.outcome,
-            request_digest=artifact_digest(request),
-            decision_digest=record.decision_digest,
-            candidate_accepted=record.candidate_accepted,
-        )
-    _verify_lifecycle(
-        session,
-        FINAL_REVIEW_REQUESTED_KIND,
-        artifact_digest(request),
-        exact=True,
-    )
-    pending_status: Literal["expired", "awaiting_final_review"] = (
-        "expired" if datetime.now(UTC) > request.expires_at else "awaiting_final_review"
-    )
-    return FinalReviewStatus(
-        review_id=request.review_id,
-        run_id=request.run_id,
-        thread_id=request.thread_id,
-        request_id=request.request_id,
-        status=pending_status,
-        request_digest=artifact_digest(request),
-    )
+    return read_final_review_status(session, now=datetime.now(UTC))
 
 
 def _validate_completed_run(
@@ -624,7 +420,9 @@ def _validate_completed_run(
     manifest: MigrationManifest,
     change_set: ChangeSet,
     report: ValidationReport,
-) -> _FinalReviewRoleEvidence:
+    *,
+    verified_snapshot: VerifiedRunSnapshot | None,
+) -> VerifiedRunSnapshot:
     session.verify_source_revision()
     if artifact_digest(request) != session.context.request_digest:
         raise PolicyViolation("final review request does not match the run session")
@@ -642,121 +440,18 @@ def _validate_completed_run(
     session.validate_portable_evidence(manifest)
     session.validate_portable_evidence(change_set)
     session.validate_portable_evidence(report)
-    return _validate_persisted_role_artifacts(
-        session,
-        request,
-        manifest,
-        change_set,
-        report,
-    )
-
-
-def _validate_persisted_role_artifacts(
-    session: AgentRunSession,
-    request: MigrationRequest,
-    manifest: MigrationManifest,
-    change_set: ChangeSet,
-    report: ValidationReport,
-) -> _FinalReviewRoleEvidence:
-    root = f"model-runs/{request.request_id}"
-    try:
-        context = ArchitectContext.model_validate(
-            session.store.read_json(f"{root}/architect-context.json")
-        )
-        graph_payload = session.store.read_json(f"{root}/dependency-graph.json")
-        wiki_payload = session.store.read_json(f"{root}/wiki-trace.json")
-        architect = ArchitectRun.model_validate(session.store.read_json(f"{root}/architect.json"))
-        engineer = EngineerRun.model_validate(
-            session.store.read_json(f"{root}/engineer-attempt-{report.attempt}.json")
-        )
-        persisted_report = ValidationReport.model_validate(
-            session.store.read_json(f"{root}/report-attempt-{report.attempt}.json")
-        )
-        validator = ValidatorAssessment.model_validate(
-            session.store.read_json(f"{root}/validator-attempt-{report.attempt}.json")
-        )
-    except FileNotFoundError as exc:
-        raise PolicyViolation(
-            "final review requires persisted Architect inputs and all three role artifacts"
-        ) from exc
-    except (TypeError, ValueError) as exc:
-        raise PolicyViolation("persisted final-review role evidence is malformed") from exc
-
-    if context.request != request:
+    snapshot = verified_snapshot or load_verified_run_snapshot(session, attempt=report.attempt)
+    if snapshot.request != request:
         raise PolicyViolation("final-review Architect context differs from the request")
-    if context.dependency_graph.model_dump(mode="json") != graph_payload:
-        raise PolicyViolation("final-review dependency graph differs from Architect context")
-    if context.wiki_trace.model_dump(mode="json") != wiki_payload:
-        raise PolicyViolation("final-review Wiki trace differs from Architect context")
-    validate_architect_proposal(architect.proposal, context, architect.agent_output)
-    if architect.proposal != expand_architect_proposal(architect.agent_output, context):
-        raise PolicyViolation(
-            "final-review Architect expansion differs from controller-owned policy"
-        )
-    if architect.proposal.manifest != manifest:
+    if snapshot.manifest != manifest:
         raise PolicyViolation("final-review manifest differs from the Architect artifact")
-    if engineer.change_set != change_set:
+    if snapshot.change_set != change_set:
         raise PolicyViolation("final-review change set differs from the Engineer artifact")
-    if persisted_report != report:
+    if snapshot.report != report:
         raise PolicyViolation("final-review report differs from deterministic evidence")
-    advisory = validator.advisory
-    validator_context = ValidatorEvidenceContext.freeze(manifest, change_set, report)
-    if (
-        advisory.manifest_digest != artifact_digest(manifest)
-        or advisory.change_set_digest != artifact_digest(change_set)
-        or advisory.report_digest != artifact_digest(report)
-        or validator.authoritative_disposition is not report.disposition
-        or not validator.all_required_checks_terminal_and_passed
-    ):
+    if not snapshot.validator.all_required_checks_terminal_and_passed:
         raise PolicyViolation("final-review Validator evidence does not bind the exact report")
-    calls = [
-        (architect.model_call, session.context.agent_definition_digests.architect),
-        (engineer.model_call, session.context.agent_definition_digests.engineer),
-    ]
-    if validator.model_call is not None:
-        calls.append((validator.model_call, session.context.agent_definition_digests.validator))
-    elif validator.unavailable_receipt is None:
-        raise PolicyViolation("final-review Validator advisory availability is unproven")
-    for call, expected_definition_digest in calls:
-        if (
-            call.provider != session.context.provider_id
-            or call.model_id != session.context.model_id
-            or call.agent_definition_digest != expected_definition_digest
-        ):
-            raise PolicyViolation("final-review role identity differs from the run session")
-        if call.live_invocation and not call.store_false_sent:
-            raise PolicyViolation("final-review live model evidence lacks storage control")
-    expected_model_digests = [
-        (architect.model_call.input_digest, artifact_digest(context.model_context)),
-        (architect.model_call.output_digest, artifact_digest(architect.agent_output)),
-        (engineer.model_call.output_digest, artifact_digest(engineer.model_outcome)),
-    ]
-    if validator.model_call is not None:
-        try:
-            model_advisory = ValidatorModelAdvisory.model_validate(
-                validator.advisory.model_dump(mode="python")
-            )
-        except (TypeError, ValueError) as exc:
-            raise PolicyViolation(
-                "final-review completed Validator advisory is outside the model schema"
-            ) from exc
-        expected_model_digests.extend(
-            (
-                (validator.model_call.input_digest, artifact_digest(validator_context)),
-                (validator.model_call.output_digest, artifact_digest(model_advisory)),
-            )
-        )
-    if any(actual != expected for actual, expected in expected_model_digests):
-        raise PolicyViolation("final-review model-call evidence differs from persisted handoffs")
-    return _FinalReviewRoleEvidence(
-        architect_context_digest=artifact_digest(context),
-        dependency_graph_digest=artifact_digest(context.dependency_graph),
-        wiki_trace_digest=artifact_digest(context.wiki_trace),
-        scope_policy_digest=context.platform_adapter.scope_policy_digest,
-        architect_run_digest=artifact_digest(architect),
-        engineer_run_digest=artifact_digest(engineer),
-        validator_assessment_digest=artifact_digest(validator),
-    )
+    return snapshot
 
 
 def _completed_lifecycle(
@@ -788,18 +483,7 @@ def _freeze_lifecycle(
     kind: str,
     evidence_digest: Sha256Digest,
 ) -> None:
-    session.write_index(kind)
-    index_payload = session.store.read_json(f"indexes/{kind}.json")
-    anchor = _FinalReviewLifecycleAnchor(
-        lifecycle_kind=kind,
-        run_id=session.context.run_id,
-        thread_id=session.context.thread_id,
-        request_digest=evidence_digest,
-        lifecycle_index_digest=artifact_digest(index_payload),
-    )
-    session.bind_runtime_anchor(kind, anchor)
-    session.verify_index(kind, exact=True)
-    session.verify_runtime_anchor(kind, anchor)
+    freeze_final_review_lifecycle(session, kind, evidence_digest)
 
 
 def _verify_lifecycle(
@@ -809,34 +493,11 @@ def _verify_lifecycle(
     *,
     exact: bool,
 ) -> None:
-    session.verify_index(kind, exact=exact)
-    index_payload = session.store.read_json(f"indexes/{kind}.json")
-    session.verify_runtime_anchor(
-        kind,
-        _FinalReviewLifecycleAnchor(
-            lifecycle_kind=kind,
-            run_id=session.context.run_id,
-            thread_id=session.context.thread_id,
-            request_digest=evidence_digest,
-            lifecycle_index_digest=artifact_digest(index_payload),
-        ),
-    )
+    verify_final_review_lifecycle(session, kind, evidence_digest, exact=exact)
 
 
 def _load_request(session: AgentRunSession) -> FinalReviewRequest:
-    try:
-        request = FinalReviewRequest.model_validate(
-            session.store.read_json(FINAL_REVIEW_REQUEST_PATH)
-        )
-    except FileNotFoundError as exc:
-        raise PolicyViolation("run has no pending final-review request") from exc
-    except (TypeError, ValueError) as exc:
-        raise PolicyViolation("final-review request evidence is malformed") from exc
-    if request.run_id != session.context.run_id or request.thread_id != session.context.thread_id:
-        raise PolicyViolation("final-review request belongs to another run or thread")
-    if request.session_context_digest != artifact_digest(session.context):
-        raise PolicyViolation("final-review request session binding does not match")
-    return request
+    return load_final_review_request(session)
 
 
 def _load_optional_request(session: AgentRunSession) -> FinalReviewRequest | None:
@@ -872,16 +533,6 @@ def _load_optional_record(session: AgentRunSession) -> FinalReviewRecord | None:
         raise PolicyViolation("final-review record evidence is malformed") from exc
 
 
-def _load_record(session: AgentRunSession) -> FinalReviewRecord:
-    try:
-        record = FinalReviewRecord.model_validate(session.store.read_json(FINAL_REVIEW_RECORD_PATH))
-    except FileNotFoundError as exc:
-        raise PolicyViolation("final-review decision lifecycle is incomplete") from exc
-    except (TypeError, ValueError) as exc:
-        raise PolicyViolation("final-review record evidence is malformed") from exc
-    return record
-
-
 def _artifact_exists(session: AgentRunSession, path: str) -> bool:
     try:
         session.store.read_json(path)
@@ -896,7 +547,10 @@ def _stable_id(prefix: str, value: object) -> str:
 
 __all__ = [
     "FINAL_REVIEW_DECIDED_KIND",
+    "FINAL_REVIEW_DECISION_PATH",
     "FINAL_REVIEW_POLICY_VERSION",
+    "FINAL_REVIEW_RECORD_PATH",
+    "FINAL_REVIEW_REQUEST_PATH",
     "FINAL_REVIEW_REQUESTED_KIND",
     "FinalReviewDecision",
     "FinalReviewRecord",

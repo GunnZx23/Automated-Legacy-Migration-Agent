@@ -5,9 +5,12 @@
 [![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11--3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: Apache-2.0](https://img.shields.io/github/license/GunnZx23/Automated-Legacy-Migration-Agent)](LICENSE)
 
-The Automated Legacy Migration Agent is a local, human-gated capstone that
-uses a real LLM to turn one bounded legacy source slice into an isolated,
-reviewable migration candidate. It supports:
+The Automated Legacy Migration Agent is a local, human-gated capstone reference
+implementation that uses a real LLM to turn one bounded legacy source slice
+into an isolated, reviewable migration candidate. The reusable orchestration
+harness is demonstrated through two fixed synthetic scenarios; it does not
+accept an arbitrary repository or claim general-purpose migration support. The
+two supported scenarios are:
 
 - Salesforce Visualforce/Apex to an additive Lightning Web Component (LWC)
   and Apex implementation; and
@@ -151,7 +154,7 @@ controller authorized, which check ran, and why a transition stopped.
 | Role | Current definition | Model-authored output | Boundary |
 |---|---|---|---|
 | Architect | `agents/architect.md` (`architect/v8`) | `ArchitectConversationReply` for intake or `ArchitectManifestProposal` for planning | Read-only; cannot choose a scenario, author exact paths/checks, launch, approve, write, execute, or widen scope |
-| Engineer | `agents/engineer.md` (`engineer/v21`) | `EngineerModelOutcome`, containing a complete file plan or a decision-required intervention | No shell, network, direct filesystem, approval, Git, deployment, or success-declaration authority |
+| Engineer | `agents/engineer.md` (`engineer/v23`) | `EngineerModelOutcome`, containing a complete file plan or a decision-required intervention | No shell, network, direct filesystem, approval, Git, deployment, or success-declaration authority |
 | Validator | `agents/validator.md` (`validator/v5`) | `ValidatorModelAdvisory` over immutable receipts | Cannot run checks, edit files, report runtime availability, approve, or change the deterministic disposition |
 
 All three definitions declare strict structured output, no private
@@ -617,7 +620,10 @@ Useful events include:
 Logs intentionally omit prompts, generated source, diffs, private model
 reasoning, credentials, raw provider bodies, local paths, and unredacted
 exceptions. Failure events expose stable fields such as phase, seam, category,
-reason code, check ID, and retry eligibility.
+reason code, check ID, and retry eligibility. Controller policy rejections also
+include fixed `failure_summary` and `failure_guidance` fields; the UI displays
+the same reason code, explanation, and next step without exposing raw model
+output or exception text.
 
 ### Ollama is not connected
 
@@ -653,6 +659,17 @@ events. `failed` means the controller stopped at a sanitized boundary;
 `environment_unavailable` means required tooling could not run and does not
 consume an Engineer retry; `decision_required` means human scope or evidence is
 needed. Never treat a blocked or unavailable prerequisite as a test pass.
+
+### The UI reports its active-run limit
+
+The UI admits at most 16 concurrent or unverified run directories. A verified
+terminal history (`completed`, `rejected`, `decision_required`, or controlled
+`failed`) does not consume that allowance, even after the checked-in source,
+scenario contract, or agent prompts evolve. Capacity classification verifies
+the historical run's own stored request, lifecycle index, runtime anchor, and
+terminal projection; normal run inspection, resume, and retry still require the
+current source and agent definitions to match. Malformed, corrupt, or genuinely
+nonterminal histories continue to count toward the limit.
 
 ## CLI reference
 
@@ -751,7 +768,7 @@ security, CLI, and UI transport. These tests establish harness behavior, not
 Qwen migration quality or external platform success.
 
 `schemas/v1.0/` is the frozen 52-file legacy public-contract release.
-`schemas/v2.0/` is the current 42-file public-contract release and includes
+`schemas/v2.0/` is the current 39-file public-contract release and includes
 `ValidatorModelAdvisory`. The compatibility test protects both inventories and
 requires exact current v2 schema bytes:
 

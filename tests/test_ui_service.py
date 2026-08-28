@@ -16,6 +16,7 @@ from ui_test_doubles import (
     make_ollama_client_test_double,
 )
 
+import legacy_migration_agent.application.migration_scenarios as migration_scenarios_module
 from legacy_migration_agent.agent_runtime.correction import CorrectionAction
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectManifestProposal,
@@ -1589,17 +1590,22 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
     )
     assert attempt_one.correction is not None
 
-    failed = service.retry(
-        started.handle,
-        correction_id=attempt_one.correction.correction_id,
-        reviewer="course-reviewer",
-        comment="Authorize the exact typed correction.",
-    )
+    terminal_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=terminal_output):
+        failed = service.retry(
+            started.handle,
+            correction_id=attempt_one.correction.correction_id,
+            reviewer="course-reviewer",
+            comment="Authorize the exact typed correction.",
+        )
 
     assert failed.status == "failed"
     assert failed.execution_attempt == 2
     assert failed.failure is not None
     assert failed.failure.seam == "engineer"
+    assert failed.failure.reason_code == "correction_scope_invalid"
+    assert "outside the controller-owned repair boundary" in failed.failure.summary
+    assert "allowed paths" in failed.failure.guidance
     assert failed.candidate is not None
     assert failed.candidate.attempt == 1
     assert failed.candidate.download_available is False
@@ -1614,6 +1620,16 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
         service.export_candidate(started.handle)
     assert export_unavailable.value.code == "candidate_unavailable"
     assert not (project / "output").exists()
+    durable_failure = (
+        project / f".runs/agent-ui/{started.handle}/evidence/agent-run-failure.json"
+    ).read_text(encoding="utf-8")
+    assert '"reason_code":"correction_scope_invalid"' in durable_failure
+    assert "outside the controller-owned repair boundary" in durable_failure
+    assert "/Users/" not in durable_failure
+    lifecycle_log = terminal_output.getvalue()
+    assert 'reason_code="correction_scope_invalid"' in lifecycle_log
+    assert 'failure_summary="Engineer attempt 2 proposed a path outside' in lifecycle_log
+    assert "/Users/" not in lifecycle_log
     assert role_calls == [
         "ArchitectManifestProposal",
         "EngineerModelOutcome",
@@ -1909,9 +1925,15 @@ def test_run_capacity_counts_active_runs_but_releases_rejected_and_completed_run
     _stub_ollama(monkeypatch, project)
     service = AgentUiService(project, ollama_model_id=MODEL_ID, max_runs=1)
     first = _start(service, "salesforce")
-    with pytest.raises(AgentUiError) as active_capacity:
-        _start(service, "salesforce")
+    capacity_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=capacity_output):
+        with pytest.raises(AgentUiError) as active_capacity:
+            _start(service, "salesforce")
     assert active_capacity.value.code == "run_capacity_reached"
+    capacity_log = capacity_output.getvalue()
+    assert "event=ui.run.capacity_rejected" in capacity_log
+    assert "active_count=1" in capacity_log
+    assert "max_runs=1" in capacity_log
 
     rejected = service.decide(
         first.handle,
@@ -1932,16 +1954,118 @@ def test_run_capacity_counts_active_runs_but_releases_rejected_and_completed_run
     assert third.status == "awaiting_approval"
 
 
+@pytest.mark.parametrize("drift", ["source", "agent_definition", "scenario_contract"])
+def test_terminal_run_releases_capacity_after_current_repository_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID, max_runs=1)
+    started = _start(service, "salesforce")
+    completed = service.decide(
+        started.handle,
+        selection="approve",
+        reviewer="course-reviewer",
+    )
+    assert completed.status == "completed"
+
+    if drift == "source":
+        source_file = (
+            project / "fixtures/salesforce/account-contact-explorer/input/force-app/main/default/"
+            "pages/LegacyAccountContactExplorer.page"
+        )
+        source_file.write_text(
+            source_file.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    elif drift == "agent_definition":
+        with (project / "agents/engineer.md").open("a", encoding="utf-8") as handle:
+            handle.write("\nCapacity-classification prompt drift.\n")
+    else:
+        current = migration_scenario(Platform.SALESFORCE)
+        monkeypatch.setitem(
+            migration_scenarios_module._SCENARIOS,
+            Platform.SALESFORCE,
+            current.model_copy(
+                update={
+                    "canonical_description": current.canonical_description
+                    + " Preserve the same bounded historical evidence."
+                }
+            ),
+        )
+
+    # Full readback remains bound to the current source and current agent
+    # definitions; only capacity classification uses historical evidence.
+    with pytest.raises(AgentUiError) as strict_readback:
+        service.get(started.handle)
+    assert strict_readback.value.code == "run_unavailable"
+
+    replacement = _start(service, "salesforce")
+    assert replacement.status == "awaiting_approval"
+
+
+@pytest.mark.parametrize("drift", ["source", "agent_definition", "scenario_contract"])
+def test_nonterminal_run_still_consumes_capacity_after_repository_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID, max_runs=1)
+    active = _start(service, "salesforce")
+    assert active.status == "awaiting_approval"
+
+    if drift == "source":
+        source_file = (
+            project / "fixtures/salesforce/account-contact-explorer/input/force-app/main/default/"
+            "pages/LegacyAccountContactExplorer.page"
+        )
+        source_file.write_text(
+            source_file.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+    elif drift == "agent_definition":
+        with (project / "agents/engineer.md").open("a", encoding="utf-8") as handle:
+            handle.write("\nActive-capacity prompt drift.\n")
+    else:
+        current = migration_scenario(Platform.SALESFORCE)
+        monkeypatch.setitem(
+            migration_scenarios_module._SCENARIOS,
+            Platform.SALESFORCE,
+            current.model_copy(
+                update={
+                    "canonical_description": current.canonical_description
+                    + " Preserve the same bounded historical evidence."
+                }
+            ),
+        )
+
+    with pytest.raises(AgentUiError) as capacity:
+        _start(service, "salesforce")
+    assert capacity.value.code == "run_capacity_reached"
+
+
 def test_corrupt_owned_run_directory_counts_toward_capacity(tmp_path: Path) -> None:
     project = _project(tmp_path)
     corrupt = project / ".runs/agent-ui" / ("a" * 24)
     corrupt.mkdir(parents=True)
     service = AgentUiService(project, ollama_model_id=MODEL_ID, max_runs=1)
 
-    with pytest.raises(AgentUiError) as capacity:
-        _start(service, "salesforce")
+    capacity_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=capacity_output):
+        with pytest.raises(AgentUiError) as capacity:
+            _start(service, "salesforce")
 
     assert capacity.value.code == "run_capacity_reached"
+    capacity_log = capacity_output.getvalue()
+    assert "event=ui.run.capacity_entry_unverified" in capacity_log
+    assert f'handle="{corrupt.name}"' in capacity_log
+    assert 'error_type="PolicyViolation"' in capacity_log
+    assert "event=ui.run.capacity_rejected" in capacity_log
+    assert str(corrupt) not in capacity_log
 
 
 def test_invalid_browser_inputs_have_fixed_non_leaking_errors(

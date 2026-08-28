@@ -506,6 +506,36 @@ class AgentRunSession:
     def load(cls, project_root: Path, run_dir: Path) -> AgentRunSession:
         """Load a run only after filesystem, context, index, and source checks."""
 
+        return cls._load(project_root, run_dir, verify_current_source=True)
+
+    @classmethod
+    def load_historical_evidence(
+        cls,
+        project_root: Path,
+        run_dir: Path,
+    ) -> AgentRunSession:
+        """Load immutable run evidence without consulting current source bytes.
+
+        This deliberately narrow path supports historical lifecycle
+        classification after the repository has evolved.  It retains the same
+        private-directory, runtime-binding, portable-context, initialized-index,
+        and evidence-portability checks as :meth:`load`; only the mutable source
+        tree revision comparison is omitted.  Callers that inspect, resume, or
+        retry a run must continue to use :meth:`load`.
+        """
+
+        return cls._load(project_root, run_dir, verify_current_source=False)
+
+    @classmethod
+    def _load(
+        cls,
+        project_root: Path,
+        run_dir: Path,
+        *,
+        verify_current_source: bool,
+    ) -> AgentRunSession:
+        """Load common session evidence with an explicit source-check policy."""
+
         root = _safe_root(project_root, "project root")
         run_relative = _requested_relative_path(root, run_dir, "run directory")
         destination = _safe_descendant_directory(root, run_relative, "run directory")
@@ -570,7 +600,8 @@ class AgentRunSession:
             ),
         )
         session.verify_index("initialized", exact=False)
-        session.verify_source_revision()
+        if verify_current_source:
+            session.verify_source_revision()
         return session
 
     def verify_source_revision(self) -> None:

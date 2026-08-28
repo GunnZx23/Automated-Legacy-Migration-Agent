@@ -144,7 +144,7 @@
       "status": "pilot",
       "owner": "capstone-project",
       "last_verified": "2026-08-27",
-      "tags": ["salesforce", "lwc", "standard-javascript", "typescript", "jest", "jest_unapproved_module_target", "injectglobals", "resetallmocks", "promise", "apex-test", "org-independent-test-data", "dry-run", "validation"],
+      "tags": ["salesforce", "lwc", "standard-javascript", "typescript", "jest", "jest_globals_import_order", "jest_unapproved_module_target", "injectglobals", "resetallmocks", "promise", "apex-test", "org-independent-test-data", "dry-run", "validation"],
       "links": ["workflow-safety-gates"],
       "sources": [
         {

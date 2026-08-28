@@ -1243,7 +1243,7 @@ def test_attempt_two_engineer_policy_failure_is_dispatched_at_most_once(
 
     with pytest.raises(
         SanitizedModelPolicyError,
-        match="model_role_policy_failure:engineer:policy_rejected",
+        match="model_role_policy_failure:engineer:correction_scope_invalid",
     ):
         workflow.retry_recoverable(approval, thread_id="engineer-at-most-once")
     assert model.calls.count("EngineerModelOutcome") == 1
