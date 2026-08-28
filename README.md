@@ -1,5 +1,10 @@
 # Automated Legacy Migration Agent
 
+[![CI](https://github.com/GunnZx23/Automated-Legacy-Migration-Agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GunnZx23/Automated-Legacy-Migration-Agent/actions/workflows/ci.yml)
+[![Python coverage](https://codecov.io/gh/GunnZx23/Automated-Legacy-Migration-Agent/graph/badge.svg?branch=main)](https://codecov.io/gh/GunnZx23/Automated-Legacy-Migration-Agent)
+[![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11--3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: Apache-2.0](https://img.shields.io/github/license/GunnZx23/Automated-Legacy-Migration-Agent)](LICENSE)
+
 The Automated Legacy Migration Agent is a local, human-gated capstone that
 uses a real LLM to turn one bounded legacy source slice into an isolated,
 reviewable migration candidate. It supports:
@@ -721,6 +726,22 @@ uv run --frozen legacy-migration-agent evaluation-pilot-verify \
   --registry evaluation/pilot-v1/registry.json \
   --snapshot-dir evaluation/pilot-v1
 ```
+
+Generate the same branch-coverage report uploaded by CI:
+
+```bash
+uv run --frozen pytest \
+  --cov=legacy_migration_agent \
+  --cov-branch \
+  --cov-report=term-missing \
+  --cov-report=xml:coverage.xml
+```
+
+The CI and coverage badges at the top of this README are live repository
+metrics. Python coverage measures the controller and harness under
+`src/legacy_migration_agent`; it does not treat generated Apex, LWC, Jest,
+Mule, or MUnit output as Python coverage. Migration quality remains represented
+by the separate benchmark and platform-validation evidence below.
 
 The test suite uses model doubles and temporary candidates to exercise
 conversation binding, launch drift rejection, role contracts, graph/Wiki

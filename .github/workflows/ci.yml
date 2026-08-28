@@ -9,6 +9,9 @@ permissions:
 
 jobs:
   framework-tests:
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,6 +53,20 @@ jobs:
         run: >-
           uv run --frozen pytest
           --basetemp=${{ runner.temp }}/legacy-migration-framework-pytest
+          --cov=legacy_migration_agent
+          --cov-branch
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+
+      - name: Upload Python coverage
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          disable_search: true
+          fail_ci_if_error: false
+          files: ./coverage.xml
+          flags: python
+          name: framework-tests
+          use_oidc: true
 
       - name: Verify compact evaluation declaration
         run: >-
