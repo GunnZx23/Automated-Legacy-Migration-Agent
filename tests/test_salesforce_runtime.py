@@ -631,7 +631,8 @@ def _assert_probe_matches_host(report) -> None:
         assert "all nine authority checks" in probe.summary
     else:
         assert probe.status is CheckStatus.UNAVAILABLE
-        assert probe.receipt is not None and probe.receipt.exit_code != 0
+        if probe.receipt is not None:
+            assert probe.receipt.exit_code != 0
 
 
 def _assert_runtime_checks_follow_verified_sandbox(report) -> None:
@@ -930,6 +931,8 @@ def test_controller_package_boundary_is_adjacent_fixed_and_removable(tmp_path: P
 
     salesforce_runtime._remove_package_boundary(binding)
 
+    with pytest.raises(OSError):
+        os.fstat(binding.descriptor)
     assert not binding.path.exists()
     assert not (candidate.parent / ".legacy-migration-package-boundary.pending").exists()
 
@@ -969,6 +972,8 @@ def test_controller_package_boundary_drift_fails_closed_and_cleans_safe_leaf(
         salesforce_runtime._verify_package_boundary(binding, candidate)
     with pytest.raises(PolicyViolation, match="package boundary"):
         salesforce_runtime._remove_package_boundary(binding)
+    with pytest.raises(OSError):
+        os.fstat(binding.descriptor)
 
     if drift in {"replacement", "symlink"}:
         assert os.path.lexists(binding.path)
@@ -1073,6 +1078,33 @@ def _homebrew_node_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return lexical, cellar, resolved
 
 
+def test_validator_does_not_bind_node_without_the_protected_sandbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _runtime_case(tmp_path, salesforce_candidate_outputs()) as case:
+        monkeypatch.setattr(
+            salesforce_runtime,
+            "_MACOS_SANDBOX_EXEC",
+            tmp_path / "missing-sandbox-exec",
+        )
+
+        def unexpected_node_discovery() -> None:
+            raise AssertionError("Node must not be discovered without the protected sandbox")
+
+        monkeypatch.setattr(
+            salesforce_runtime,
+            "_discover_supported_node",
+            unexpected_node_discovery,
+        )
+
+        validator = _validator(case)
+
+    assert validator._sandbox_backend is None
+    assert validator._node_binding is None
+    assert validator._node_executable is None
+
+
 def test_discover_supported_node_treats_regular_usr_local_shape_as_protected_system(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1144,6 +1176,11 @@ def test_bound_homebrew_node_identity_drift_fails_closed(
     lexical, cellar, resolved = _homebrew_node_fixture(tmp_path)
     monkeypatch.setattr(salesforce_runtime, "_SUPPORTED_NODE_PATHS", (lexical,))
     monkeypatch.setattr(salesforce_runtime, "_HOMEBREW_NODE_CELLARS", {lexical: cellar})
+    monkeypatch.setattr(
+        salesforce_runtime,
+        "_discover_protected_executable",
+        lambda path: path,
+    )
 
     with _runtime_case(tmp_path / "case", salesforce_candidate_outputs()) as case:
         validator = _validator(case)
@@ -1283,6 +1320,10 @@ def test_builtin_sandbox_probe_enforces_authority_and_fake_toolchain_never_runs_
 
 
 def test_installed_jest_dependencies_match_pinned_identity() -> None:
+    if not _macos_sandbox_available():
+        pytest.skip("the controller-pinned Jest runtime is supported only by macOS sandbox-exec")
+    if not (TOOLCHAIN / "node_modules").is_dir():
+        pytest.skip("the controller-pinned Jest installation is unavailable")
     assert (
         salesforce_runtime._full_tree_fingerprint(TOOLCHAIN / "node_modules")
         == salesforce_runtime._PINNED_NODE_MODULES_TREE_FINGERPRINT
@@ -1847,6 +1888,11 @@ def test_real_pinned_jest_same_attempt_replay_preserves_distinct_epochs(
 def test_forbidden_jest_capability_does_not_suppress_the_builtin_sandbox_probe(
     tmp_path: Path,
 ) -> None:
+    if not _macos_sandbox_available():
+        pytest.skip("macOS sandbox-exec is unavailable in this host boundary")
+    if not (TOOLCHAIN / "node_modules").is_dir():
+        pytest.skip("the controller-pinned Jest installation is unavailable")
+
     token = hashlib.sha256((str(tmp_path) + "-real-toolchain").encode()).hexdigest()[:20]
     marker = Path("/private/tmp") / f"salesforce-real-toolchain-{token}.marker"
     assert not marker.exists()

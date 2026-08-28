@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import Field, field_validator, model_validator
 
@@ -1035,17 +1036,68 @@ def _create_private_file(path: Path) -> None:
 
 def _write_exclusive_json(path: Path, value: Mapping[str, Any]) -> None:
     payload = canonical_json_bytes(value) + b"\n"
-    descriptor = os.open(
-        path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
+    expected_parent = _require_private_directory(path.parent, "exclusive JSON parent directory")
+    parent_descriptor = os.open(
+        path.parent,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
     )
+    descriptor: int | None = None
+    staged_name = f".{path.name}.{uuid4().hex}.pending"
+    staged_present = False
     try:
-        os.write(descriptor, payload)
+        opened_parent = os.fstat(parent_descriptor)
+        if (opened_parent.st_dev, opened_parent.st_ino) != (
+            expected_parent.st_dev,
+            expected_parent.st_ino,
+        ):
+            raise PolicyViolation("exclusive JSON parent directory changed while being opened")
+        descriptor = os.open(
+            staged_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=parent_descriptor,
+        )
+        staged_present = True
+        os.set_inheritable(descriptor, False)
+        os.fchmod(descriptor, 0o600)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:  # pragma: no cover - defensive OS boundary
+                raise OSError("exclusive JSON payload write made no progress")
+            remaining = remaining[written:]
         os.fsync(descriptor)
-    finally:
         os.close(descriptor)
-    os.chmod(path, 0o600)
+        descriptor = None
+
+        # Publish only complete, durable bytes. Hard-link creation is atomic and
+        # retains O_EXCL semantics: a concurrent publisher receives
+        # FileExistsError and can safely read the already-complete winner.
+        os.link(
+            staged_name,
+            path.name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        os.unlink(staged_name, dir_fd=parent_descriptor)
+        staged_present = False
+        os.fsync(parent_descriptor)
+    finally:
+        try:
+            if descriptor is not None:
+                os.close(descriptor)
+        finally:
+            try:
+                if staged_present:
+                    try:
+                        os.unlink(staged_name, dir_fd=parent_descriptor)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        os.fsync(parent_descriptor)
+            finally:
+                os.close(parent_descriptor)
 
 
 def _require_private_regular_file(path: Path, role: str) -> os.stat_result:
