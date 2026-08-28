@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import os
 import stat
+import threading
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from legacy_migration_agent.core import run_session as run_session_module
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.run_session import (
     RUNTIME_STATE_PATHS,
@@ -125,6 +127,79 @@ def test_runtime_anchor_is_state_only_immutable_and_reloaded(tmp_path: Path) -> 
         loaded.verify_runtime_anchor("graph-cache", {"changed": True})
     with pytest.raises(PolicyViolation, match="immutable runtime anchor differs"):
         loaded.bind_runtime_anchor("graph-cache", {"changed": True})
+
+
+def test_exclusive_json_is_invisible_until_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "anchor.json"
+    write_started = threading.Event()
+    release_write = threading.Event()
+    errors: list[BaseException] = []
+    original_write = os.write
+
+    def delayed_write(descriptor: int, payload: bytes | memoryview) -> int:
+        write_started.set()
+        if not release_write.wait(timeout=10):
+            raise TimeoutError("test did not release the staged JSON write")
+        return original_write(descriptor, payload)
+
+    monkeypatch.setattr(run_session_module.os, "write", delayed_write)
+
+    def publish() -> None:
+        try:
+            run_session_module._write_exclusive_json(target, {"ready": True})
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+
+    thread = threading.Thread(target=publish)
+    thread.start()
+    assert write_started.wait(timeout=10)
+    try:
+        assert not target.exists()
+    finally:
+        release_write.set()
+        thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert errors == []
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ready": True}
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_concurrent_identical_runtime_anchor_publication_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    loaded = AgentRunSession.load(project, session.run_dir)
+    payload = {"graph_key": REQUEST_DIGEST, "chain_digest": "sha256:" + "d" * 64}
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def bind(bound_session: AgentRunSession) -> None:
+        try:
+            barrier.wait(timeout=10)
+            bound_session.bind_runtime_anchor("graph-cache", payload)
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            errors.append(exc)
+
+    threads = (
+        threading.Thread(target=bind, args=(session,)),
+        threading.Thread(target=bind, args=(loaded,)),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    session.verify_runtime_anchor("graph-cache", payload)
+    assert tuple(session.runtime_anchors_dir.iterdir()) == (
+        session.runtime_anchors_dir / "graph-cache.json",
+    )
 
 
 @pytest.mark.parametrize("reserved", ("expected", "GOLDEN", "Oracle"))

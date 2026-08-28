@@ -31,17 +31,6 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --extra dev
 
-      - name: Install Node.js for the LWC sandbox contract
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: tooling/lwc-jest/package-lock.json
-
-      - name: Install the pinned controller-owned LWC test sandbox
-        working-directory: tooling/lwc-jest
-        run: npm ci --ignore-scripts
-
       - name: Verify Ruff formatting
         run: uv run --frozen ruff format --check src tests
 
@@ -58,7 +47,9 @@ jobs:
         run: uv run --frozen legacy-migration-agent agents-check --project-root .
 
       - name: Run framework tests
-        run: uv run --frozen pytest
+        run: >-
+          uv run --frozen pytest
+          --basetemp=${{ runner.temp }}/legacy-migration-framework-pytest
 
       - name: Verify compact evaluation declaration
         run: >-
@@ -96,6 +87,7 @@ jobs:
       - name: Verify current agent runtime and final-review contracts
         run: >-
           uv run --frozen pytest
+          --basetemp=${{ runner.temp }}/legacy-migration-contracts-pytest
           tests/test_agent_run.py
           tests/test_final_review.py
           tests/test_model_workflow.py

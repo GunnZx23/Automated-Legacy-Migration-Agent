@@ -21,6 +21,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any, Final, cast
 
@@ -197,6 +198,8 @@ _HOMEBREW_NODE_CELLARS: Final = {
 _PINNED_NODE_MODULES_TREE_FINGERPRINT: Final = (
     "sha256:0e07e903284f743a968c08ae820d32ff79b8b8ebc7e0b725bd3b74c1ebcfce1d"
 )
+
+
 _SANDBOX_PROBE_PROGRAM: Final = r"""
 import errno
 import hashlib
@@ -395,6 +398,7 @@ class _VerifiedSandboxEvidence:
 
 @dataclass(frozen=True)
 class _PackageBoundaryBinding:
+    descriptor: int = dataclass_field(repr=False, compare=False)
     path: Path
     parent_path: Path
     parent_device: int
@@ -505,7 +509,13 @@ class SalesforceLocalValidator:
             "runtime_read_roots": tuple(map(str, self._controller_runtime_roots)),
         }
         self._sandbox_backend = _discover_protected_executable(_MACOS_SANDBOX_EXEC)
-        self._node_binding = _discover_supported_node()
+        # Node is relevant only when this host has the protected execution
+        # boundary that can safely run candidate Jest. Linux CI intentionally
+        # records that check as unavailable instead of binding an unrelated
+        # preinstalled Node executable.
+        self._node_binding = (
+            _discover_supported_node() if self._sandbox_backend is not None else None
+        )
         self._node_executable = (
             Path(self._node_binding.resolved_path) if self._node_binding is not None else None
         )
@@ -1401,7 +1411,9 @@ class SalesforceLocalValidator:
         return availability, tuple(specs), probe_binding
 
     def _sandbox_unavailable_reason(self) -> str | None:
-        if self._sandbox_backend != _discover_protected_executable(_MACOS_SANDBOX_EXEC):
+        if self._sandbox_backend is None or self._sandbox_backend != _discover_protected_executable(
+            _MACOS_SANDBOX_EXEC
+        ):
             return "the protected macOS sandbox-exec backend is unavailable"
         try:
             self._verify_controller_python()
@@ -2332,6 +2344,7 @@ def _create_package_boundary(candidate_root: Path) -> _PackageBoundaryBinding:
     pending = parent / _PACKAGE_BOUNDARY_PENDING_FILENAME
     parent_descriptor = _open_directory_no_follow(parent, "candidate workspace container")
     file_descriptor: int | None = None
+    binding_descriptor: int | None = None
     staged_identity: tuple[int, int] | None = None
     published = False
     try:
@@ -2407,11 +2420,14 @@ def _create_package_boundary(candidate_root: Path) -> _PackageBoundaryBinding:
                 boundary_descriptor,
                 maximum_bytes=len(_PACKAGE_BOUNDARY_BYTES),
             )
+            binding_descriptor = os.dup(boundary_descriptor)
+            os.set_inheritable(binding_descriptor, False)
         finally:
             os.close(boundary_descriptor)
         if (metadata.st_dev, metadata.st_ino) != staged_identity:
             raise PolicyViolation("package boundary identity changed during publication")
         binding = _PackageBoundaryBinding(
+            descriptor=binding_descriptor,
             path=boundary,
             parent_path=parent,
             parent_device=opened_parent.st_dev,
@@ -2429,6 +2445,7 @@ def _create_package_boundary(candidate_root: Path) -> _PackageBoundaryBinding:
             sha256="sha256:" + hashlib.sha256(content).hexdigest(),
         )
         _verify_package_boundary(binding, safe_candidate)
+        binding_descriptor = None
         return binding
     except BaseException:
         if published and staged_identity is not None:
@@ -2446,6 +2463,8 @@ def _create_package_boundary(candidate_root: Path) -> _PackageBoundaryBinding:
     finally:
         if file_descriptor is not None:
             os.close(file_descriptor)
+        if binding_descriptor is not None:
+            os.close(binding_descriptor)
         if staged_identity is not None:
             try:
                 pending_metadata = os.stat(
@@ -2471,6 +2490,39 @@ def _verify_package_boundary(
     expected_path = expected_parent / _PACKAGE_BOUNDARY_FILENAME
     if binding.parent_path != expected_parent or binding.path != expected_path:
         raise PolicyViolation("controller-owned package boundary path changed")
+    try:
+        pinned_before = os.fstat(binding.descriptor)
+        os.lseek(binding.descriptor, 0, os.SEEK_SET)
+        pinned_content = _read_exact_file_descriptor(
+            binding.descriptor,
+            maximum_bytes=len(_PACKAGE_BOUNDARY_BYTES),
+        )
+        pinned_after = os.fstat(binding.descriptor)
+    except OSError as exc:
+        raise PolicyViolation("controller-owned package boundary descriptor changed") from exc
+    pinned_stability = (
+        pinned_before.st_dev,
+        pinned_before.st_ino,
+        pinned_before.st_mode,
+        pinned_before.st_uid,
+        pinned_before.st_gid,
+        pinned_before.st_size,
+        pinned_before.st_nlink,
+        pinned_before.st_mtime_ns,
+        pinned_before.st_ctime_ns,
+    )
+    if pinned_stability != (
+        pinned_after.st_dev,
+        pinned_after.st_ino,
+        pinned_after.st_mode,
+        pinned_after.st_uid,
+        pinned_after.st_gid,
+        pinned_after.st_size,
+        pinned_after.st_nlink,
+        pinned_after.st_mtime_ns,
+        pinned_after.st_ctime_ns,
+    ):
+        raise PolicyViolation("controller-owned package boundary changed while being read")
     parent_descriptor = _open_directory_no_follow(
         binding.parent_path,
         "candidate workspace container",
@@ -2512,7 +2564,16 @@ def _verify_package_boundary(
             os.close(boundary_descriptor)
     finally:
         os.close(parent_descriptor)
-    observed = (
+    pinned_observed = (
+        pinned_before.st_dev,
+        pinned_before.st_ino,
+        pinned_before.st_mode,
+        pinned_before.st_uid,
+        pinned_before.st_gid,
+        pinned_before.st_size,
+        pinned_before.st_nlink,
+    )
+    path_observed = (
         metadata.st_dev,
         metadata.st_ino,
         metadata.st_mode,
@@ -2530,19 +2591,38 @@ def _verify_package_boundary(
         binding.size,
         binding.link_count,
     )
-    digest = "sha256:" + hashlib.sha256(content).hexdigest()
+    pinned_digest = "sha256:" + hashlib.sha256(pinned_content).hexdigest()
+    path_digest = "sha256:" + hashlib.sha256(content).hexdigest()
     if (
-        observed != expected
+        pinned_observed != expected
+        or path_observed != expected
         or stat.S_IMODE(metadata.st_mode) != 0o400
         or metadata.st_nlink != 1
+        or pinned_content != _PACKAGE_BOUNDARY_BYTES
         or content != _PACKAGE_BOUNDARY_BYTES
-        or digest != binding.sha256
-        or digest != _PACKAGE_BOUNDARY_SHA256
+        or pinned_digest != binding.sha256
+        or path_digest != binding.sha256
+        or pinned_digest != _PACKAGE_BOUNDARY_SHA256
+        or path_digest != _PACKAGE_BOUNDARY_SHA256
     ):
         raise PolicyViolation("controller-owned package boundary changed")
 
 
 def _remove_package_boundary(binding: _PackageBoundaryBinding) -> None:
+    """Remove one bound leaf and always release its pinned descriptor."""
+
+    try:
+        _remove_package_boundary_leaf(binding)
+    finally:
+        try:
+            os.close(binding.descriptor)
+        except OSError as exc:
+            raise PolicyViolation(
+                "controller-owned package boundary descriptor could not be released"
+            ) from exc
+
+
+def _remove_package_boundary_leaf(binding: _PackageBoundaryBinding) -> None:
     """Remove exactly the bound leaf and report any pre-cleanup drift."""
 
     drift: BaseException | None = None
