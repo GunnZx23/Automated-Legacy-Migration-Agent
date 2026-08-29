@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
 from legacy_migration_agent.core.observability import terminal_lifecycle_logging
 from legacy_migration_agent.ui import server as server_module
 from legacy_migration_agent.ui.server import build_ui_server
@@ -42,14 +43,23 @@ class _FakeAgentUiService:
         self,
         project_root: Path,
         *,
-        ollama_model_id: str,
-        ollama_timeout_seconds: float,
+        model_provider: str = "ollama",
+        model_id: str | None = None,
+        model_timeout_seconds: float | None = None,
+        live_model_approval: LiveModelApproval | None = None,
+        ollama_model_id: str | None = None,
+        ollama_timeout_seconds: float = 240.0,
     ) -> None:
         self.project_root = project_root
-        self.ollama_model_id = ollama_model_id
-        self.ollama_timeout_seconds = ollama_timeout_seconds
+        self.model_provider = model_provider if model_id is not None else "ollama"
+        self.model_id = model_id if model_id is not None else ollama_model_id
+        self.model_timeout_seconds = (
+            model_timeout_seconds if model_timeout_seconds is not None else ollama_timeout_seconds
+        )
+        self.live_model_approval = live_model_approval
         self.decisions: list[tuple[str, str, str, str]] = []
         self.exports: list[str] = []
+        self.progress_calls: list[str] = []
         self.retries: list[tuple[str, str, str, str]] = []
         self.conversation_messages: list[tuple[str, str, str | None]] = []
         self.conversation_scenario_id: str | None = None
@@ -62,18 +72,22 @@ class _FakeAgentUiService:
 
     def model_configuration(self) -> dict[str, object]:
         return {
-            "provider": "ollama",
-            "model_id": self.ollama_model_id,
-            "execution_boundary": "local_loopback",
+            "provider": self.model_provider,
+            "model_id": self.model_id,
+            "execution_boundary": (
+                "remote_provider_managed"
+                if self.model_provider == "claude-cli"
+                else "local_loopback"
+            ),
         }
 
     def runtime_readiness(self) -> dict[str, object]:
         return {
-            "provider": "ollama",
-            "model_id": self.ollama_model_id,
+            "provider": self.model_provider,
+            "model_id": self.model_id,
             "configured": True,
-            "ollama_reachable": True,
-            "model_installed": True,
+            "runtime_reachable": True,
+            "model_available": True,
             "status": "ready",
         }
 
@@ -184,6 +198,17 @@ class _FakeAgentUiService:
 
     def latest(self) -> dict[str, object]:
         return _run_view(platform="salesforce", status="awaiting_approval", candidate=False)
+
+    def progress(self, handle: str) -> dict[str, object]:
+        if handle == "beadfeedbeadfeedbeadfeed":
+            raise server_module.AgentUiError("unknown_run")
+        self.progress_calls.append(handle)
+        return {
+            "handle": handle,
+            "phase": "engineer",
+            "attempt": 1,
+            "elapsed_seconds": 42,
+        }
 
     def decide(
         self,
@@ -724,9 +749,9 @@ def test_serves_frontend_assets_config_and_scenarios(
     assert "Save candidate to output/" in page
     assert "optional examples, not the only messages you" in page
     assert "Model prose is advisory" in page
-    assert "Loading local Ollama" in page
+    assert "Loading model provider" in page
     assert "No org/runtime/deployment" in page
-    assert "server-owned Ollama configuration" in page
+    assert "server-owned model-provider configuration" in page
     assert "provider-select" not in page
     assert '<script src="/assets/app.js" defer></script>' in page
     assert "<style" not in page
@@ -743,7 +768,7 @@ def test_serves_frontend_assets_config_and_scenarios(
     assert b"/launch`" in script
     assert b"currentTextIsExample" in script
     assert b"Local Ollama inference" in script
-    assert b"Local model attempt:" in script
+    assert b"Configured provider attempt:" in script
     assert b"provider_id: state.selectedProviderId" not in script
     assert b"selectedProviderId" not in script
     assert b"message," in script
@@ -760,8 +785,8 @@ def test_serves_frontend_assets_config_and_scenarios(
     assert b'elements.exportButton.addEventListener("click", exportCandidate)' in script
     assert b"Candidate-only export; validation disposition:" in script
     assert b"updateModelPresentation();" in script
-    assert "Local Ollama · awaiting Architect reply".encode() in script
-    assert "Local Ollama · awaiting Architect plan".encode() in script
+    assert b"awaiting Architect reply" in script
+    assert b"awaiting Architect plan" in script
     assert b'setRunStatus("architect responding")' in script
     assert b'setRunStatus("architect planning")' in script
     assert b'"engineer and validator working"' in script
@@ -786,7 +811,8 @@ def test_serves_frontend_assets_config_and_scenarios(
     assert b"/final-review/request" in script
     assert b"/final-review/decision" in script
     assert b"No choice authorizes Git, deployment, publication" in script
-    assert b"Full observed model revision" in script
+    assert b"observed model revision" in script
+    assert b"runtime identity" in script
     assert script.index(b"elements.conversation.append(decision)") < script.index(
         b"elements.conversation.append(interventionMessage(run))"
     )
@@ -829,8 +855,8 @@ def test_serves_frontend_assets_config_and_scenarios(
         "provider": "ollama",
         "model_id": MODEL_ID,
         "configured": True,
-        "ollama_reachable": True,
-        "model_installed": True,
+        "runtime_reachable": True,
+        "model_available": True,
         "status": "ready",
     }
     assert "endpoint" not in _payload(readiness)
@@ -935,6 +961,53 @@ def test_latest_session_route_recovers_a_verifiable_run(
     recovered = _payload(body)["run"]
     assert recovered["handle"] == "abc123def456abc123def456"
     assert recovered["status"] == "awaiting_approval"
+
+
+def test_progress_route_reads_live_phase_without_csrf(
+    ui_server: server_module.ThreadingHTTPServer,
+) -> None:
+    handle = "abc123def456abc123def456"
+
+    status, headers, body = _request(
+        ui_server,
+        "GET",
+        f"/api/sessions/{handle}/progress",
+    )
+
+    assert status == HTTPStatus.OK
+    assert headers["content-type"] == "application/json; charset=utf-8"
+    assert _payload(body) == {
+        "handle": handle,
+        "phase": "engineer",
+        "attempt": 1,
+        "elapsed_seconds": 42,
+    }
+
+
+def test_progress_route_surfaces_service_error_as_stable_code(
+    ui_server: server_module.ThreadingHTTPServer,
+) -> None:
+    status, _, body = _request(
+        ui_server,
+        "GET",
+        "/api/sessions/beadfeedbeadfeedbeadfeed/progress",
+    )
+
+    assert status == HTTPStatus.BAD_REQUEST
+    assert _payload(body)["error"]["code"] == "unknown_run"
+
+
+def test_progress_route_rejects_unknown_session_suffix(
+    ui_server: server_module.ThreadingHTTPServer,
+) -> None:
+    status, _, body = _request(
+        ui_server,
+        "GET",
+        "/api/sessions/abc123def456abc123def456/progress/extra",
+    )
+
+    assert status == HTTPStatus.NOT_FOUND
+    assert _payload(body)["error"]["code"] == "not_found"
 
 
 def test_conversation_routes_separate_messages_from_explicit_launch(
@@ -1662,16 +1735,42 @@ def test_serve_ui_prints_the_loopback_url_and_honors_open_browser(
 
     fake_server = _FakeServer()
     opened: list[str] = []
-    captured: list[tuple[Path, int, str, float]] = []
+    captured: list[
+        tuple[
+            Path,
+            int,
+            str,
+            str | None,
+            float | None,
+            LiveModelApproval | None,
+            str | None,
+            float,
+        ]
+    ] = []
 
     def fake_build_ui_server(
         project_root: Path,
         *,
         port: int,
-        ollama_model_id: str,
+        model_provider: str,
+        model_id: str | None,
+        model_timeout_seconds: float | None,
+        live_model_approval: LiveModelApproval | None,
+        ollama_model_id: str | None,
         ollama_timeout_seconds: float,
     ) -> _FakeServer:
-        captured.append((project_root, port, ollama_model_id, ollama_timeout_seconds))
+        captured.append(
+            (
+                project_root,
+                port,
+                model_provider,
+                model_id,
+                model_timeout_seconds,
+                live_model_approval,
+                ollama_model_id,
+                ollama_timeout_seconds,
+            )
+        )
         return fake_server
 
     monkeypatch.setattr(
@@ -1700,6 +1799,38 @@ def test_serve_ui_prints_the_loopback_url_and_honors_open_browser(
     assert "event=ui.server.stopped" in captured_output.err
     assert "connected" not in captured_output.err
     assert opened == ["http://127.0.0.1:9137/"]
-    assert captured == [(tmp_path, 9137, "qwen3.8:latest", 600.0)]
+    assert captured == [(tmp_path, 9137, "ollama", None, None, None, "qwen3.8:latest", 600.0)]
     assert fake_server.served is True
     assert fake_server.closed is True
+
+
+def test_build_ui_server_wires_an_explicit_claude_cli_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(server_module, "AgentUiService", _FakeAgentUiService)
+    approval = LiveModelApproval(
+        allow_live_api=True,
+        allow_prompt_data_sharing=True,
+        approved_by="demo-operator",
+    )
+
+    server = build_ui_server(
+        tmp_path,
+        port=0,
+        model_provider="claude-cli",
+        model_id="claude-sonnet-5",
+        model_timeout_seconds=900.0,
+        live_model_approval=approval,
+    )
+    try:
+        service = server.ui_service
+        assert service.model_configuration() == {
+            "provider": "claude-cli",
+            "model_id": "claude-sonnet-5",
+            "execution_boundary": "remote_provider_managed",
+        }
+        assert service.model_timeout_seconds == 900.0
+        assert service.live_model_approval == approval
+    finally:
+        server.server_close()

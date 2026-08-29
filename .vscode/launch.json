@@ -2,6 +2,62 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Agent UI: live Claude (debugger)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/tooling/e2e/live_claude_serve.py",
+      "args": ["--port", "8899", "--model-id", "claude-sonnet-5", "--timeout-seconds", "900"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": { "PYTHONUNBUFFERED": "1" },
+      "serverReadyAction": {
+        "pattern": "Agent UI available at (http://127\\.0\\.0\\.1:\\d+/)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser"
+      },
+      "presentation": {
+        "group": "demo",
+        "order": 1
+      }
+    },
+    {
+      "name": "Agent UI: live Claude",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "uv run --frozen legacy-migration-agent ui --project-root . --port 8899 --claude-model claude-sonnet-5 --claude-timeout-seconds 900 --approved-by local-demo-operator --allow-live-api --allow-prompt-data-sharing",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Agent UI available at (http://127\\.0\\.0\\.1:\\d+/)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser"
+      },
+      "presentation": {
+        "group": "demo",
+        "order": 2
+      }
+    },
+    {
+      "name": "Agent UI: recorded double (debugger, offline/free)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "program": "${workspaceFolder}/tooling/e2e/record_mode_serve.py",
+      "args": ["--port", "8898"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": { "PYTHONUNBUFFERED": "1" },
+      "serverReadyAction": {
+        "pattern": "Agent UI available at (http://127\\.0\\.0\\.1:\\d+/)",
+        "uriFormat": "%s",
+        "action": "openIntegratedBrowser"
+      },
+      "presentation": {
+        "group": "demo",
+        "order": 3
+      }
+    },
+    {
       "name": "Agent UI: VS Code Integrated Browser",
       "type": "node-terminal",
       "request": "launch",
@@ -14,7 +70,7 @@
       },
       "presentation": {
         "group": "demo",
-        "order": 1
+        "order": 4
       }
     }
   ]

@@ -12,14 +12,22 @@ from legacy_migration_agent.application.agent_run import (
 )
 from legacy_migration_agent.application.migration_scenarios import (
     MigrationLaunchContract,
+    build_unit_registry,
     migration_launch_contract,
+    migration_recipe,
+    migration_recipes,
     migration_scenario,
     migration_scenario_by_id,
     migration_scenarios,
+    migration_units_for_platform,
     require_canonical_launch_contract,
 )
 from legacy_migration_agent.contracts import Platform
 from legacy_migration_agent.core.integrity import artifact_digest
+
+
+def _recipe_map() -> dict[str, object]:
+    return {recipe.recipe_id: recipe for recipe in migration_recipes()}
 
 
 @pytest.mark.parametrize("scenario", migration_scenarios())
@@ -50,9 +58,10 @@ def test_scenario_derives_one_exact_immutable_launch_contract(scenario) -> None:
     assert artifact_digest(contract).startswith("sha256:")
 
 
-def test_scenario_inventory_has_only_the_two_supported_migrations() -> None:
+def test_scenario_inventory_has_only_the_three_supported_migrations() -> None:
     assert tuple(scenario.scenario_id for scenario in migration_scenarios()) == (
         "salesforce-vf-to-lwc",
+        "case-management-console",
         "mulesoft-mule3-to-mule4",
     )
     assert migration_scenario(Platform.SALESFORCE).source_root == (
@@ -119,3 +128,77 @@ def test_unknown_scenario_identity_is_not_inferred() -> None:
         migration_scenario_by_id("salesforce-aura-to-lwc")
     with pytest.raises(KeyError):
         migration_launch_contract("mulesoft-to-spring")
+
+
+def test_every_unit_references_a_known_recipe_with_shared_platform_values() -> None:
+    recipes = _recipe_map()
+    for scenario in migration_scenarios():
+        assert scenario.recipe_id in recipes
+        recipe = recipes[scenario.recipe_id]
+        assert scenario.platform is recipe.platform
+        assert scenario.analyzer_version == recipe.analyzer_version
+        assert scenario.target_runtime == recipe.target_runtime
+        assert scenario.source_version == recipe.source_version
+        assert scenario.target_version == recipe.target_version
+        assert scenario.behavior_contract_id
+        assert scenario.definition_digest.startswith("sha256:")
+
+
+def test_unknown_recipe_identity_is_not_inferred() -> None:
+    with pytest.raises(KeyError):
+        migration_recipe("salesforce-aura-to-lwc")
+
+
+def test_units_group_by_platform_without_collapsing_to_one_per_platform() -> None:
+    salesforce_units = migration_units_for_platform(Platform.SALESFORCE)
+    assert migration_scenario(Platform.SALESFORCE) in salesforce_units
+    assert all(unit.platform is Platform.SALESFORCE for unit in salesforce_units)
+
+
+def test_registry_builder_accepts_two_units_sharing_one_platform_and_recipe() -> None:
+    recipes = _recipe_map()
+    primary = migration_scenario(Platform.SALESFORCE)
+    sibling = primary.model_copy(
+        update={
+            "scenario_id": "salesforce-second-unit",
+            "source_root": "fixtures/salesforce/second-unit/input",
+            "entry_path": "fixtures/salesforce/second-unit/input/pages/Second.page",
+        }
+    )
+    registry = build_unit_registry((primary, sibling), recipes)
+    assert tuple(registry) == ("salesforce-vf-to-lwc", "salesforce-second-unit")
+    assert registry["salesforce-second-unit"].recipe_id == primary.recipe_id
+
+
+def test_registry_builder_rejects_duplicate_unit_id() -> None:
+    recipes = _recipe_map()
+    primary = migration_scenario(Platform.SALESFORCE)
+    with pytest.raises(ValueError, match="duplicate migration unit id"):
+        build_unit_registry((primary, primary), recipes)
+
+
+def test_registry_builder_rejects_unknown_recipe() -> None:
+    recipes = _recipe_map()
+    orphan = migration_scenario(Platform.SALESFORCE).model_copy(
+        update={"scenario_id": "salesforce-orphan", "recipe_id": "salesforce-unknown-recipe"}
+    )
+    with pytest.raises(ValueError, match="unknown recipe"):
+        build_unit_registry((orphan,), recipes)
+
+
+def test_registry_builder_rejects_duplicate_source_identity() -> None:
+    recipes = _recipe_map()
+    primary = migration_scenario(Platform.SALESFORCE)
+    clone = primary.model_copy(update={"scenario_id": "salesforce-clone"})
+    with pytest.raises(ValueError, match="reuses the source identity"):
+        build_unit_registry((primary, clone), recipes)
+
+
+def test_registry_builder_rejects_recipe_platform_mismatch() -> None:
+    recipes = _recipe_map()
+    mule_primary = migration_scenario(Platform.MULESOFT)
+    mismatched = mule_primary.model_copy(
+        update={"scenario_id": "mule-wrong-recipe", "recipe_id": "salesforce-visualforce-to-lwc"}
+    )
+    with pytest.raises(ValueError, match="platform does not match recipe"):
+        build_unit_registry((mismatched,), recipes)

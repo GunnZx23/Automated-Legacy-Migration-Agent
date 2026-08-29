@@ -822,6 +822,27 @@ def test_salesforce_preset_is_exact_and_excludes_model_owned_tooling() -> None:
         assert SALESFORCE_SCOPE_POLICY.allows_output_path(path) is False
 
 
+def test_salesforce_local_validator_rejects_unknown_migration_unit(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    source = project / "source"
+    shutil.copytree(FIXTURE / "input", source)
+    session = AgentRunSession.initialize(
+        project,
+        project / ".runs" / "run-unknown-unit",
+        run_id="run-unknown-unit",
+        thread_id="thread-unknown-unit",
+        slice_id="bogus-unit",
+        source_root="source",
+        request_digest="sha256:" + "0" * 64,
+        agent_definition_digests=AGENT_DIGESTS,
+        provider_id="offline-test",
+        model_id="structured-agent/v1",
+    )
+
+    with pytest.raises(PolicyViolation, match="unsupported Salesforce migration unit"):
+        build_salesforce_local_validator(session, REGISTRY)
+
+
 def test_runtime_prerequisites_collect_independent_diagnostics_after_static_failures() -> None:
     def result(command_id: str, status: CheckStatus) -> CheckResult:
         return CheckResult(

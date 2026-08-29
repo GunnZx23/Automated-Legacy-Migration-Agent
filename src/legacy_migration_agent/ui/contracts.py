@@ -123,14 +123,18 @@ class AgentBoundariesView(StrictModel):
     provider_invoked: bool | None
     model_call_record_persisted: bool
     structured_response_accepted: bool
-    provider_id: Literal["ollama"]
+    provider_id: Literal["ollama", "claude-cli"]
     model_id: str = Field(min_length=1, max_length=300)
     model_revision: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
-    execution_boundary: Literal["local_loopback"]
+    runtime_identity_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    execution_boundary: Literal["local_loopback", "remote_provider_managed"]
     external_platform_invoked: Literal[False] = False
     source_mutated: Literal[False] = False
     deployment_performed: Literal[False] = False
-    mode: Literal["local_ollama"]
+    mode: Literal["local_ollama", "remote_claude_cli"]
     notice: str = Field(min_length=1, max_length=1000)
 
 

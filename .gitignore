@@ -16,7 +16,12 @@ target/
 output/
 .playwright-cli/
 .workspaces/
+.fastcontext/
 evaluation/model-comparison-*/runtime/
+evaluation/model-comparison-*/case-runtime/
+evaluation/model-comparison-*/case-logs/
+evaluation/model-comparison-*/case-protocol/
+evaluation/model-comparison-*/case-results/
 .env
 .env.*
 .DS_Store

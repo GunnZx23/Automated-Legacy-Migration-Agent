@@ -10,6 +10,18 @@ from __future__ import annotations
 from textwrap import dedent
 
 from legacy_migration_agent.platforms.local_checks import (
+    CASE_AGENT_OUTPUT_PATHS,
+    CASE_CONTROLLER_METADATA_PATH,
+    CASE_CONTROLLER_PATH,
+    CASE_CONTROLLER_TEST_METADATA_PATH,
+    CASE_CONTROLLER_TEST_PATH,
+    CASE_LWC_CSS_PATH,
+    CASE_LWC_HTML_PATH,
+    CASE_LWC_JAVASCRIPT_PATH,
+    CASE_LWC_METADATA_PATH,
+    CASE_LWC_TEST_PATH,
+    CASE_MANIFEST_PATH,
+    CASE_PERMISSION_SET_PATH,
     CONTROLLER_METADATA_PATH,
     CONTROLLER_PATH,
     CONTROLLER_TEST_METADATA_PATH,
@@ -679,4 +691,802 @@ def salesforce_candidate_text_outputs() -> dict[str, str]:
 
     return {
         path: content.decode("utf-8") for path, content in salesforce_candidate_outputs().items()
+    }
+
+
+def case_management_candidate_outputs() -> dict[str, bytes]:
+    """Return a fresh, complete synthetic Case Management Console candidate.
+
+    Mirrors :func:`salesforce_candidate_outputs` for the ``case-management-console``
+    migration unit: eleven artifacts that satisfy the controller-owned static and
+    dependency-closure checks for the Case controller, LWC, Apex test, and
+    least-privileged permission set.
+    """
+
+    apex_metadata = _source(
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">
+            <apiVersion>67.0</apiVersion>
+            <status>Active</status>
+        </ApexClass>
+        """
+    )
+    outputs = {
+        CASE_MANIFEST_PATH: _source(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <Package xmlns="http://soap.sforce.com/2006/04/metadata">
+                <types>
+                    <members>CaseManagementConsoleController</members>
+                    <members>CaseManagementConsoleControllerTest</members>
+                    <members>LegacyCaseManagementConsoleController</members>
+                    <members>LegacyCaseQueryService</members>
+                    <members>LegacyCaseConsoleCtrlTest</members>
+                    <name>ApexClass</name>
+                </types>
+                <types>
+                    <members>LegacyCaseManagementConsole</members>
+                    <name>ApexPage</name>
+                </types>
+                <types>
+                    <members>caseManagementConsole</members>
+                    <name>LightningComponentBundle</name>
+                </types>
+                <types>
+                    <members>CaseManagementConsoleUser</members>
+                    <name>PermissionSet</name>
+                </types>
+                <version>67.0</version>
+            </Package>
+            """
+        ),
+        CASE_CONTROLLER_PATH: _source(
+            """
+            public with sharing class CaseManagementConsoleController {
+                @TestVisible
+                private static final Integer MAX_ACCOUNTS = 50;
+
+                @TestVisible
+                private static final Integer MAX_CASES = 100;
+
+                @AuraEnabled(cacheable=true)
+                public static List<Account> getAccounts() {
+                    try {
+                        return [
+                            SELECT Id, Name
+                            FROM Account
+                            WITH USER_MODE
+                            ORDER BY Name
+                            LIMIT :MAX_ACCOUNTS
+                        ];
+                    } catch (QueryException queryError) {
+                        throw new AuraHandledException('Accounts could not be read.');
+                    }
+                }
+
+                @AuraEnabled(cacheable=true)
+                public static List<Case> getCases(Id accountId, String statusFilter) {
+                    if (accountId == null) {
+                        return new List<Case>();
+                    }
+
+                    List<Boolean> closedValues = new List<Boolean>{ false };
+                    if (statusFilter == 'CLOSED') {
+                        closedValues = new List<Boolean>{ true };
+                    } else if (statusFilter == 'ALL') {
+                        closedValues = new List<Boolean>{ true, false };
+                    }
+
+                    try {
+                        return [
+                            SELECT Id, CaseNumber, Subject, Status, Priority, Contact.Name
+                            FROM Case
+                            WHERE AccountId = :accountId AND IsClosed IN :closedValues
+                            WITH USER_MODE
+                            ORDER BY CaseNumber DESC
+                            LIMIT :MAX_CASES
+                        ];
+                    } catch (QueryException queryError) {
+                        throw new AuraHandledException('Cases could not be read.');
+                    }
+                }
+            }
+            """
+        ),
+        CASE_CONTROLLER_METADATA_PATH: apex_metadata,
+        CASE_CONTROLLER_TEST_PATH: _source(
+            """
+            @IsTest
+            private class CaseManagementConsoleControllerTest {
+                @TestSetup
+                static void createRecords() {
+                    List<Account> accounts = new List<Account>{
+                        new Account(Name = 'Weyland-Yutani'),
+                        new Account(Name = 'Skynet')
+                    };
+                    insert accounts;
+
+                    Account skynetAccount = [
+                        SELECT Id FROM Account WHERE Name = 'Skynet' LIMIT 1
+                    ];
+
+                    Contact skynetContact = new Contact(
+                        AccountId = skynetAccount.Id,
+                        FirstName = 'Sarah',
+                        LastName = 'Connor'
+                    );
+                    insert skynetContact;
+
+                    insert new List<Case>{
+                        new Case(
+                            AccountId = skynetAccount.Id,
+                            ContactId = skynetContact.Id,
+                            Subject = 'Cooling fan malfunction',
+                            Status = 'New',
+                            Priority = 'High',
+                            IsClosed = false
+                        ),
+                        new Case(
+                            AccountId = skynetAccount.Id,
+                            ContactId = skynetContact.Id,
+                            Subject = 'Firmware update request',
+                            Status = 'Closed',
+                            Priority = 'Low',
+                            IsClosed = true
+                        )
+                    };
+                }
+
+                @IsTest
+                static void returnsAccountsAndDefaultOpenCases() {
+                    Account skynetAccount = [
+                        SELECT Id FROM Account WHERE Name = 'Skynet' LIMIT 1
+                    ];
+                    Test.startTest();
+                    List<Account> visibleAccounts =
+                        CaseManagementConsoleController.getAccounts();
+                    List<Case> openCases =
+                        CaseManagementConsoleController.getCases(skynetAccount.Id, 'OPEN');
+                    Test.stopTest();
+
+                    Assert.areEqual(2, visibleAccounts.size());
+                    Assert.areEqual(1, openCases.size());
+                    Assert.areEqual('Cooling fan malfunction', openCases[0].Subject);
+                }
+
+                @IsTest
+                static void filtersCasesByStatus() {
+                    Account skynetAccount = [
+                        SELECT Id FROM Account WHERE Name = 'Skynet' LIMIT 1
+                    ];
+                    Test.startTest();
+                    List<Case> closedCases =
+                        CaseManagementConsoleController.getCases(skynetAccount.Id, 'CLOSED');
+                    List<Case> allCases =
+                        CaseManagementConsoleController.getCases(skynetAccount.Id, 'ALL');
+                    Test.stopTest();
+
+                    Assert.areEqual(1, closedCases.size());
+                    Assert.areEqual('Firmware update request', closedCases[0].Subject);
+                    Assert.areEqual(2, allCases.size());
+                    Assert.areEqual('Firmware update request', allCases[0].Subject);
+                }
+
+                @IsTest
+                static void returnsEmptyCasesForBlankSelection() {
+                    Test.startTest();
+                    List<Case> visibleCases =
+                        CaseManagementConsoleController.getCases(null);
+                    Test.stopTest();
+
+                    Assert.areEqual(0, visibleCases.size());
+                }
+            }
+            """
+        ),
+        CASE_CONTROLLER_TEST_METADATA_PATH: apex_metadata,
+        CASE_LWC_HTML_PATH: _source(
+            """
+            <template>
+                <lightning-card title="Case Management Console" icon-name="standard:case">
+                    <div class="slds-p-horizontal_medium slds-p-bottom_medium controls">
+                        <lightning-combobox
+                            data-role="account-selector"
+                            name="account"
+                            label="Account"
+                            value={selectedAccountId}
+                            options={accountOptions}
+                            onchange={handleAccountChange}>
+                        </lightning-combobox>
+                        <lightning-combobox
+                            data-role="status-filter"
+                            name="status"
+                            label="Status"
+                            value={statusFilter}
+                            options={statusOptions}
+                            onchange={handleStatusChange}>
+                        </lightning-combobox>
+                        <lightning-button
+                            data-role="load-cases"
+                            class="load-button"
+                            label="Load Cases"
+                            variant="brand"
+                            disabled={isLoadDisabled}
+                            onclick={handleLoad}>
+                        </lightning-button>
+                        <lightning-button
+                            data-role="clear-selection"
+                            class="clear-button"
+                            label="Clear Selection"
+                            onclick={handleClear}>
+                        </lightning-button>
+                    </div>
+
+                    <template lwc:if={showGuidance}>
+                        <p data-state="guidance" class="guidance">
+                            Select an account, choose a status, and load cases to view them.
+                        </p>
+                    </template>
+
+                    <template lwc:if={warningMessage}>
+                        <div data-state="warning" class="warning" role="alert">
+                            {warningMessage}
+                        </div>
+                    </template>
+
+                    <template lwc:if={errorMessage}>
+                        <div data-state="error" class="error" role="alert">
+                            {errorMessage}
+                        </div>
+                    </template>
+
+                    <template lwc:if={isLoading}>
+                        <div data-state="loading" class="loading-region">
+                            <lightning-spinner alternative-text="Loading cases" size="small">
+                            </lightning-spinner>
+                        </div>
+                    </template>
+
+                    <template lwc:elseif={hasCases}>
+                        <lightning-datatable
+                            data-role="case-results"
+                            data-state="results"
+                            key-field="Id"
+                            data={cases}
+                            columns={columns}
+                            hide-checkbox-column>
+                        </lightning-datatable>
+                    </template>
+
+                    <template lwc:elseif={showEmptyState}>
+                        <p data-state="empty" class="empty-state">
+                            No cases were found for the selected account and status filter.
+                        </p>
+                    </template>
+                </lightning-card>
+            </template>
+            """
+        ),
+        CASE_LWC_JAVASCRIPT_PATH: _source(
+            """
+            import { LightningElement, wire } from 'lwc';
+            import getAccounts from '@salesforce/apex/CaseManagementConsoleController.getAccounts';
+            import getCases from '@salesforce/apex/CaseManagementConsoleController.getCases';
+
+            const BLANK_ACCOUNT_OPTION = Object.freeze({
+                label: '-- Select an account --',
+                value: ''
+            });
+
+            const STATUS_FILTER_OPTIONS = Object.freeze([
+                { label: 'Open', value: 'OPEN' },
+                { label: 'Closed', value: 'CLOSED' },
+                { label: 'All', value: 'ALL' }
+            ]);
+
+            const CASE_COLUMNS = Object.freeze([
+                { label: 'Case Number', fieldName: 'CaseNumber', type: 'text' },
+                { label: 'Subject', fieldName: 'Subject', type: 'text' },
+                { label: 'Status', fieldName: 'Status', type: 'text' },
+                { label: 'Priority', fieldName: 'Priority', type: 'text' },
+                { label: 'Contact', fieldName: 'ContactName', type: 'text' }
+            ]);
+
+            export default class CaseManagementConsole extends LightningElement {
+                accountOptions = [BLANK_ACCOUNT_OPTION];
+                statusOptions = STATUS_FILTER_OPTIONS;
+                selectedAccountId = '';
+                statusFilter = 'OPEN';
+                cases = [];
+                columns = CASE_COLUMNS;
+                isLoading = false;
+                hasLoaded = false;
+                loadRequestGeneration = 0;
+                warningMessage;
+                errorMessage;
+
+                @wire(getAccounts)
+                wiredAccounts({ data, error }) {
+                    if (data) {
+                        this.accountOptions = [
+                            BLANK_ACCOUNT_OPTION,
+                            ...data.map((accountRecord) => ({
+                                label: accountRecord.Name,
+                                value: accountRecord.Id
+                            }))
+                        ];
+                        this.errorMessage = undefined;
+                    } else if (error) {
+                        this.accountOptions = [BLANK_ACCOUNT_OPTION];
+                        this.errorMessage = 'Accounts could not be loaded.';
+                    }
+                }
+
+                handleAccountChange(event) {
+                    this.loadRequestGeneration += 1;
+                    this.selectedAccountId = event.detail.value;
+                    this.cases = [];
+                    this.isLoading = false;
+                    this.hasLoaded = false;
+                    this.errorMessage = undefined;
+                    this.warningMessage = this.selectedAccountId
+                        ? undefined
+                        : 'Select an account before loading cases.';
+                }
+
+                handleStatusChange(event) {
+                    this.statusFilter = event.detail.value;
+                }
+
+                async handleLoad() {
+                    if (!this.selectedAccountId) {
+                        this.warningMessage = 'Select an account before loading cases.';
+                        return;
+                    }
+
+                    const accountId = this.selectedAccountId;
+                    const statusFilter = this.statusFilter;
+                    this.loadRequestGeneration += 1;
+                    const requestGeneration = this.loadRequestGeneration;
+
+                    this.isLoading = true;
+                    this.hasLoaded = false;
+                    this.cases = [];
+                    this.warningMessage = undefined;
+                    this.errorMessage = undefined;
+
+                    try {
+                        const result = await getCases({ accountId, statusFilter });
+                        if (!this.isCurrentRequest(accountId, requestGeneration)) {
+                            return;
+                        }
+                        this.cases = (result ?? []).map((caseRecord) => ({
+                            ...caseRecord,
+                            ContactName: caseRecord.Contact ? caseRecord.Contact.Name : ''
+                        }));
+                        this.hasLoaded = true;
+                    } catch (error) {
+                        if (!this.isCurrentRequest(accountId, requestGeneration)) {
+                            return;
+                        }
+                        this.errorMessage = 'Cases could not be loaded.';
+                    } finally {
+                        if (this.isCurrentRequest(accountId, requestGeneration)) {
+                            this.isLoading = false;
+                        }
+                    }
+                }
+
+                handleClear() {
+                    this.loadRequestGeneration += 1;
+                    this.selectedAccountId = '';
+                    this.statusFilter = 'OPEN';
+                    this.cases = [];
+                    this.isLoading = false;
+                    this.hasLoaded = false;
+                    this.errorMessage = undefined;
+                    this.warningMessage = 'Select an account before loading cases.';
+                }
+
+                isCurrentRequest(accountId, requestGeneration) {
+                    return (
+                        accountId === this.selectedAccountId &&
+                        requestGeneration === this.loadRequestGeneration
+                    );
+                }
+
+                get isLoadDisabled() {
+                    return !this.selectedAccountId || this.isLoading;
+                }
+
+                get hasCases() {
+                    return this.cases.length > 0;
+                }
+
+                get showGuidance() {
+                    return (
+                        !this.hasLoaded &&
+                        !this.isLoading &&
+                        !this.hasCases &&
+                        !this.warningMessage &&
+                        !this.errorMessage
+                    );
+                }
+
+                get showEmptyState() {
+                    return this.hasLoaded && !this.hasCases && !this.errorMessage;
+                }
+            }
+            """
+        ),
+        CASE_LWC_CSS_PATH: _source(
+            """
+            :host {
+                display: block;
+            }
+
+            .controls {
+                display: grid;
+                gap: 0.75rem;
+                grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 1fr) auto auto;
+                align-items: end;
+            }
+
+            .loading-region {
+                min-height: 4rem;
+                position: relative;
+            }
+
+            .warning {
+                color: var(--lwc-colorTextWarning, #8c4b02);
+            }
+
+            .guidance,
+            .empty-state {
+                color: var(--lwc-colorTextWeak, #444444);
+            }
+            """
+        ),
+        CASE_LWC_METADATA_PATH: _source(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+                <apiVersion>67.0</apiVersion>
+                <isExposed>true</isExposed>
+                <masterLabel>Case Management Console</masterLabel>
+                <description>Read-only browser for synthetic Accounts and their Cases.</description>
+                <targets>
+                    <target>lightning__AppPage</target>
+                    <target>lightning__Tab</target>
+                </targets>
+            </LightningComponentBundle>
+            """
+        ),
+        CASE_LWC_TEST_PATH: _source(
+            """
+            import { afterEach, describe, expect, it, jest } from '@jest/globals';
+            import { createElement } from 'lwc';
+            import CaseManagementConsole from 'c/caseManagementConsole';
+            import getAccounts from '@salesforce/apex/CaseManagementConsoleController.getAccounts';
+            import getCases from '@salesforce/apex/CaseManagementConsoleController.getCases';
+
+            const ACCOUNTS = [
+                { Id: '001000000000001AAA', Name: 'Skynet' },
+                { Id: '001000000000002AAA', Name: 'Weyland-Yutani' }
+            ];
+            const CASES = [
+                {
+                    Id: '500000000000002AAA',
+                    CaseNumber: '00001002',
+                    Subject: 'Firmware update request',
+                    Status: 'Closed',
+                    Priority: 'Low',
+                    Contact: { Name: 'Sarah Connor' }
+                },
+                {
+                    Id: '500000000000001AAA',
+                    CaseNumber: '00001001',
+                    Subject: 'Cooling fan malfunction',
+                    Status: 'New',
+                    Priority: 'High',
+                    Contact: { Name: 'Sarah Connor' }
+                }
+            ];
+
+            jest.mock(
+                '@salesforce/apex/CaseManagementConsoleController.getAccounts',
+                () => {
+                    const { createApexTestWireAdapter } = require('@salesforce/sfdx-lwc-jest');
+                    return {
+                        __esModule: true,
+                        default: createApexTestWireAdapter(jest.fn())
+                    };
+                },
+                { virtual: true }
+            );
+
+            jest.mock(
+                '@salesforce/apex/CaseManagementConsoleController.getCases',
+                () => ({ __esModule: true, default: jest.fn() }),
+                { virtual: true }
+            );
+
+            async function flushPromises() {
+                await Promise.resolve();
+                await Promise.resolve();
+            }
+
+            function createDeferredPromise() {
+                let resolve;
+                let reject;
+                const promise = new Promise((resolvePromise, rejectPromise) => {
+                    resolve = resolvePromise;
+                    reject = rejectPromise;
+                });
+                return { promise, resolve, reject };
+            }
+
+            function createComponent() {
+                const element = createElement('c-case-management-console', {
+                    is: CaseManagementConsole
+                });
+                document.body.appendChild(element);
+                return element;
+            }
+
+            function loadButton(element) {
+                return element.shadowRoot.querySelector('[data-role="load-cases"]');
+            }
+
+            function selectAccount(element, accountId) {
+                element.shadowRoot
+                    .querySelector('[data-role="account-selector"]')
+                    .dispatchEvent(new CustomEvent('change', { detail: { value: accountId } }));
+            }
+
+            describe('candidate-authored case console checks', () => {
+                afterEach(() => {
+                    while (document.body.firstChild) {
+                        document.body.removeChild(document.body.firstChild);
+                    }
+                    jest.clearAllMocks();
+                    getCases.mockReset();
+                });
+
+                it('offers wired account choices', async () => {
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    expect(
+                        element.shadowRoot
+                            .querySelector('[data-role="account-selector"]').options
+                    ).toHaveLength(3);
+                });
+
+                it('shows a controlled account error', async () => {
+                    const element = createComponent();
+                    getAccounts.error(new Error('unsafe technical detail'));
+                    await flushPromises();
+                    expect(element.shadowRoot.querySelector('[role="alert"]')).not.toBeNull();
+                });
+
+                it('gates loading on account selection', async () => {
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    expect(loadButton(element).disabled).toBe(true);
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    expect(loadButton(element).disabled).toBe(false);
+                });
+
+                it('loads case results after an explicit action', async () => {
+                    getCases.mockResolvedValue(CASES);
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    expect(getCases).toHaveBeenCalledWith({
+                        accountId: ACCOUNTS[0].Id,
+                        statusFilter: 'OPEN'
+                    });
+                });
+
+                it('exposes loading while a request is unresolved', async () => {
+                    const pending = createDeferredPromise();
+                    getCases.mockReturnValue(pending.promise);
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    const spinner = element.shadowRoot.querySelector('lightning-spinner');
+                    expect(spinner.alternativeText).toBe('Loading cases');
+                    pending.resolve(CASES);
+                    await flushPromises();
+                });
+
+                it('keeps the current account response', async () => {
+                    const firstRequest = createDeferredPromise();
+                    const secondRequest = createDeferredPromise();
+                    getCases
+                        .mockReturnValueOnce(firstRequest.promise)
+                        .mockReturnValueOnce(secondRequest.promise);
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[1].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    expect(getCases).toHaveBeenCalledTimes(2);
+                    secondRequest.resolve(CASES);
+                    await flushPromises();
+                    firstRequest.resolve([{ ...CASES[0], Subject: 'Stale' }]);
+                    await flushPromises();
+                    expect(
+                        element.shadowRoot
+                            .querySelector('[data-role="case-results"]').data[0].Subject
+                    ).not.toBe('Stale');
+                });
+
+                it('warns after selection is cleared', async () => {
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    selectAccount(element, '');
+                    await flushPromises();
+                    expect(element.shadowRoot.querySelector('[role="alert"]')).not.toBeNull();
+                });
+
+                it('renders an empty result after an empty success', async () => {
+                    getCases.mockResolvedValue([]);
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    expect(
+                        element.shadowRoot.querySelector('[data-state="empty"]')
+                    ).not.toBeNull();
+                });
+
+                it('shows a controlled cases error', async () => {
+                    getCases.mockRejectedValue(new Error('unsafe technical detail'));
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    expect(element.shadowRoot.querySelector('[role="alert"]')).not.toBeNull();
+                });
+
+                it('keeps rendered technical detail hidden', async () => {
+                    getCases.mockRejectedValue(new Error('private stack detail'));
+                    const element = createComponent();
+                    getAccounts.emit(ACCOUNTS);
+                    await flushPromises();
+                    selectAccount(element, ACCOUNTS[0].Id);
+                    await flushPromises();
+                    loadButton(element).click();
+                    await flushPromises();
+                    expect(getCases).toHaveBeenCalledTimes(1);
+                    expect(element.shadowRoot.textContent).not.toContain('private stack detail');
+                });
+            });
+            """
+        ),
+        CASE_PERMISSION_SET_PATH: _source(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+                <classAccesses>
+                    <apexClass>CaseManagementConsoleController</apexClass>
+                    <enabled>true</enabled>
+                </classAccesses>
+                <classAccesses>
+                    <apexClass>LegacyCaseManagementConsoleController</apexClass>
+                    <enabled>true</enabled>
+                </classAccesses>
+                <classAccesses>
+                    <apexClass>LegacyCaseQueryService</apexClass>
+                    <enabled>true</enabled>
+                </classAccesses>
+                <description>Read-only access to both synthetic Case console implementations.</description>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.ContactId</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.Description</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.IsClosed</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.Priority</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.Status</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
+                    <field>Case.Subject</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <hasActivationRequired>false</hasActivationRequired>
+                <label>Case Management Console User</label>
+                <objectPermissions>
+                    <allowCreate>false</allowCreate>
+                    <allowDelete>false</allowDelete>
+                    <allowEdit>false</allowEdit>
+                    <allowRead>true</allowRead>
+                    <modifyAllRecords>false</modifyAllRecords>
+                    <object>Account</object>
+                    <viewAllFields>false</viewAllFields>
+                    <viewAllRecords>false</viewAllRecords>
+                </objectPermissions>
+                <objectPermissions>
+                    <allowCreate>false</allowCreate>
+                    <allowDelete>false</allowDelete>
+                    <allowEdit>false</allowEdit>
+                    <allowRead>true</allowRead>
+                    <modifyAllRecords>false</modifyAllRecords>
+                    <object>Case</object>
+                    <viewAllFields>false</viewAllFields>
+                    <viewAllRecords>false</viewAllRecords>
+                </objectPermissions>
+                <objectPermissions>
+                    <allowCreate>false</allowCreate>
+                    <allowDelete>false</allowDelete>
+                    <allowEdit>false</allowEdit>
+                    <allowRead>true</allowRead>
+                    <modifyAllRecords>false</modifyAllRecords>
+                    <object>Contact</object>
+                    <viewAllFields>false</viewAllFields>
+                    <viewAllRecords>false</viewAllRecords>
+                </objectPermissions>
+                <pageAccesses>
+                    <apexPage>LegacyCaseManagementConsole</apexPage>
+                    <enabled>true</enabled>
+                </pageAccesses>
+            </PermissionSet>
+            """
+        ),
+    }
+    if tuple(sorted(outputs)) != CASE_AGENT_OUTPUT_PATHS:
+        raise AssertionError("synthetic Case candidate inventory drifted")
+    return outputs
+
+
+def case_management_candidate_text_outputs() -> dict[str, str]:
+    """Return Case candidate text updates suitable for structured model test doubles."""
+
+    return {
+        path: content.decode("utf-8")
+        for path, content in case_management_candidate_outputs().items()
     }

@@ -15,7 +15,7 @@ from legacy_migration_agent.agent_runtime.openai_model import ModelCallRecord
 from legacy_migration_agent.agent_runtime.run_artifact_paths import RunArtifactPaths
 from legacy_migration_agent.application import final_review, run_query
 from legacy_migration_agent.application.agent_run import AgentRunFailure, AgentRunStatus
-from legacy_migration_agent.application.migration_scenarios import migration_scenario
+from legacy_migration_agent.application.migration_scenarios import migration_scenario_by_id
 from legacy_migration_agent.core.integrity import ArtifactStore, artifact_digest
 from legacy_migration_agent.core.policies import validate_change_set, validate_report
 from legacy_migration_agent.core.redaction import SecretRedactor
@@ -27,7 +27,11 @@ from legacy_migration_agent.workflow import ManifestApproval
 
 _FINAL_REVIEW_ACTOR_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@+-]{0,159}$")
 _MAX_FINAL_REVIEW_WINDOW: Final = timedelta(days=14)
+_UiProvider = Literal["ollama", "claude-cli"]
+_UiBoundary = Literal["local_loopback", "remote_provider_managed"]
+_UiMode = Literal["local_ollama", "remote_claude_cli"]
 _OLLAMA_RUNTIME_PROVIDER: Final[Literal["ollama"]] = "ollama"
+_CLAUDE_RUNTIME_PROVIDER: Final[Literal["claude-cli"]] = "claude-cli"
 _MANIFEST_APPROVAL_PATH: Final = "control/manifest-approval.json"
 _CORRECTION_REQUEST_ATTEMPT_ONE_PATH: Final = "control/correction-request-attempt-1.json"
 _CORRECTION_APPROVAL_ATTEMPT_TWO_PATH: Final = "control/correction-approval-attempt-2.json"
@@ -37,6 +41,28 @@ _LOCAL_BOUNDARY_NOTICE: Final = (
     "candidate only; no Salesforce org, Mule runtime, source mutation, deployment, Git action, "
     "or publication is invoked."
 )
+_CLAUDE_BOUNDARY_NOTICE: Final = (
+    "Real structured-output inference ran through the server-owned Claude CLI against a "
+    "fixed synthetic source fixture. Inference is remote and provider-managed; the CLI disables "
+    "local session persistence, tools, MCP, browser integration, and project customizations, "
+    "but does not claim provider-side zero retention. The agent creates an isolated migration "
+    "candidate only; no Salesforce org, Mule runtime, source mutation, deployment, Git action, "
+    "or publication is invoked."
+)
+_RUNTIME_PRESENTATION: Final[dict[_UiProvider, tuple[_UiBoundary, _UiMode, str, str]]] = {
+    _OLLAMA_RUNTIME_PROVIDER: (
+        "local_loopback",
+        "local_ollama",
+        "loopback Ollama",
+        _LOCAL_BOUNDARY_NOTICE,
+    ),
+    _CLAUDE_RUNTIME_PROVIDER: (
+        "remote_provider_managed",
+        "remote_claude_cli",
+        "remote Claude CLI",
+        _CLAUDE_BOUNDARY_NOTICE,
+    ),
+}
 _HANDLE_PATTERN: Final = re.compile(r"^[0-9a-f]{24}$")
 
 _FAILURE_DETAILS: Final[
@@ -50,15 +76,15 @@ _FAILURE_DETAILS: Final[
         None,
         None,
         None,
-        "The controller rejected the local model configuration before a usable response.",
-        "Check that the configured Ollama model is installed, then start a fresh run.",
+        "The controller rejected the configured model runtime before a usable response.",
+        "Check the configured provider, model identity, and approval state, then start a fresh run.",
     ),
     "provider_refusal": (
         "model_inference",
         True,
         False,
         None,
-        "The local model declined to produce the requested structured role output.",
+        "The configured model declined to produce the requested structured role output.",
         "Refine the bounded migration request and start a fresh run.",
     ),
     "response_incomplete": (
@@ -66,7 +92,7 @@ _FAILURE_DETAILS: Final[
         True,
         False,
         None,
-        "The local model response ended before the structured role output was complete.",
+        "The model response ended before the structured role output was complete.",
         "Start a fresh run; reduce model load or allow a longer server-owned timeout if needed.",
     ),
     "structured_output_invalid": (
@@ -74,7 +100,7 @@ _FAILURE_DETAILS: Final[
         True,
         False,
         None,
-        "The local model responded, but its role output did not satisfy the typed contract.",
+        "The model responded, but its role output did not satisfy the typed contract.",
         "Start a fresh run and use the harness trace to identify the rejected role boundary.",
     ),
     "unauthorized_tool_call": (
@@ -83,7 +109,7 @@ _FAILURE_DETAILS: Final[
         False,
         None,
         (
-            "The local model returned a native provider tool call instead of the required "
+            "The model returned a native provider tool call instead of the required "
             "structured role response."
         ),
         (
@@ -96,16 +122,16 @@ _FAILURE_DETAILS: Final[
         None,
         None,
         None,
-        "The local Ollama model inventory could not prove the selected model identity.",
-        "Confirm the exact model alias and digest with ollama list, then start a fresh run.",
+        "The configured runtime could not prove the selected model identity.",
+        "Confirm the server-selected provider and model identity, then start a fresh run.",
     ),
     "provider_response_invalid": (
         "provider_response",
         None,
         None,
         None,
-        "Ollama returned a response that failed the controller's provider-protocol checks.",
-        "Confirm the local Ollama service and selected model, then start a fresh run.",
+        "The provider returned a response that failed controller-owned protocol checks.",
+        "Confirm the configured provider and selected model, then start a fresh run.",
     ),
     "required_approval_missing": (
         "policy_validation",
@@ -282,16 +308,16 @@ _FAILURE_DETAILS: Final[
         None,
         None,
         None,
-        "The local Ollama request exceeded the server-owned inference deadline.",
-        "Confirm Ollama is responsive, then restart with a longer timeout or a smaller installed model.",
+        "The model request exceeded the server-owned inference deadline.",
+        "Confirm the configured provider is responsive, then restart with a longer timeout.",
     ),
     "provider_unavailable": (
         "model_inference",
         None,
         None,
         None,
-        "The controller could not complete the local Ollama request.",
-        "Confirm Ollama is running and the configured model is installed, then start a fresh run.",
+        "The controller could not complete the configured model request.",
+        "Confirm the configured provider and model are available, then start a fresh run.",
     ),
     "deterministic_validation_failed": (
         "deterministic_validation",
@@ -320,10 +346,13 @@ class RunViewProjector:
         self._run_root = run_root
 
     def project(self, handle: str, status: AgentRunStatus) -> ui_contracts.AgentRunView:
-        scenario = migration_scenario(status.platform)
         store = ArtifactStore(self._run_root / handle / "evidence")
         run_context = AgentRunContext.model_validate(store.read_json("run-context.json"))
-        if run_context.slice_id != scenario.scenario_id:
+        try:
+            scenario = migration_scenario_by_id(run_context.slice_id)
+        except KeyError:
+            raise ui_contracts.AgentUiError("run_unavailable") from None
+        if scenario.platform is not status.platform:
             raise ui_contracts.AgentUiError("run_unavailable")
         snapshots = self._verified_run_snapshots(handle, status)
         latest_snapshot = snapshots[max(snapshots)] if snapshots else None
@@ -705,11 +734,16 @@ class RunViewProjector:
         if len(revisions) != 1:
             raise ui_contracts.AgentUiError("run_unavailable")
         model_revision = next(iter(revisions))
-        if (
-            execution_boundary == "local_loopback"
-            and status.provider_id == _OLLAMA_RUNTIME_PROVIDER
-            and model_revision is not None
-        ):
+        runtime_identities = {
+            call.resolved_runtime_identity_digest for call in calls
+        }
+        if len(runtime_identities) != 1 or None in runtime_identities:
+            raise ui_contracts.AgentUiError("run_unavailable")
+        runtime_identity_digest = next(iter(runtime_identities))
+        runtime = _runtime_presentation(status.provider_id)
+        if runtime is not None and execution_boundary == runtime[0]:
+            if runtime[0] == "local_loopback" and model_revision is None:
+                raise ui_contracts.AgentUiError("run_unavailable")
             active_failure_seam = None if status.failure is None else status.failure.seam
             return ui_contracts.AgentBoundariesView(
                 provider_attempted=True,
@@ -720,12 +754,13 @@ class RunViewProjector:
                     "engineer",
                     "validator",
                 },
-                provider_id=status.provider_id,
+                provider_id=cast(_UiProvider, status.provider_id),
                 model_id=status.model_id,
                 model_revision=model_revision,
-                execution_boundary="local_loopback",
-                mode="local_ollama",
-                notice=_LOCAL_BOUNDARY_NOTICE,
+                runtime_identity_digest=runtime_identity_digest,
+                execution_boundary=runtime[0],
+                mode=runtime[1],
+                notice=runtime[3],
             )
         raise ui_contracts.AgentUiError("run_unavailable")
 
@@ -733,7 +768,8 @@ class RunViewProjector:
         self,
         status: AgentRunStatus,
     ) -> ui_contracts.AgentBoundariesView:
-        if status.provider_id == _OLLAMA_RUNTIME_PROVIDER:
+        runtime = _runtime_presentation(status.provider_id)
+        if runtime is not None:
             attempted = status.failure is not None and status.failure.seam == "architect"
             response_accepted = bool(
                 status.failure is not None
@@ -748,18 +784,18 @@ class RunViewProjector:
             )
             if response_accepted:
                 notice = (
-                    "A loopback Ollama response passed structured-output validation, then the "
+                    f"A {runtime[2]} response passed structured-output validation, then the "
                     "controller rejected it at the policy boundary. No model-call record was "
                     "claimed and no external action was invoked."
                 )
             elif attempted:
                 notice = (
-                    "A loopback Ollama call was attempted, but no accepted structured response "
+                    f"A {runtime[2]} call was attempted, but no accepted structured response "
                     "or model-call record was persisted. No external action was invoked."
                 )
             else:
                 notice = (
-                    "The controller stopped before invoking the configured loopback Ollama "
+                    f"The controller stopped before invoking the configured {runtime[2]} "
                     "model. No external action was invoked."
                 )
             return ui_contracts.AgentBoundariesView(
@@ -767,11 +803,12 @@ class RunViewProjector:
                 provider_invoked=True if response_accepted else None if attempted else False,
                 model_call_record_persisted=False,
                 structured_response_accepted=response_accepted,
-                provider_id=status.provider_id,
+                provider_id=cast(_UiProvider, status.provider_id),
                 model_id=status.model_id,
                 model_revision=None,
-                execution_boundary="local_loopback",
-                mode="local_ollama",
+                runtime_identity_digest=None,
+                execution_boundary=runtime[0],
+                mode=runtime[1],
                 notice=notice,
             )
         raise ui_contracts.AgentUiError("run_unavailable")
@@ -818,8 +855,16 @@ def is_verified_pre_manifest_terminal_without_model_record(run: ui_contracts.Age
         or run.model_calls
         or run.boundaries.model_call_record_persisted
         or run.boundaries.model_revision is not None
-        or run.boundaries.execution_boundary != "local_loopback"
-        or run.boundaries.mode != "local_ollama"
+        or run.boundaries.runtime_identity_digest is not None
+        or (
+            run.boundaries.provider_id,
+            run.boundaries.execution_boundary,
+            run.boundaries.mode,
+        )
+        not in {
+            ("ollama", "local_loopback", "local_ollama"),
+            ("claude-cli", "remote_provider_managed", "remote_claude_cli"),
+        }
     ):
         return False
     if run.status == "decision_required":
@@ -836,6 +881,14 @@ def is_verified_pre_manifest_terminal_without_model_record(run: ui_contracts.Age
         and run.failure.seam == "architect"
         and run.failure.attempt == 1
     )
+
+
+def _runtime_presentation(
+    provider_id: str,
+) -> tuple[_UiBoundary, _UiMode, str, str] | None:
+    if provider_id not in _RUNTIME_PRESENTATION:
+        return None
+    return _RUNTIME_PRESENTATION[provider_id]
 
 
 def _validate_final_review_actor(value: object) -> str:

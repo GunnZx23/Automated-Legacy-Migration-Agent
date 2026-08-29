@@ -1,23 +1,22 @@
 # Salesforce Apex security for LWC services
 
 Project correction rule `apex_public_interface_annotation_mismatch`: the
-generated service must be `public with sharing class
-AccountContactExplorerController` and expose exactly these two LWC-callable
-interfaces:
+generated service must be a `public with sharing` Apex class whose only
+LWC-callable interface is the exact set of `public static` methods named in
+`manifest.implementation_contract`. Place `@AuraEnabled` directly on each of
+those methods and expose no additional Aura-enabled method. Use
+`@AuraEnabled(cacheable=true)` only on methods that read data and never mutate
+it. The class name, method names, return types, and parameters come from the
+approved manifest, not from this page. Update only the approved least-privilege
+permission set named in the manifest; do not create a second permission set or
+modify a profile, and do not create `User` records.
+The local controller contract checks safe exception translation, and
+authorized-org validation proves the org-dependent security behavior.
 
-```apex
-@AuraEnabled(cacheable=true)
-public static List<Account> getAccounts()
-@AuraEnabled(cacheable=true)
-public static List<Contact> getContacts(Id accountId)
-```
-
-Place the annotation directly on each method. Both methods are read-only, and
-every SOQL statement must use `WITH USER_MODE`, static bind variables, bounded
-ordering, and a limit of 1 through 200 rows. A bound limit must resolve to a
-positive compile-time `Integer` constant; the exact value inside that range is
-candidate-owned. These exact names and signatures are this project's
-candidate contract; the underlying `@AuraEnabled static` exposure and user-mode
+Read-only query methods must use `WITH USER_MODE`, static bind variables,
+bounded ordering, and a limit of 1 through 200 rows. A bound limit must resolve
+to a positive compile-time `Integer` constant; the exact value inside that
+range is candidate-owned. The `@AuraEnabled static` exposure and user-mode
 security behavior are Salesforce platform features.
 
 Keep both explicit `with sharing` and `WITH USER_MODE`. The first enforces the
@@ -27,17 +26,16 @@ and field-level security. Writing both makes the intended boundary visible and
 does not depend on changing API defaults.
 
 Expose only required `public static` methods with `@AuraEnabled`. Use
-`cacheable=true` only for methods that read data and do not mutate it. In this
-project's generated service, each query must be inside a `try` block whose
-matching `catch` translates the failure to a new `AuraHandledException`. Its
-sole argument must be a short, fixed, safe literal message. Never return
-`Exception.getMessage()`, stack traces, raw SOQL, record data, or secrets;
-catch/helper layout and exact safe wording remain candidate-owned. Users also
-require Apex class access; an LWC bundle does not grant that permission itself.
-For this bounded fixture, update only the approved
-`AccountContactExplorerUser` permission set to add the new controller while
-preserving its legacy controller, Visualforce page, and read-only object and
-field access. Do not create a second permission set or modify a profile.
+`cacheable=true` only for methods that read data and do not mutate it. Each
+generated query method must be inside a `try` block whose matching `catch`
+translates the failure to a new `AuraHandledException`. Its sole argument must
+be a short, fixed, safe literal message. Never return `Exception.getMessage()`,
+stack traces, raw SOQL, record data, or secrets; catch/helper layout and exact
+safe wording remain candidate-owned. Users also require Apex class access; an
+LWC bundle does not grant that permission itself. Update only the approved
+least-privilege permission set named in the manifest to add the new controller
+while preserving its existing controller, Visualforce page, and read-only object
+and field access. Do not create a second permission set or modify a profile.
 Portable Apex tests use synthetic data. Do not create `User` records, query
 `Profile`, or use `System.runAs` to fabricate a permission failure.
 The local controller contract checks safe exception translation; an authorized

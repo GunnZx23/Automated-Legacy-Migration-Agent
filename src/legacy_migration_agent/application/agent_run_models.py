@@ -17,6 +17,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+    ClaudeCliStructuredModelClient,
+)
 from legacy_migration_agent.agent_runtime.model_workflow import (
     DeterministicValidator,
     SanitizedModelPolicyError,
@@ -119,9 +123,10 @@ class AgentRunModelClients:
         if len(set(boundaries)) != 1:
             raise ModelConfigurationError("role clients cannot mix execution boundaries")
         boundary = boundaries[0]
-        if boundary == "remote_no_store" and not all(live_flags):
+        remote_boundaries = {"remote_no_store", "remote_provider_managed"}
+        if boundary in remote_boundaries and not all(live_flags):
             raise ModelConfigurationError("remote role clients must identify remote invocation")
-        if boundary != "remote_no_store" and any(live_flags):
+        if boundary not in remote_boundaries and any(live_flags):
             raise ModelConfigurationError("non-remote role clients cannot claim remote invocation")
         if boundary != "offline_recorded":
             if self._live_authorization is not _LIVE_AUTHORIZATION:
@@ -181,14 +186,28 @@ class AgentRunModelClients:
         return self._live_approval
 
     def bind_recorded_model_revision(self, revision: Sha256Digest) -> None:
-        """Bind a local runtime only to immutable evidence loaded by the controller."""
+        """Bind a local model revision only to immutable controller evidence."""
 
         if self.execution_boundary != "local_loopback":
-            raise ModelConfigurationError("only a local runtime can bind a local model revision")
+            raise ModelConfigurationError("only a local runtime can bind a model revision")
         binder = getattr(self.architect, "bind_model_revision", None)
         if not callable(binder):
             raise ModelConfigurationError("local runtime cannot bind the recorded model revision")
         binder(revision)
+
+    def bind_recorded_runtime_identity(self, identity_digest: Sha256Digest) -> None:
+        """Bind a non-offline runtime seam to the exact recorded identity digest."""
+
+        if self.execution_boundary == "offline_recorded":
+            raise ModelConfigurationError("an offline runtime cannot bind a runtime identity")
+        binder = getattr(self.architect, "bind_runtime_identity", None)
+        if callable(binder):
+            binder(identity_digest)
+            return
+        if self.execution_boundary == "local_loopback":
+            self.bind_recorded_model_revision(identity_digest)
+            return
+        raise ModelConfigurationError("runtime cannot bind the recorded identity")
 
 
 class _SanitizedModelClient:
@@ -282,6 +301,26 @@ class _SanitizedModelClient:
         if category is not None:
             raise _ControlledOperationError(category, self._role)
         return revision
+
+    @property
+    def runtime_identity_digest(self) -> str | None:
+        """Expose only a validated digest for the configured runtime seam."""
+
+        category: AgentRunFailureCategory | None = None
+        identity: str | None = None
+        try:
+            raw = getattr(self._client, "runtime_identity_digest", None)
+            if raw is not None and (
+                not isinstance(raw, str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", raw) is None
+            ):
+                raise TypeError("runtime identity evidence has an invalid type")
+            identity = raw
+        except Exception as error:
+            category = _classify_model_exception(error)
+        if category is not None:
+            raise _ControlledOperationError(category, self._role)
+        return identity
 
     @property
     def live_approval(self) -> LiveModelApproval | None:
@@ -616,6 +655,29 @@ def build_local_ollama_model_clients(
     )
 
 
+def build_claude_cli_model_clients(
+    *,
+    model_id: str,
+    approval: LiveModelApproval,
+    timeout_seconds: float = DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+    client_factory: Callable[..., StructuredModelClient] = ClaudeCliStructuredModelClient,
+) -> AgentRunModelClients:
+    """Create one approved, tool-free client for remote Claude CLI inference."""
+
+    client = client_factory(
+        model_id,
+        approval=approval,
+        timeout_seconds=timeout_seconds,
+    )
+    return AgentRunModelClients(
+        architect=client,
+        engineer=client,
+        validator=client,
+        _live_authorization=_LIVE_AUTHORIZATION,
+        _live_approval=LiveModelApproval.model_validate(approval.model_dump(mode="python")),
+    )
+
+
 def _elapsed_milliseconds(started_ns: int) -> int:
     return max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
 
@@ -709,6 +771,7 @@ class _NeverValidate:
 
 __all__ = [
     "AgentRunModelClients",
+    "build_claude_cli_model_clients",
     "build_live_openai_model_clients",
     "build_local_ollama_model_clients",
 ]

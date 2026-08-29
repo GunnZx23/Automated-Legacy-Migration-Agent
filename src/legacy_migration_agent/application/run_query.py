@@ -235,7 +235,10 @@ def _load_verified_attempt(
             or call.agent_definition_digest != expected_definition_digest
         ):
             raise PolicyViolation("run snapshot role identity differs from the run session")
-        if call.live_invocation and not call.store_false_sent:
+        if (
+            call.resolved_execution_boundary == "remote_no_store"
+            and not call.store_false_sent
+        ):
             raise PolicyViolation("run snapshot live model evidence lacks storage control")
 
     expected_model_digests = [

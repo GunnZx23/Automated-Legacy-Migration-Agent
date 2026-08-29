@@ -91,9 +91,20 @@ class ArchitectConversationLaunchReceipt(StrictModel):
     scenario_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
     launch_contract_digest: Sha256Digest
     advisory_output_digest: Sha256Digest
-    model_revision: Sha256Digest
+    runtime_identity_digest: Sha256Digest | None = None
+    model_revision: Sha256Digest | None = None
     launch_token: Sha256Digest
     requested_at: datetime
+
+    @model_validator(mode="after")
+    def require_runtime_identity(self) -> ArchitectConversationLaunchReceipt:
+        if self.resolved_runtime_identity_digest is None:
+            raise ValueError("launch receipt requires a runtime identity")
+        return self
+
+    @property
+    def resolved_runtime_identity_digest(self) -> Sha256Digest | None:
+        return self.runtime_identity_digest or self.model_revision
 
     @field_validator("requested_at")
     @classmethod
@@ -112,9 +123,20 @@ class ArchitectConversationLaunchIntent(StrictModel):
     scenario_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
     launch_contract_digest: Sha256Digest
     advisory_output_digest: Sha256Digest
-    model_revision: Sha256Digest
+    runtime_identity_digest: Sha256Digest | None = None
+    model_revision: Sha256Digest | None = None
     launch_token: Sha256Digest
     requested_at: datetime
+
+    @model_validator(mode="after")
+    def require_runtime_identity(self) -> ArchitectConversationLaunchIntent:
+        if self.resolved_runtime_identity_digest is None:
+            raise ValueError("launch intent requires a runtime identity")
+        return self
+
+    @property
+    def resolved_runtime_identity_digest(self) -> Sha256Digest | None:
+        return self.runtime_identity_digest or self.model_revision
 
     @field_validator("requested_at")
     @classmethod
@@ -133,7 +155,7 @@ class _ArchitectConversationLaunchBinding(StrictModel):
     scenario_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
     launch_contract_digest: Sha256Digest
     advisory_output_digest: Sha256Digest
-    model_revision: Sha256Digest
+    runtime_identity_digest: Sha256Digest
 
 
 class ArchitectConversationSnapshot(StrictModel):
@@ -175,8 +197,11 @@ class ArchitectConversationSnapshot(StrictModel):
                 != self.launch_intent.advisory_output_digest
             ):
                 raise ValueError("launch advisory differs from the ready intake output")
-            if latest.architect_run.model_call.model_revision != self.launch_intent.model_revision:
-                raise ValueError("launch model revision differs from the ready intake revision")
+            if (
+                latest.architect_run.model_call.resolved_runtime_identity_digest
+                != self.launch_intent.resolved_runtime_identity_digest
+            ):
+                raise ValueError("launch runtime identity differs from the ready intake identity")
             if architect_conversation_launch_token(self) != self.launch_intent.launch_token:
                 raise ValueError("launch token differs from the ready intake state")
         if self.launch is not None:
@@ -186,6 +211,7 @@ class ArchitectConversationSnapshot(StrictModel):
                 scenario_id=self.launch_intent.scenario_id,
                 launch_contract_digest=self.launch_intent.launch_contract_digest,
                 advisory_output_digest=self.launch_intent.advisory_output_digest,
+                runtime_identity_digest=self.launch_intent.runtime_identity_digest,
                 model_revision=self.launch_intent.model_revision,
                 launch_token=self.launch_intent.launch_token,
                 requested_at=self.launch_intent.requested_at,
@@ -460,7 +486,7 @@ class ArchitectConversationStore:
             or latest.launch_contract_digest is None
             or reply.status != "ready_to_launch"
             or reply.advisory_summary is None
-            or latest.architect_run.model_call.model_revision is None
+            or latest.architect_run.model_call.resolved_runtime_identity_digest is None
         ):
             raise PolicyViolation("conversation is not ready to launch")
         launch_token = architect_conversation_launch_token(snapshot)
@@ -472,6 +498,9 @@ class ArchitectConversationStore:
             scenario_id=latest.scenario_id,
             launch_contract_digest=latest.launch_contract_digest,
             advisory_output_digest=latest.architect_run.model_call.output_digest,
+            runtime_identity_digest=(
+                latest.architect_run.model_call.resolved_runtime_identity_digest
+            ),
             model_revision=latest.architect_run.model_call.model_revision,
             launch_token=launch_token,
             requested_at=datetime.now(UTC),
@@ -513,7 +542,7 @@ class ArchitectConversationStore:
             or latest.launch_contract_digest is None
             or reply.status != "ready_to_launch"
             or reply.advisory_summary is None
-            or latest.architect_run.model_call.model_revision is None
+            or latest.architect_run.model_call.resolved_runtime_identity_digest is None
         ):
             raise PolicyViolation("conversation is not ready to launch")
         launch_token = architect_conversation_launch_token(snapshot)
@@ -525,6 +554,9 @@ class ArchitectConversationStore:
             scenario_id=latest.scenario_id,
             launch_contract_digest=latest.launch_contract_digest,
             advisory_output_digest=latest.architect_run.model_call.output_digest,
+            runtime_identity_digest=(
+                latest.architect_run.model_call.resolved_runtime_identity_digest
+            ),
             model_revision=latest.architect_run.model_call.model_revision,
             launch_token=launch_token,
             requested_at=snapshot.launch_intent.requested_at,
@@ -535,6 +567,8 @@ class ArchitectConversationStore:
             or snapshot.launch_intent.scenario_id != receipt.scenario_id
             or snapshot.launch_intent.launch_contract_digest != receipt.launch_contract_digest
             or snapshot.launch_intent.advisory_output_digest != receipt.advisory_output_digest
+            or snapshot.launch_intent.resolved_runtime_identity_digest
+            != receipt.resolved_runtime_identity_digest
             or snapshot.launch_intent.model_revision != receipt.model_revision
             or snapshot.launch_intent.launch_token != receipt.launch_token
             or snapshot.launch_intent.requested_at != receipt.requested_at
@@ -698,14 +732,16 @@ def architect_conversation_launch_token(
         return None
     latest = snapshot.exchanges[-1]
     reply = latest.architect_run.reply
-    model_revision = latest.architect_run.model_call.model_revision
+    runtime_identity_digest = (
+        latest.architect_run.model_call.resolved_runtime_identity_digest
+    )
     if (
         latest.selected_platform is None
         or latest.scenario_id is None
         or latest.launch_contract_digest is None
         or reply.status != "ready_to_launch"
         or reply.advisory_summary is None
-        or model_revision is None
+        or runtime_identity_digest is None
     ):
         return None
     return artifact_digest(
@@ -716,7 +752,7 @@ def architect_conversation_launch_token(
             scenario_id=latest.scenario_id,
             launch_contract_digest=latest.launch_contract_digest,
             advisory_output_digest=latest.architect_run.model_call.output_digest,
-            model_revision=model_revision,
+            runtime_identity_digest=runtime_identity_digest,
         )
     )
 

@@ -1,13 +1,27 @@
-"""Controller-owned launch contracts for the two supported migrations.
+"""Controller-owned recipes, migration units, and launch contracts.
 
-Selecting a scenario is the only launch-time choice. Human or model prose is
-not parsed to decide the platform, source tree, migration direction, runtime,
-versions, paths, or knowledge cutoff. Those authority-bearing values come
-only from the immutable :class:`MigrationLaunchContract` derived here.
+Selecting a migration unit is the only launch-time choice. Human or model prose
+is not parsed to decide the platform, source tree, migration direction, runtime,
+versions, paths, or knowledge cutoff. Those authority-bearing values come only
+from the immutable :class:`MigrationLaunchContract` derived here.
+
+Two concepts are separated so several bounded units can share one platform
+behavior without duplicated orchestration:
+
+* :class:`MigrationRecipe` is reusable platform behavior (the analyzer/graph
+  builder version, target runtime and API versions, the shared retrieval query,
+  and the allowed validation command catalog). Recipes are keyed by
+  ``recipe_id``.
+* :class:`MigrationScenario` is one controller-approved bounded migration unit
+  (its scenario id, display metadata, source root, entry point, frozen input
+  and output inventories, scope-policy digest, selected ``recipe_id``, and
+  behavior-contract id). Units are keyed by ``scenario_id``, never by platform,
+  so a platform may expose any number of units.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import Final
 
@@ -30,6 +44,8 @@ from legacy_migration_agent.platforms.mulesoft_runtime import (
     MULESOFT_TARGET_VERSION,
 )
 from legacy_migration_agent.platforms.salesforce_runtime import (
+    CASE_SALESFORCE_PLATFORM_ADAPTER,
+    CASE_SOURCE_ENTRY,
     SALESFORCE_API_RUNTIME,
     SALESFORCE_PLATFORM_ADAPTER,
     SALESFORCE_RUNTIME_CONFIG,
@@ -38,6 +54,8 @@ from legacy_migration_agent.platforms.salesforce_runtime import (
 )
 
 _KNOWLEDGE_AS_OF: Final = date(2026, 8, 27)
+SALESFORCE_RECIPE_ID: Final = "salesforce-visualforce-to-lwc"
+MULESOFT_RECIPE_ID: Final = "mulesoft-mule3-to-mule4"
 SALESFORCE_INITIAL_WIKI_EXACT_IDS: Final = (
     "controller_jest_account_options",
     "controller_jest_account_error",
@@ -54,7 +72,45 @@ SALESFORCE_INITIAL_WIKI_EXACT_IDS: Final = (
 SALESFORCE_WIKI_QUERY: Final = "Visualforce LWC Apex security Jest migration " + " ".join(
     SALESFORCE_INITIAL_WIKI_EXACT_IDS
 )
+# The Case unit reuses the two shared platform signals but pins only the four
+# Case-specific controller-jest diagnostics (account scoping, status filter,
+# keyed results, and clear action). Requesting the full twelve-id controller
+# vocabulary would exceed the bounded per-page wiki excerpt limit; these six
+# ids resolve across three pages with every excerpt within the content bound.
+CASE_INITIAL_WIKI_EXACT_IDS: Final = (
+    "controller_jest_status_default",
+    "controller_jest_case_results",
+    "controller_jest_cases_error",
+    "controller_jest_clear_selection",
+    "salesforce_lwc_javascript_contract",
+    "apex_public_interface_annotation_mismatch",
+)
+CASE_WIKI_QUERY: Final = "Visualforce LWC Apex security Jest migration " + " ".join(
+    CASE_INITIAL_WIKI_EXACT_IDS
+)
 MULESOFT_WIKI_QUERY: Final = "Mule 3 Mule 4 DataWeave HTTP MUnit migration"
+
+
+class MigrationRecipe(StrictModel):
+    """Reusable, unit-independent platform behavior shared by many units."""
+
+    recipe_id: Identifier
+    platform: Platform
+    title: str = Field(min_length=1, max_length=200)
+    analyzer_version: str = Field(min_length=1, max_length=160)
+    target_runtime: str = Field(min_length=1, max_length=160)
+    source_version: str = Field(min_length=1, max_length=160)
+    target_version: str = Field(min_length=1, max_length=160)
+    wiki_query: str = Field(min_length=1, max_length=500)
+    wiki_max_primary_hits: int = Field(ge=1, le=32)
+    allowed_validation_command_ids: tuple[Identifier, ...] = Field(min_length=1, max_length=64)
+
+    @field_validator("allowed_validation_command_ids")
+    @classmethod
+    def validate_command_ids(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if len(values) != len(set(values)):
+            raise ValueError("recipe validation command ids must be unique")
+        return values
 
 
 class MigrationLaunchContract(StrictModel):
@@ -93,9 +149,11 @@ class MigrationLaunchContract(StrictModel):
 
 
 class MigrationScenario(StrictModel):
-    """Display metadata and fixed authority for one supported migration."""
+    """Display metadata and fixed authority for one bounded migration unit."""
 
     scenario_id: Identifier
+    recipe_id: Identifier
+    behavior_contract_id: Identifier
     platform: Platform
     title: str = Field(min_length=1, max_length=200)
     canonical_description: str = Field(min_length=10, max_length=1000)
@@ -139,8 +197,14 @@ class MigrationScenario(StrictModel):
         return normalized
 
     @property
+    def definition_digest(self) -> Sha256Digest:
+        """Return the exact digest of this unit definition (identity binding)."""
+
+        return artifact_digest(self)
+
+    @property
     def launch_contract(self) -> MigrationLaunchContract:
-        """Return the exact launch authority derived from this fixed scenario."""
+        """Return the exact launch authority derived from this fixed unit."""
 
         return MigrationLaunchContract(
             scenario_id=self.scenario_id,
@@ -163,9 +227,95 @@ class MigrationScenario(StrictModel):
         )
 
 
-_SCENARIOS: Final[dict[Platform, MigrationScenario]] = {
-    Platform.SALESFORCE: MigrationScenario(
+_RECIPES: Final[dict[str, MigrationRecipe]] = {
+    SALESFORCE_RECIPE_ID: MigrationRecipe(
+        recipe_id=SALESFORCE_RECIPE_ID,
+        platform=Platform.SALESFORCE,
+        title="Visualforce/Apex to Lightning Web Component/Apex",
+        analyzer_version=SALESFORCE_RUNTIME_CONFIG.analyzer_version,
+        target_runtime=SALESFORCE_TARGET_RUNTIME,
+        source_version=SALESFORCE_API_RUNTIME,
+        target_version=SALESFORCE_API_RUNTIME,
+        wiki_query=SALESFORCE_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+        allowed_validation_command_ids=(
+            SALESFORCE_PLATFORM_ADAPTER.scope_policy.allowed_validation_command_ids
+        ),
+    ),
+    MULESOFT_RECIPE_ID: MigrationRecipe(
+        recipe_id=MULESOFT_RECIPE_ID,
+        platform=Platform.MULESOFT,
+        title="Mule 3 application to Mule 4 application",
+        analyzer_version=MULESOFT_RUNTIME_CONFIG.analyzer_version,
+        target_runtime=MULESOFT_TARGET_RUNTIME,
+        source_version=MULESOFT_SOURCE_VERSION,
+        target_version=MULESOFT_TARGET_VERSION,
+        wiki_query=MULESOFT_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+        allowed_validation_command_ids=(
+            MULESOFT_PLATFORM_ADAPTER.scope_policy.allowed_validation_command_ids
+        ),
+    ),
+}
+
+
+def _validate_unit_against_recipe(unit: MigrationScenario, recipe: MigrationRecipe) -> None:
+    """Reject a unit whose shared platform values disagree with its recipe."""
+
+    if unit.platform is not recipe.platform:
+        raise ValueError(
+            f"unit {unit.scenario_id!r} platform does not match recipe {recipe.recipe_id!r}"
+        )
+    mismatched = tuple(
+        name
+        for name in ("analyzer_version", "target_runtime", "source_version", "target_version")
+        if getattr(unit, name) != getattr(recipe, name)
+    )
+    if mismatched:
+        raise ValueError(
+            f"unit {unit.scenario_id!r} disagrees with recipe {recipe.recipe_id!r} "
+            f"on {', '.join(mismatched)}"
+        )
+
+
+def build_unit_registry(
+    units: Iterable[MigrationScenario],
+    recipes: Mapping[str, MigrationRecipe],
+) -> dict[str, MigrationScenario]:
+    """Return an ordered unit registry, failing closed on invalid composition.
+
+    This is the single fail-closed gate for the fixed registry and is reused by
+    tests to prove that duplicate ids, unknown recipes, or duplicate source
+    identity are rejected before any model call.
+    """
+
+    registry: dict[str, MigrationScenario] = {}
+    seen_source_identity: dict[tuple[str, str], str] = {}
+    for unit in units:
+        if unit.scenario_id in registry:
+            raise ValueError(f"duplicate migration unit id {unit.scenario_id!r}")
+        recipe = recipes.get(unit.recipe_id)
+        if recipe is None:
+            raise ValueError(
+                f"unit {unit.scenario_id!r} references unknown recipe {unit.recipe_id!r}"
+            )
+        _validate_unit_against_recipe(unit, recipe)
+        identity = (unit.source_root, unit.entry_path)
+        if identity in seen_source_identity:
+            raise ValueError(
+                f"unit {unit.scenario_id!r} reuses the source identity of "
+                f"{seen_source_identity[identity]!r}"
+            )
+        seen_source_identity[identity] = unit.scenario_id
+        registry[unit.scenario_id] = unit
+    return registry
+
+
+_UNITS: Final[tuple[MigrationScenario, ...]] = (
+    MigrationScenario(
         scenario_id="salesforce-vf-to-lwc",
+        recipe_id=SALESFORCE_RECIPE_ID,
+        behavior_contract_id="salesforce-account-contact-explorer",
         platform=Platform.SALESFORCE,
         title="Visualforce to Lightning Web Component",
         canonical_description=(
@@ -201,8 +351,50 @@ _SCENARIOS: Final[dict[Platform, MigrationScenario]] = {
         approved_output_paths=SALESFORCE_PLATFORM_ADAPTER.scope_policy.approved_output_paths,
         scope_policy_digest=SALESFORCE_PLATFORM_ADAPTER.scope_policy_digest,
     ),
-    Platform.MULESOFT: MigrationScenario(
+    MigrationScenario(
+        scenario_id="case-management-console",
+        recipe_id=SALESFORCE_RECIPE_ID,
+        behavior_contract_id="salesforce-case-management-console",
+        platform=Platform.SALESFORCE,
+        title="Case Management Console",
+        canonical_description=(
+            "Migrate the bounded Visualforce case management console "
+            "(LegacyCaseManagementConsole.page, LegacyCaseManagementConsoleController.cls and "
+            "LegacyCaseQueryService.cls) to an additive Lightning Web Component and Apex "
+            "implementation. Preserve account selection, a status filter defaulting to Open, an "
+            "explicit case-loading action, keyed case results, visible loading, empty, and "
+            "safe-error states, stale-response protection, an explicit clear action, sharing and "
+            "field-security controls, and include Apex and LWC Jest tests."
+        ),
+        display_source_artifacts=(
+            "LegacyCaseManagementConsole.page",
+            "LegacyCaseManagementConsoleController.cls",
+            "LegacyCaseQueryService.cls",
+        ),
+        target_summary=(
+            "Additive caseManagementConsole LWC, sharing-aware Apex service, metadata, and "
+            "Apex/LWC tests while preserving the legacy Visualforce entry point."
+        ),
+        source_root="fixtures/salesforce/case-management-console/input",
+        wiki_as_of=_KNOWLEDGE_AS_OF,
+        entry_path=CASE_SOURCE_ENTRY,
+        target_runtime=SALESFORCE_TARGET_RUNTIME,
+        source_version=SALESFORCE_API_RUNTIME,
+        target_version=SALESFORCE_API_RUNTIME,
+        analyzer_version=SALESFORCE_RUNTIME_CONFIG.analyzer_version,
+        adapter_id=CASE_SALESFORCE_PLATFORM_ADAPTER.adapter_id,
+        wiki_query=CASE_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+        required_source_input_paths=(
+            CASE_SALESFORCE_PLATFORM_ADAPTER.scope_policy.required_source_input_paths
+        ),
+        approved_output_paths=CASE_SALESFORCE_PLATFORM_ADAPTER.scope_policy.approved_output_paths,
+        scope_policy_digest=CASE_SALESFORCE_PLATFORM_ADAPTER.scope_policy_digest,
+    ),
+    MigrationScenario(
         scenario_id="mulesoft-mule3-to-mule4",
+        recipe_id=MULESOFT_RECIPE_ID,
+        behavior_contract_id="mulesoft-customer-status-api",
         platform=Platform.MULESOFT,
         title="Mule 3 to Mule 4",
         canonical_description=(
@@ -230,32 +422,76 @@ _SCENARIOS: Final[dict[Platform, MigrationScenario]] = {
         approved_output_paths=MULESOFT_PLATFORM_ADAPTER.scope_policy.approved_output_paths,
         scope_policy_digest=MULESOFT_PLATFORM_ADAPTER.scope_policy_digest,
     ),
-}
+)
 
 
-def migration_scenarios() -> tuple[MigrationScenario, MigrationScenario]:
-    """Return the fixed Salesforce and MuleSoft scenarios in display order."""
+_SCENARIOS: Final[dict[str, MigrationScenario]] = build_unit_registry(_UNITS, _RECIPES)
 
-    return (_SCENARIOS[Platform.SALESFORCE], _SCENARIOS[Platform.MULESOFT])
+
+def _primary_by_platform() -> dict[Platform, MigrationScenario]:
+    primary: dict[Platform, MigrationScenario] = {}
+    for scenario in _SCENARIOS.values():
+        primary.setdefault(scenario.platform, scenario)
+    return primary
+
+
+_PRIMARY_BY_PLATFORM: Final[dict[Platform, MigrationScenario]] = _primary_by_platform()
+
+
+def migration_recipes() -> tuple[MigrationRecipe, ...]:
+    """Return the fixed reusable platform recipes in registration order."""
+
+    return tuple(_RECIPES.values())
+
+
+def migration_recipe(recipe_id: str) -> MigrationRecipe:
+    """Return one exact recipe identity without inferring from prose."""
+
+    try:
+        return _RECIPES[recipe_id]
+    except KeyError as exc:
+        raise KeyError(recipe_id) from exc
+
+
+def migration_scenarios() -> tuple[MigrationScenario, ...]:
+    """Return every registered migration unit in display order."""
+
+    return tuple(_SCENARIOS.values())
+
+
+def migration_units_for_platform(platform: Platform) -> tuple[MigrationScenario, ...]:
+    """Return every registered unit for ``platform`` in display order."""
+
+    return tuple(
+        scenario for scenario in _SCENARIOS.values() if scenario.platform is platform
+    )
 
 
 def migration_scenario(platform: Platform) -> MigrationScenario:
-    """Return the fixed scenario for ``platform`` for display and inspection."""
+    """Return the primary (first-registered) unit for ``platform``.
 
-    return _SCENARIOS[platform]
+    A platform may now expose several units; this convenience resolves the
+    primary unit for display and legacy callers. Identity-critical callers must
+    resolve an exact unit through :func:`migration_scenario_by_id`.
+    """
+
+    try:
+        return _PRIMARY_BY_PLATFORM[platform]
+    except KeyError as exc:
+        raise KeyError(platform) from exc
 
 
 def migration_scenario_by_id(scenario_id: str) -> MigrationScenario:
-    """Return one exact scenario identity without inferring from prose."""
+    """Return one exact unit identity without inferring from prose."""
 
-    for scenario in _SCENARIOS.values():
-        if scenario.scenario_id == scenario_id:
-            return scenario
-    raise KeyError(scenario_id)
+    try:
+        return _SCENARIOS[scenario_id]
+    except KeyError as exc:
+        raise KeyError(scenario_id) from exc
 
 
 def migration_launch_contract(scenario_id: str) -> MigrationLaunchContract:
-    """Derive the immutable launch contract for one exact scenario identity."""
+    """Derive the immutable launch contract for one exact unit identity."""
 
     return migration_scenario_by_id(scenario_id).launch_contract
 
@@ -276,14 +512,23 @@ def require_canonical_launch_contract(
 
 
 __all__ = [
+    "CASE_INITIAL_WIKI_EXACT_IDS",
+    "CASE_WIKI_QUERY",
+    "MULESOFT_RECIPE_ID",
     "MULESOFT_WIKI_QUERY",
     "MigrationLaunchContract",
+    "MigrationRecipe",
     "MigrationScenario",
     "SALESFORCE_INITIAL_WIKI_EXACT_IDS",
+    "SALESFORCE_RECIPE_ID",
     "SALESFORCE_WIKI_QUERY",
+    "build_unit_registry",
     "migration_launch_contract",
+    "migration_recipe",
+    "migration_recipes",
     "migration_scenario",
     "migration_scenario_by_id",
     "migration_scenarios",
+    "migration_units_for_platform",
     "require_canonical_launch_contract",
 ]

@@ -21,6 +21,9 @@ from legacy_migration_agent.graphs.graph_contracts import NodeKind as CommonNode
 FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "salesforce" / "account-contact-explorer"
 )
+CASE_FIXTURE_ROOT = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "salesforce" / "case-management-console"
+)
 
 
 def _edge_exists(graph, source_name: str, target_name: str, kind: EdgeKind) -> bool:
@@ -118,6 +121,52 @@ def test_input_fixture_builds_evidence_bearing_legacy_graph() -> None:
     )
     assert all(edge.provenance for edge in graph.edges)
     assert all(digest.sha256 and len(digest.sha256) == 64 for digest in graph.source_digests)
+
+
+def test_case_fixture_builds_evidence_bearing_legacy_graph_without_unresolved_references() -> None:
+    source_root = CASE_FIXTURE_ROOT / "input"
+    graph = build_salesforce_dependency_graph(
+        source_root,
+        ("force-app/main/default/pages/LegacyCaseManagementConsole.page",),
+        content_revision(source_root),
+    )
+
+    assert graph.base_revision == content_revision(source_root)
+    assert graph.has_unresolved is False
+    assert not any(
+        warning.code is WarningCode.UNRESOLVED_REFERENCE for warning in graph.warnings
+    )
+    assert _edge_exists(
+        graph,
+        "LegacyCaseManagementConsole",
+        "LegacyCaseManagementConsoleController",
+        EdgeKind.VF_CONTROLLER,
+    )
+    assert _edge_exists(
+        graph,
+        "LegacyCaseManagementConsoleController",
+        "LegacyCaseQueryService",
+        EdgeKind.APEX_CLASS_REFERENCE,
+    )
+    assert _edge_exists(
+        graph,
+        "LegacyCaseManagementConsoleController",
+        "Account",
+        EdgeKind.SOQL_OBJECT,
+    )
+    assert _edge_exists(
+        graph,
+        "LegacyCaseQueryService",
+        "Case",
+        EdgeKind.SOQL_OBJECT,
+    )
+    assert graph.node(NodeKind.SCHEMA_FIELD, "Contact.Name") is not None
+    assert _edge_exists(
+        graph,
+        "LegacyCaseQueryService",
+        "Contact.Name",
+        EdgeKind.SOQL_FIELD,
+    )
 
 
 def test_synthetic_candidate_links_lwc_test_and_permission_to_target_controller(

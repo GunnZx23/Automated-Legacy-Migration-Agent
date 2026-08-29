@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import io
+import json
+import os
 import shutil
+import subprocess
+import sys
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,10 +13,15 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
-from salesforce_candidate_factory import salesforce_candidate_outputs
+from salesforce_candidate_factory import (
+    case_management_candidate_outputs,
+    salesforce_candidate_outputs,
+)
 from ui_test_doubles import (
+    CLAUDE_RUNTIME_IDENTITY,
     LOCAL_MODEL_REVISION,
     fixture_model_response,
+    make_claude_client_test_double,
     make_ollama_client_test_double,
 )
 
@@ -41,7 +50,10 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     ModelRuntimeError,
     ModelUsageEvidence,
 )
-from legacy_migration_agent.application.migration_scenarios import migration_scenario
+from legacy_migration_agent.application.migration_scenarios import (
+    migration_launch_contract,
+    migration_scenario,
+)
 from legacy_migration_agent.contracts import (
     ApprovalAction,
     CheckResult,
@@ -60,6 +72,7 @@ from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.observability import terminal_lifecycle_logging
 from legacy_migration_agent.core.workspace import snapshot_tree
 from legacy_migration_agent.platforms.local_checks import (
+    CASE_AGENT_OUTPUT_PATHS,
     SALESFORCE_AGENT_OUTPUT_PATHS,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
 )
@@ -77,9 +90,12 @@ from legacy_migration_agent.ui.service import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TOOLCHAIN = PROJECT_ROOT / "tooling" / "lwc-jest"
 SALESFORCE_TEST_CANDIDATE = salesforce_candidate_outputs()
 MODEL_ID = "test-model:latest"
 OTHER_MODEL_ID = "other-test-model:latest"
+CLAUDE_MODEL_ID = "claude-sonnet-5"
+CLAUDE_RUNTIME_IDENTITY_DRIFT = "sha256:" + "c" * 64
 SALESFORCE_SCENARIO_PROMPT = migration_scenario(Platform.SALESFORCE).canonical_description
 
 
@@ -89,6 +105,42 @@ def _project(tmp_path: Path) -> Path:
     shutil.copytree(PROJECT_ROOT / "knowledge/wiki", project / "knowledge/wiki")
     shutil.copytree(PROJECT_ROOT / "fixtures", project / "fixtures")
     return project
+
+
+def _macos_sandbox_available() -> bool:
+    """Report whether this host can run the pinned Jest sandbox for real."""
+
+    if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+        return False
+    completed = subprocess.run(
+        (
+            "/usr/bin/sandbox-exec",
+            "-p",
+            "(version 1) (allow default)",
+            "/usr/bin/true",
+        ),
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
+def _install_real_toolchain(project: Path) -> None:
+    """Hard-link the checked-in, pinned Jest toolchain into a UI project root.
+
+    The recorded migration runs every required Salesforce local check for real;
+    the controller-owned Jest suites need the byte-for-byte pinned toolchain
+    (manifests, Jest config/setup, both controller-owned suites, and the pinned
+    ``node_modules`` tree) at ``<project>/tooling/lwc-jest``. Hard links keep the
+    tree identical to the pinned digests without copying gigabytes of modules.
+    """
+
+    shutil.copytree(
+        TOOLCHAIN,
+        project / "tooling/lwc-jest",
+        copy_function=os.link,
+        symlinks=True,
+    )
 
 
 def _start(
@@ -114,6 +166,37 @@ def _stub_ollama(
             project,
             role_calls=role_calls,
             constructed=constructed,
+            expected_timeout_seconds=expected_timeout_seconds,
+        ),
+    )
+
+
+def _claude_approval() -> LiveModelApproval:
+    return LiveModelApproval(
+        allow_live_api=True,
+        allow_prompt_data_sharing=True,
+        approved_by="course-demo-operator",
+    )
+
+
+def _stub_claude(
+    monkeypatch: pytest.MonkeyPatch,
+    project: Path,
+    *,
+    role_calls: list[str] | None = None,
+    constructed: list[object] | None = None,
+    bound_runtime_identities: list[str] | None = None,
+    current_runtime_identity: str = CLAUDE_RUNTIME_IDENTITY,
+    expected_timeout_seconds: float = 240.0,
+) -> None:
+    monkeypatch.setattr(
+        "legacy_migration_agent.application.agent_run.ClaudeCliStructuredModelClient",
+        make_claude_client_test_double(
+            project,
+            role_calls=role_calls,
+            constructed=constructed,
+            bound_runtime_identities=bound_runtime_identities,
+            current_runtime_identity=current_runtime_identity,
             expected_timeout_seconds=expected_timeout_seconds,
         ),
     )
@@ -346,11 +429,17 @@ def test_scenarios_expose_only_fixed_browser_safe_metadata(tmp_path: Path) -> No
 
     assert tuple(item["scenario_id"] for item in scenarios) == (
         "salesforce-vf-to-lwc",
+        "case-management-console",
         "mulesoft-mule3-to-mule4",
     )
-    assert tuple(item["platform"] for item in scenarios) == ("salesforce", "mulesoft")
+    assert tuple(item["platform"] for item in scenarios) == (
+        "salesforce",
+        "salesforce",
+        "mulesoft",
+    )
     assert tuple(item["title"] for item in scenarios) == (
         "Visualforce to Lightning Web Component",
+        "Case Management Console",
         "Mule 3 to Mule 4",
     )
     assert scenarios[0]["canonical_request"] == (
@@ -382,7 +471,7 @@ def test_server_owned_ollama_configuration_is_required_and_browser_safe(
         AgentUiService(project, ollama_model_id=None)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="1 to 300"):
         AgentUiService(project, ollama_model_id="   ")
-    for timeout in (True, 0, 601, float("nan"), float("inf")):
+    for timeout in (True, 0, 901, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="ollama_timeout_seconds"):
             AgentUiService(
                 project,
@@ -399,13 +488,51 @@ def test_server_owned_ollama_configuration_is_required_and_browser_safe(
     }
 
 
+def test_server_owned_claude_configuration_requires_explicit_remote_approval(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+
+    with pytest.raises(ValueError, match="explicit live-model approval"):
+        AgentUiService(
+            project,
+            model_provider="claude-cli",
+            model_id=CLAUDE_MODEL_ID,
+        )
+    with pytest.raises(ValueError, match="model_id is required"):
+        AgentUiService(
+            project,
+            model_provider="claude-cli",
+            live_model_approval=_claude_approval(),
+        )
+    with pytest.raises(ValueError, match="cannot carry remote-provider approval"):
+        AgentUiService(
+            project,
+            ollama_model_id=MODEL_ID,
+            live_model_approval=_claude_approval(),
+        )
+
+    service = AgentUiService(
+        project,
+        model_provider="claude-cli",
+        model_id=f" {CLAUDE_MODEL_ID} ",
+        live_model_approval=_claude_approval(),
+    )
+
+    assert service.model_configuration() == {
+        "provider": "claude-cli",
+        "model_id": CLAUDE_MODEL_ID,
+        "execution_boundary": "remote_provider_managed",
+    }
+
+
 @pytest.mark.parametrize(
     ("outcome", "expected_status", "reachable", "installed"),
     [
         (LOCAL_MODEL_REVISION, "ready", True, True),
         (
             ModelRuntimeError("secret=/Users/private/provider failure"),
-            "ollama_unreachable",
+            "provider_unreachable",
             False,
             None,
         ),
@@ -417,7 +544,7 @@ def test_server_owned_ollama_configuration_is_required_and_browser_safe(
         ),
         (
             ModelOutputError("secret=/Users/private/bad inventory"),
-            "inventory_unverified",
+            "runtime_unverified",
             True,
             None,
         ),
@@ -457,13 +584,46 @@ def test_runtime_readiness_reuses_inventory_probe_and_returns_only_safe_facts(
         "provider": "ollama",
         "model_id": MODEL_ID,
         "configured": True,
-        "ollama_reachable": reachable,
-        "model_installed": installed,
+        "runtime_reachable": reachable,
+        "model_available": installed,
         "status": expected_status,
     }
     assert observed_timeouts == [3.0]
     assert "secret" not in str(readiness)
     assert "/Users/" not in str(readiness)
+
+
+def test_claude_runtime_readiness_uses_the_server_owned_cli_identity_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    constructed: list[object] = []
+    _stub_claude(
+        monkeypatch,
+        project,
+        constructed=constructed,
+        expected_timeout_seconds=600.0,
+    )
+    service = AgentUiService(
+        project,
+        model_provider="claude-cli",
+        model_id=CLAUDE_MODEL_ID,
+        model_timeout_seconds=600.0,
+        live_model_approval=_claude_approval(),
+    )
+
+    readiness = service.runtime_readiness()
+
+    assert readiness == {
+        "provider": "claude-cli",
+        "model_id": CLAUDE_MODEL_ID,
+        "configured": True,
+        "runtime_reachable": True,
+        "model_available": True,
+        "status": "ready",
+    }
+    assert len(constructed) == 1
 
 
 def test_planning_decision_view_allows_unresolved_only_terminal_plan() -> None:
@@ -503,6 +663,7 @@ def test_salesforce_start_invokes_only_architect_and_awaits_exact_approval(
     assert started.boundaries.provider_id == "ollama"
     assert started.boundaries.model_id == MODEL_ID
     assert started.boundaries.model_revision == LOCAL_MODEL_REVISION
+    assert started.boundaries.runtime_identity_digest == LOCAL_MODEL_REVISION
     assert started.boundaries.execution_boundary == "local_loopback"
     assert started.boundaries.external_platform_invoked is False
     assert started.boundaries.source_mutated is False
@@ -555,6 +716,160 @@ def test_salesforce_start_invokes_only_architect_and_awaits_exact_approval(
     assert snapshot_tree(source) == before
     assert service.get(started.handle) == started
     assert role_calls == ["ArchitectManifestProposal"]
+
+
+def test_claude_start_projects_truthful_remote_runtime_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    source = project / "fixtures/salesforce/account-contact-explorer/input"
+    before = snapshot_tree(source)
+    role_calls: list[str] = []
+    constructed: list[object] = []
+    approval = _claude_approval()
+    _stub_claude(
+        monkeypatch,
+        project,
+        role_calls=role_calls,
+        constructed=constructed,
+        expected_timeout_seconds=600.0,
+    )
+    service = AgentUiService(
+        project,
+        model_provider="claude-cli",
+        model_id=CLAUDE_MODEL_ID,
+        model_timeout_seconds=600.0,
+        live_model_approval=approval,
+    )
+
+    started = _start(service, "salesforce")
+
+    assert started.status == "awaiting_approval"
+    assert started.boundaries.provider_id == "claude-cli"
+    assert started.boundaries.model_id == CLAUDE_MODEL_ID
+    assert started.boundaries.model_revision is None
+    assert started.boundaries.runtime_identity_digest == CLAUDE_RUNTIME_IDENTITY
+    assert started.boundaries.execution_boundary == "remote_provider_managed"
+    assert started.boundaries.mode == "remote_claude_cli"
+    assert "Inference is remote and provider-managed" in started.boundaries.notice
+    assert "does not claim provider-side zero retention" in started.boundaries.notice
+    assert started.boundaries.external_platform_invoked is False
+    assert started.boundaries.source_mutated is False
+    assert started.boundaries.deployment_performed is False
+    assert role_calls == ["ArchitectManifestProposal"]
+    assert len(constructed) == 1
+    assert getattr(constructed[0], "live_approval") == approval
+    assert snapshot_tree(source) == before
+
+    run_dir = project / ".runs/agent-ui" / started.handle
+    architect_path = next(run_dir.glob("evidence/model-runs/*/architect.json"))
+    record = json.loads(architect_path.read_text(encoding="utf-8"))["model_call"]
+    assert record["provider"] == "claude-cli"
+    assert record["model_id"] == CLAUDE_MODEL_ID
+    assert record["live_invocation"] is True
+    assert record["store_false_sent"] is False
+    assert record["execution_boundary"] == "remote_provider_managed"
+    assert record["runtime_identity_digest"] == CLAUDE_RUNTIME_IDENTITY
+    assert record.get("model_revision") is None
+    assert record["live_approval"] == approval.model_dump(mode="json")
+
+
+def test_progress_projects_live_phase_from_model_run_artifacts(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+    handle = "a1b2c3d4e5f6a7b8c9d0e1f2"
+    model_runs = (
+        project / ".runs/agent-ui" / handle / "evidence" / "model-runs" / f"ui-request-{handle}"
+    )
+    model_runs.mkdir(parents=True)
+
+    def _publish(name: str) -> None:
+        (model_runs / name).write_text("{}\n", encoding="utf-8")
+
+    # No Engineer lease yet: the gated continuation has not dispatched attempt 1.
+    assert service.progress(handle) == {
+        "handle": handle,
+        "phase": "pending",
+        "attempt": None,
+        "elapsed_seconds": None,
+    }
+
+    # Engineer generating: lease published, no attempt result yet.
+    _publish("engineer-invocation-lease-attempt-1.json")
+    generating = service.progress(handle)
+    assert generating["phase"] == "engineer"
+    assert generating["attempt"] == 1
+    assert isinstance(generating["elapsed_seconds"], int)
+    assert generating["elapsed_seconds"] >= 0
+
+    # Engineer returned: controller checks / Validator advisory are running.
+    _publish("engineer-attempt-1.json")
+    validating = service.progress(handle)
+    assert validating["phase"] == "validator"
+    assert validating["attempt"] == 1
+    assert isinstance(validating["elapsed_seconds"], int)
+
+    # Deterministic report published: the gated request is finishing.
+    _publish("report-attempt-1.json")
+    assert service.progress(handle) == {
+        "handle": handle,
+        "phase": "complete",
+        "attempt": 1,
+        "elapsed_seconds": None,
+    }
+
+    # A published attempt-2 lease supersedes the finished attempt 1.
+    _publish("engineer-invocation-lease-attempt-2.json")
+    attempt_two = service.progress(handle)
+    assert attempt_two["phase"] == "engineer"
+    assert attempt_two["attempt"] == 2
+
+
+def test_progress_reads_the_inflight_transaction_while_the_run_executes(
+    tmp_path: Path,
+) -> None:
+    # While the gated continuation is still running, the runtime writes each
+    # attempt artifact to the in-flight transaction under ``state/`` and only
+    # promotes it into ``evidence/`` at the terminal boundary. The live poll
+    # must therefore see phase transitions from the in-flight root alone.
+    project = _project(tmp_path)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+    handle = "beefcafe0011223344556677"
+    inflight = (
+        project
+        / ".runs/agent-ui"
+        / handle
+        / "state"
+        / "inflight-model-runs"
+        / "model-runs"
+        / f"ui-request-{handle}"
+    )
+    inflight.mkdir(parents=True)
+
+    def _publish(name: str) -> None:
+        (inflight / name).write_text("{}\n", encoding="utf-8")
+
+    _publish("engineer-invocation-lease-attempt-1.json")
+    generating = service.progress(handle)
+    assert generating["phase"] == "engineer"
+    assert generating["attempt"] == 1
+    assert isinstance(generating["elapsed_seconds"], int)
+
+    _publish("engineer-attempt-1.json")
+    assert service.progress(handle)["phase"] == "validator"
+
+    _publish("report-attempt-1.json")
+    assert service.progress(handle)["phase"] == "complete"
+
+
+def test_progress_rejects_unknown_handle_without_taking_the_run_lock(tmp_path: Path) -> None:
+    service = AgentUiService(_project(tmp_path), ollama_model_id=MODEL_ID)
+
+    with pytest.raises(AgentUiError) as unknown:
+        service.progress("f" * 24)
+
+    assert unknown.value.code == "unknown_run"
 
 
 def test_service_start_accepts_only_the_exact_typed_controller_contract(
@@ -779,6 +1094,82 @@ def test_salesforce_approval_projects_persisted_candidate_and_advisory_and_safe_
     assert '"validation_disposition":"environment_unavailable"' in receipt
     assert "Migrate this bounded Visualforce" not in receipt
     assert str(project) not in receipt
+
+
+def test_case_management_recorded_migration_reaches_ready_with_all_real_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the recorded Case Management Console migration end to end.
+
+    Mirrors the account/contact recorded drive but pins the second Salesforce
+    unit: the recorded model double must resolve the Case candidate (by the
+    run's fixed source entry path), and every required Salesforce local check
+    runs for real against the pinned Jest toolchain. On a host that can execute
+    the sandboxed runtime this reaches ``ready_for_human_review`` with all seven
+    controller-owned checks PASSED and none FAILED or UNAVAILABLE.
+    """
+
+    if not _macos_sandbox_available():
+        pytest.skip("macOS sandbox-exec is unavailable in this host boundary")
+    if not (TOOLCHAIN / "node_modules").is_dir():
+        pytest.skip("the controller-pinned Jest installation is unavailable")
+
+    project = _project(tmp_path)
+    _install_real_toolchain(project)
+    source = project / "fixtures/salesforce/case-management-console/input"
+    before = snapshot_tree(source)
+    _stub_ollama(monkeypatch, project)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+
+    started = service.start(migration_launch_contract("case-management-console"))
+    completed = service.decide(
+        started.handle,
+        selection="approve",
+        reviewer="course-reviewer",
+        comment="Approve the bounded Case Management Console candidate.",
+    )
+
+    assert completed.status == "completed"
+    assert completed.terminal_disposition == "ready_for_human_review"
+    assert tuple(call.role for call in completed.model_calls) == (
+        "architect",
+        "engineer",
+        "validator",
+    )
+
+    # The recorded model authored exactly the bounded Case candidate scope.
+    assert completed.candidate is not None
+    assert completed.candidate.available is True
+    assert set(completed.candidate.changed_paths) == set(CASE_AGENT_OUTPUT_PATHS)
+    assert {item.path for item in completed.candidate.files} == set(CASE_AGENT_OUTPUT_PATHS)
+    assert completed.metrics.changed_files == len(CASE_AGENT_OUTPUT_PATHS)
+
+    # Every required local check ran for real and passed; none failed/unavailable.
+    assert completed.validation is not None
+    assert completed.validation.disposition == "ready_for_human_review"
+    statuses = [item.status for item in completed.validation.results]
+    assert [status for status in statuses if status == "failed"] == []
+    assert [status for status in statuses if status == "unavailable"] == []
+    assert set(statuses) == {"passed"}
+    assert len(statuses) == 7
+
+    # The accepted candidate contains the Case files byte-for-byte in the zip.
+    expected_candidate = case_management_candidate_outputs()
+    payload = service.candidate_zip(started.handle)
+    expected_project = {entry.path: entry.content for entry in before.entries}
+    expected_project.update(expected_candidate)
+    with zipfile.ZipFile(io.BytesIO(payload)) as bundle:
+        assert set(bundle.namelist()) == set(expected_project)
+        for path, content in expected_candidate.items():
+            assert bundle.read(path) == content
+
+    exported = service.export_candidate(started.handle)
+    assert exported.platform == "salesforce"
+    assert exported.validation_disposition == "ready_for_human_review"
+    assert exported.ready_for_human_review is True
+    assert exported.file_count == len(CASE_AGENT_OUTPUT_PATHS)
+    assert snapshot_tree(source) == before
 
 
 def test_recoverable_attempt_requires_exact_human_retry_and_projects_attempt_two(
@@ -1985,15 +2376,21 @@ def test_terminal_run_releases_capacity_after_current_repository_drift(
             handle.write("\nCapacity-classification prompt drift.\n")
     else:
         current = migration_scenario(Platform.SALESFORCE)
+        drifted = current.model_copy(
+            update={
+                "canonical_description": current.canonical_description
+                + " Preserve the same bounded historical evidence."
+            }
+        )
         monkeypatch.setitem(
             migration_scenarios_module._SCENARIOS,
+            current.scenario_id,
+            drifted,
+        )
+        monkeypatch.setitem(
+            migration_scenarios_module._PRIMARY_BY_PLATFORM,
             Platform.SALESFORCE,
-            current.model_copy(
-                update={
-                    "canonical_description": current.canonical_description
-                    + " Preserve the same bounded historical evidence."
-                }
-            ),
+            drifted,
         )
 
     # Full readback remains bound to the current source and current agent
@@ -2032,15 +2429,21 @@ def test_nonterminal_run_still_consumes_capacity_after_repository_drift(
             handle.write("\nActive-capacity prompt drift.\n")
     else:
         current = migration_scenario(Platform.SALESFORCE)
+        drifted = current.model_copy(
+            update={
+                "canonical_description": current.canonical_description
+                + " Preserve the same bounded historical evidence."
+            }
+        )
         monkeypatch.setitem(
             migration_scenarios_module._SCENARIOS,
+            current.scenario_id,
+            drifted,
+        )
+        monkeypatch.setitem(
+            migration_scenarios_module._PRIMARY_BY_PLATFORM,
             Platform.SALESFORCE,
-            current.model_copy(
-                update={
-                    "canonical_description": current.canonical_description
-                    + " Preserve the same bounded historical evidence."
-                }
-            ),
+            drifted,
         )
 
     with pytest.raises(AgentUiError) as capacity:
@@ -2738,6 +3141,106 @@ def test_local_architect_semantics_cannot_override_controller_owned_manifest_aut
     assert started.manifest.transformations[-1].output_paths == started.manifest.approved_paths
     assert started.manifest.required_approvals == ("approve_manifest",)
     assert started.boundaries.model_call_record_persisted is True
+
+
+def test_claude_manifest_resume_rejects_runtime_identity_drift_before_engineer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    _stub_claude(monkeypatch, project)
+    service = AgentUiService(
+        project,
+        model_provider="claude-cli",
+        model_id=CLAUDE_MODEL_ID,
+        live_model_approval=_claude_approval(),
+    )
+    started = _start(service, "salesforce")
+    drifted_calls: list[str] = []
+    bound_runtime_identities: list[str] = []
+    _stub_claude(
+        monkeypatch,
+        project,
+        role_calls=drifted_calls,
+        bound_runtime_identities=bound_runtime_identities,
+        current_runtime_identity=CLAUDE_RUNTIME_IDENTITY_DRIFT,
+    )
+
+    with pytest.raises(AgentUiError) as rejected:
+        service.decide(
+            started.handle,
+            selection="approve",
+            reviewer="course-reviewer",
+        )
+
+    assert rejected.value.code == "run_unavailable"
+    assert bound_runtime_identities == [CLAUDE_RUNTIME_IDENTITY]
+    assert drifted_calls == []
+    run_dir = project / ".runs/agent-ui" / started.handle
+    assert not tuple(run_dir.glob("evidence/model-runs/*/engineer-attempt-*.json"))
+
+
+def test_claude_retry_rejects_runtime_identity_drift_and_resumes_when_restored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    role_calls: list[str] = []
+    _stub_claude(monkeypatch, project, role_calls=role_calls)
+    monkeypatch.setattr(
+        "legacy_migration_agent.application.agent_run.build_salesforce_local_validator",
+        lambda session, registry, timeout_seconds: _recoverable_validator(
+            session.context.run_id
+        ),
+    )
+    service = AgentUiService(
+        project,
+        model_provider="claude-cli",
+        model_id=CLAUDE_MODEL_ID,
+        live_model_approval=_claude_approval(),
+    )
+    started = _start(service, "salesforce")
+    attempt_one = service.decide(
+        started.handle,
+        selection="approve",
+        reviewer="course-reviewer",
+    )
+    assert attempt_one.terminal_disposition == "recoverable_failure"
+    assert attempt_one.correction is not None
+
+    drifted_calls: list[str] = []
+    bound_runtime_identities: list[str] = []
+    _stub_claude(
+        monkeypatch,
+        project,
+        role_calls=drifted_calls,
+        bound_runtime_identities=bound_runtime_identities,
+        current_runtime_identity=CLAUDE_RUNTIME_IDENTITY_DRIFT,
+    )
+    with pytest.raises(AgentUiError) as rejected:
+        service.retry(
+            started.handle,
+            correction_id=attempt_one.correction.correction_id,
+            reviewer="course-reviewer",
+            comment="Authorize the exact bounded correction.",
+        )
+
+    assert rejected.value.code == "run_unavailable"
+    assert bound_runtime_identities == [CLAUDE_RUNTIME_IDENTITY]
+    assert drifted_calls == []
+
+    _stub_claude(monkeypatch, project)
+    completed = service.retry(
+        started.handle,
+        correction_id=attempt_one.correction.correction_id,
+        reviewer="course-reviewer",
+        comment="Authorize the exact bounded correction.",
+    )
+    assert completed.execution_attempt == 2
+    assert completed.terminal_disposition == "ready_for_human_review"
+    assert completed.boundaries.provider_id == "claude-cli"
+    assert completed.boundaries.model_revision is None
+    assert completed.boundaries.runtime_identity_digest == CLAUDE_RUNTIME_IDENTITY
 
 
 def test_symlinked_run_parent_is_rejected_before_creating_external_content(

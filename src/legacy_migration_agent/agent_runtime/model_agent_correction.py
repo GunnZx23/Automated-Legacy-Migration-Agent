@@ -44,6 +44,18 @@ from legacy_migration_agent.knowledge.wiki import (
 from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+    CASE_CONTROLLER_METADATA_PATH,
+    CASE_CONTROLLER_PATH,
+    CASE_CONTROLLER_TEST_METADATA_PATH,
+    CASE_CONTROLLER_TEST_PATH,
+    CASE_LWC_CSS_PATH,
+    CASE_LWC_HTML_PATH,
+    CASE_LWC_JAVASCRIPT_PATH,
+    CASE_LWC_METADATA_PATH,
+    CASE_LWC_TEST_PATH,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
+    CASE_MANIFEST_PATH,
+    CASE_PERMISSION_SET_PATH,
     CONTROLLER_METADATA_PATH,
     CONTROLLER_PATH,
     CONTROLLER_TEST_METADATA_PATH,
@@ -58,9 +70,11 @@ from legacy_migration_agent.platforms.local_checks import (
     LWC_TEST_PATH,
     MANIFEST_PATH,
     PERMISSION_SET_PATH,
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
     SALESFORCE_CANDIDATE_FAILURE_CODES,
     SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS,
+    SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS_BY_UNIT,
     SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
 )
 
@@ -69,7 +83,7 @@ from legacy_migration_agent.platforms.local_checks import (
 # outcome/safety stage, executed candidate tests identify a real test failure,
 # and the immutable controller suite supplies behavior-specific signals.  Keep
 # only those three classes of directive active.
-_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
+_ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
     "controller_jest_account_options": (
         "Repair the component implementation, not either Jest suite. The accessible account "
         "selection control must include a blank choice and every account returned by the wire "
@@ -121,6 +135,50 @@ _CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
         "results markup are candidate-owned."
     ),
 }
+# Case Management Console owns four behaviors the account/contact console does not:
+# a defaulted status filter, a keyed case datatable, a safe getCases failure, and an
+# explicit clear action. Only these Case-unique signals carry Case-specific guidance;
+# the eight shared controller signals keep the account/contact wording via the
+# flattened last-wins merge below, preserving account/contact byte-identity.
+_CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
+    "controller_jest_status_default": (
+        "Repair the component implementation, not either Jest suite. The accessible status "
+        "filter must offer every supported status choice and default to Open, and the explicit "
+        "getCases load must pass that selected statusFilter alongside the accountId. Control "
+        "type, choice order, and the internal status-value encoding remain candidate-owned."
+    ),
+    "controller_jest_case_results": (
+        "Repair the component implementation, not either Jest suite. Render the cases returned "
+        "by getCases in an accessible keyed results presentation that surfaces each case's "
+        "number, subject, status, priority, and contact name, retaining a stable unique key for "
+        "every row. Column layout, formatting, and mapping helpers are implementation choices."
+    ),
+    "controller_jest_cases_error": (
+        "Repair the component implementation, not either Jest suite. On a current getCases "
+        "failure, render a nonempty accessible safe alert, hide case results, and do not expose "
+        "the supplied error, SOQL, query text, or other technical details. Exact safe wording "
+        "and results markup are candidate-owned."
+    ),
+    "controller_jest_clear_selection": (
+        "Repair the component implementation, not either Jest suite. The explicit clear action "
+        "must drop loaded cases and any pending work, hide results, loading, and empty state, "
+        "disable Load, and prompt the user to reselect an account. Exact wording, internal "
+        "fields, and reset order are implementation choices."
+    ),
+}
+# Per-unit controller-owned behavior repair guidance, keyed by migration unit id.
+# Adding a second unit is pure data: register its diagnostic-id -> guidance mapping
+# here and both the flattened signal contract below and the import-time invariant
+# (which subtracts the union SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS) absorb it.
+_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE_BY_UNIT: Final[dict[str, dict[str, str]]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: _ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: _CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+}
+_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
+    diagnostic_id: guidance
+    for unit_guidance in _CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE_BY_UNIT.values()
+    for diagnostic_id, guidance in unit_guidance.items()
+}
 _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
     **{
         signal_id: (
@@ -137,6 +195,22 @@ _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
             "salesforce_candidate_unclassified",
         }
     },
+    "salesforce_manifest_contract": (
+        "Change only the approved deployment manifest. Declare each metadata type in exactly one "
+        "<types> block whose single <name> lists every member of that type; do not repeat a type "
+        "name across separate <types> blocks. Keep the manifest dependency-closed for the approved "
+        "artifacts at the required API version. Member selection and ordering within these "
+        "constraints remain candidate-owned."
+    ),
+    "salesforce_apex_test_contract": (
+        "Change only the approved generated Apex test class. Exercise both public controller "
+        "methods with isolated synthetic data created by the test's own DML: insert the records the "
+        "assertions need rather than relying on a fabricated Id or existing org data, and cover "
+        "account results, a selected account with contacts, a selected account without contacts, "
+        "and a null selection, each with meaningful assertions. Do not use SeeAllData, create User "
+        "or Profile records, or run as an assumed profile. Test names, helper structure, record "
+        "values, and assertion forms remain candidate-owned."
+    ),
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (
         "Change only the approved Apex controller class. Preserve its public interface and put "
         "the exact @AuraEnabled(cacheable=true) annotation on each public read method; do not "
@@ -230,36 +304,117 @@ if _UNSUPPORTED_REPAIR_GUIDANCE:  # pragma: no cover - import-time contract inva
         + ", ".join(sorted(_UNSUPPORTED_REPAIR_GUIDANCE))
     )
 
-_SALESFORCE_STAGE_CORRECTION_PATHS: Final[dict[str, tuple[str, ...]]] = {
-    "salesforce_manifest_contract": (MANIFEST_PATH,),
-    "salesforce_apex_controller_metadata_contract": (CONTROLLER_METADATA_PATH,),
-    "salesforce_apex_test_metadata_contract": (CONTROLLER_TEST_METADATA_PATH,),
-    "salesforce_apex_controller_contract": (CONTROLLER_PATH,),
-    "salesforce_apex_test_contract": (CONTROLLER_TEST_PATH,),
-    "salesforce_lwc_javascript_contract": (LWC_JAVASCRIPT_PATH,),
-    "salesforce_lwc_template_contract": (LWC_HTML_PATH, LWC_JAVASCRIPT_PATH),
-    "salesforce_lwc_styles_contract": (LWC_CSS_PATH,),
-    "salesforce_lwc_metadata_contract": (LWC_METADATA_PATH,),
-    "salesforce_lwc_jest_contract": (LWC_TEST_PATH,),
-    "salesforce_permission_set_contract": (PERMISSION_SET_PATH,),
-    "lwc_forbidden_runtime_capability": (LWC_JAVASCRIPT_PATH,),
-    "jest_forbidden_capability": (LWC_TEST_PATH,),
-    SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
-    APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (CONTROLLER_PATH,),
-    APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: (CONTROLLER_PATH,),
-    JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
-    JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
-    LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: (LWC_HTML_PATH, LWC_JAVASCRIPT_PATH),
-    SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: (
-        LWC_JAVASCRIPT_PATH,
-        LWC_HTML_PATH,
-        LWC_CSS_PATH,
-    ),
-    **{
-        signal_id: (LWC_JAVASCRIPT_PATH, LWC_HTML_PATH)
-        for signal_id in SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS
-        if signal_id != SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID
+# Controller-owned behavior signals correct the migrated LWC bundle for the unit that
+# raised them. Register each unit's (JavaScript, HTML) pair here; the merge below maps
+# every controller signal to the paths of the units that declare it, account/contact
+# first, and runtime callers further filter by the active unit's prior file plan.
+_CONTROLLER_BEHAVIOR_CORRECTION_PATHS_BY_UNIT: Final[dict[str, tuple[str, ...]]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: (LWC_JAVASCRIPT_PATH, LWC_HTML_PATH),
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: (CASE_LWC_JAVASCRIPT_PATH, CASE_LWC_HTML_PATH),
+}
+
+
+def _merged_controller_correction_paths() -> dict[str, tuple[str, ...]]:
+    """Map each controller-owned behavior signal to the deduplicated LWC paths of every
+    unit that declares it, ordered by unit registration so the account/contact console's
+    paths lead. Shared signals therefore list account/contact paths before Case paths;
+    unit-unique signals list only their own unit's paths. Because runtime callers filter
+    these against the active unit's prior file plan, a mixed mapping stays byte-identical
+    per unit."""
+    merged: dict[str, list[str]] = {}
+    for unit_id, diagnostic_ids in SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS_BY_UNIT.items():
+        unit_paths = _CONTROLLER_BEHAVIOR_CORRECTION_PATHS_BY_UNIT[unit_id]
+        for signal_id in diagnostic_ids:
+            if signal_id == SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID:
+                continue
+            paths = merged.setdefault(signal_id, [])
+            for path in unit_paths:
+                if path not in paths:
+                    paths.append(path)
+    return {signal_id: tuple(paths) for signal_id, paths in merged.items()}
+
+
+# Artifact-stage and static-diagnostic correction boundaries, per migration unit.
+# Each entry names the candidate file(s) a given generation stage or static
+# diagnostic authorizes for that unit. The merge below maps every signal to the
+# paths of the units that declare it (account/contact first); runtime callers then
+# filter these against the active unit's prior file plan, so each unit still sees a
+# byte-identical single-unit boundary. Adding a unit is pure data: register its
+# path map here.
+_STAGE_CORRECTION_PATHS_BY_UNIT: Final[dict[str, dict[str, tuple[str, ...]]]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: {
+        "salesforce_manifest_contract": (MANIFEST_PATH,),
+        "salesforce_apex_controller_metadata_contract": (CONTROLLER_METADATA_PATH,),
+        "salesforce_apex_test_metadata_contract": (CONTROLLER_TEST_METADATA_PATH,),
+        "salesforce_apex_controller_contract": (CONTROLLER_PATH,),
+        "salesforce_apex_test_contract": (CONTROLLER_TEST_PATH,),
+        "salesforce_lwc_javascript_contract": (LWC_JAVASCRIPT_PATH,),
+        "salesforce_lwc_template_contract": (LWC_HTML_PATH, LWC_JAVASCRIPT_PATH),
+        "salesforce_lwc_styles_contract": (LWC_CSS_PATH,),
+        "salesforce_lwc_metadata_contract": (LWC_METADATA_PATH,),
+        "salesforce_lwc_jest_contract": (LWC_TEST_PATH,),
+        "salesforce_permission_set_contract": (PERMISSION_SET_PATH,),
+        "lwc_forbidden_runtime_capability": (LWC_JAVASCRIPT_PATH,),
+        "jest_forbidden_capability": (LWC_TEST_PATH,),
+        SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
+        APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (CONTROLLER_PATH,),
+        APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: (CONTROLLER_PATH,),
+        JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
+        JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: (LWC_TEST_PATH,),
+        LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: (LWC_HTML_PATH, LWC_JAVASCRIPT_PATH),
+        SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: (
+            LWC_JAVASCRIPT_PATH,
+            LWC_HTML_PATH,
+            LWC_CSS_PATH,
+        ),
     },
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: {
+        "salesforce_manifest_contract": (CASE_MANIFEST_PATH,),
+        "salesforce_apex_controller_metadata_contract": (CASE_CONTROLLER_METADATA_PATH,),
+        "salesforce_apex_test_metadata_contract": (CASE_CONTROLLER_TEST_METADATA_PATH,),
+        "salesforce_apex_controller_contract": (CASE_CONTROLLER_PATH,),
+        "salesforce_apex_test_contract": (CASE_CONTROLLER_TEST_PATH,),
+        "salesforce_lwc_javascript_contract": (CASE_LWC_JAVASCRIPT_PATH,),
+        "salesforce_lwc_template_contract": (CASE_LWC_HTML_PATH, CASE_LWC_JAVASCRIPT_PATH),
+        "salesforce_lwc_styles_contract": (CASE_LWC_CSS_PATH,),
+        "salesforce_lwc_metadata_contract": (CASE_LWC_METADATA_PATH,),
+        "salesforce_lwc_jest_contract": (CASE_LWC_TEST_PATH,),
+        "salesforce_permission_set_contract": (CASE_PERMISSION_SET_PATH,),
+        "lwc_forbidden_runtime_capability": (CASE_LWC_JAVASCRIPT_PATH,),
+        "jest_forbidden_capability": (CASE_LWC_TEST_PATH,),
+        SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID: (CASE_LWC_TEST_PATH,),
+        APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (CASE_CONTROLLER_PATH,),
+        APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: (CASE_CONTROLLER_PATH,),
+        JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID: (CASE_LWC_TEST_PATH,),
+        JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID: (CASE_LWC_TEST_PATH,),
+        LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: (CASE_LWC_HTML_PATH, CASE_LWC_JAVASCRIPT_PATH),
+        SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: (
+            CASE_LWC_JAVASCRIPT_PATH,
+            CASE_LWC_HTML_PATH,
+            CASE_LWC_CSS_PATH,
+        ),
+    },
+}
+
+
+def _merged_stage_correction_paths() -> dict[str, tuple[str, ...]]:
+    """Map each artifact-stage/static diagnostic to the deduplicated candidate paths of
+    every unit that declares it, ordered by unit registration so the account/contact
+    console's paths lead. Because runtime callers filter these against the active unit's
+    prior file plan, a mixed mapping stays byte-identical per unit."""
+    merged: dict[str, list[str]] = {}
+    for unit_paths in _STAGE_CORRECTION_PATHS_BY_UNIT.values():
+        for signal_id, paths in unit_paths.items():
+            bucket = merged.setdefault(signal_id, [])
+            for path in paths:
+                if path not in bucket:
+                    bucket.append(path)
+    return {signal_id: tuple(paths) for signal_id, paths in merged.items()}
+
+
+_SALESFORCE_STAGE_CORRECTION_PATHS: Final[dict[str, tuple[str, ...]]] = {
+    **_merged_stage_correction_paths(),
+    **_merged_controller_correction_paths(),
 }
 
 ENGINEER_INSTRUCTION = (

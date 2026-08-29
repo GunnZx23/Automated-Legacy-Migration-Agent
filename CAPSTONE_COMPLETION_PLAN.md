@@ -431,3 +431,61 @@ Stop adding architecture when all of the following are true:
 
 Anything beyond this boundary is productionization and is not required for the
 capstone submission.
+
+## Completion status (2026-08-28)
+
+All nine design changes are implemented and the harness now resolves three
+scenario units — `salesforce-vf-to-lwc`, `case-management-console`, and
+`mulesoft-mule3-to-mule4` — through one shared recipe, analyzer, validator
+factory, and set of Architect/Engineer/Validator prompts. Status against the
+stop condition:
+
+- **Existing Account/Contact migration still works** — verified (full suite
+  green; recorded, live, and org evidence unchanged).
+- **Non-trivial Case migration works through the same shared workflow** —
+  verified deterministically: the recorded-model workflow test and a
+  browser-driven run both reach `ready_for_human_review` with all seven required
+  Salesforce local checks passing on the real Jest/sandbox toolchain, and the
+  candidate is accepted and exportable.
+- **No shared runtime or agent prompt requires either fixture's
+  class/component names** — verified (design change 6; unit specifics flow
+  through typed runtime context and per-unit registries keyed by unit ID that
+  fail closed on unknown units).
+- **Candidate validated by behavior, not golden code** — verified (per-unit
+  controller-owned Jest suites: nine behaviors for Account/Contact, twelve for
+  Case Management).
+- **Scenario identity and safety authority bound across UI, persistence,
+  correction, export, and review** — verified (per-unit launch contract,
+  presets, runtime scopes, closure/profile specs).
+- **Cross-platform Mule slice remains working** — verified.
+- **Honest, reproducible evidence** — verified. Full Python suite: 1328 passed,
+  0 failed. Browser E2E driver: `tooling/e2e/case_browser_e2e.md`.
+
+### Verification-sequence outcome
+
+Steps 1–6 pass. **Step 7** (live `qwen3.8:latest` end-to-end for the new unit)
+was attempted and is an honest **negative**: the live Architect (conversation
+and ~303 s manifest proposal) succeeded, but the Engineer's eleven-file output
+failed the typed `EngineerModelOutcome` contract with one schema validation
+error, so the harness fail-closed (`controlled_failure`, non-retry-eligible, no
+candidate written, validation never run). At temperature zero this outcome is
+deterministic, so a plain retry would not change it. The shared Engineer prompt
+was deliberately **not** tuned toward the Case answer — doing so would violate
+design change 6 and risk golden-output leakage. The Account/Contact unit remains
+the only unit with a successful live migration and external platform evidence;
+the Case unit demonstrates the harness's generalization and fail-closed contract
+rather than live model success. **Steps 8–9** (Case org check-only; statistical
+benchmark) remain out of scope / `not_performed` and are not claimed.
+
+### Known caveat carried forward
+
+The regex-based controller-test null-coverage assertion (`_check_controller_test`)
+matches a call whose entire argument list is exactly `null`, so the synthetic
+Apex test double calls one-argument `getCases(null)` even though the real Case
+service method is two-argument. This mirrors the Account/Contact `getContacts(null)`
+precedent and is acceptable within scope — local checks are regex-based and org
+deployment is explicitly out of scope — but it would need addressing before any
+real Case org-deployment claim.
+
+Not performed by policy: no git commit, push, pull request, deployment, or org
+mutation was made by this work; those remain human-owned actions.

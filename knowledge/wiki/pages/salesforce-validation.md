@@ -6,19 +6,22 @@
   standard plain JavaScript. TypeScript access modifiers, type annotations, and
   unapproved decorators do not belong in `.js`; write `requestId = 0;`, never
   `private requestId = 0;`. Internal state needs no access modifier and exposes
-  no unapproved `@api` state.
+  no unapproved `@api` state. Bind the cacheable read named in
+  `manifest.implementation_contract` with the standard `@wire` adapter, and call
+  Apex imperatively only for the user-triggered action.
 - Candidate Jest uses inline synthetic data; the independent controller suite
   judges behavior. With `injectGlobals=false`, make the named `@jest/globals`
   import the first static import, before `lwc`, the component, or Apex imports,
   and include every used Jest API in it. The pinned transform hoists virtual
   Apex mock factories that reference `jest`; component loading must not occur
-  before that binding is initialized. Mock the exact `getAccounts` and
-  `getContacts` Apex paths as virtual default ES modules. Use
+  before that binding is initialized. Mock each exact approved
+  `@salesforce/apex/<ApprovedController>.<method>` path from the manifest as a
+  virtual default ES module. Use
   `jest.resetAllMocks()`, configure a deferred Promise
   before its event, settle every Promise, and await LWC rerender turns.
-  For an Account request started by `connectedCallback`, arrange a rejected
-  mock before `createElement` and append the component; do not call a non-`@api`
-  component method through the host element.
+  For the `@wire` Account read, emit its data and error through the wire
+  adapter after appending the component; do not call a non-`@api` component
+  method through the host element.
 - After appending the component and awaiting a render turn, query its rendered
   template through `element.shadowRoot.querySelector(...)` or
   `element.shadowRoot.querySelectorAll(...)`. Do not use
@@ -36,14 +39,14 @@
   JavaScript to Metadata API as part of the LWC bundle.
 
 Rule `jest_unapproved_module_target` removes a bare `@salesforce/apex` target,
-an Apex `require()`, or any target other than
-`@salesforce/apex/AccountContactExplorerController.getAccounts` and
-`@salesforce/apex/AccountContactExplorerController.getContacts`.
+an Apex `require()`, or any target other than the exact
+`@salesforce/apex/<ApprovedController>.<method>` specifiers named in
+`manifest.implementation_contract`.
 
 Rule `jest_globals_import_order` repairs only the candidate Jest file. Make the
 named import containing `jest` and every other used Jest API from
-`@jest/globals` the first static import, before imports from `lwc`,
-`c/accountContactExplorer`, or `@salesforce/apex`. Preserve the test behavior
+`@jest/globals` the first static import, before imports from `lwc`, the
+generated component module, or `@salesforce/apex`. Preserve the test behavior
 and remaining imports.
 
 Project correction rule `jest_forbidden_capability` removes filesystem,
@@ -56,8 +59,8 @@ generated component while allowing approved Salesforce modules.
 
 Rule `candidate_jest_execution_failure` means the generated candidate tests ran
 and failed. Repair only that Jest file; the independent controller suite stays
-immutable. Retain `createElement` and the exact `getAccounts` and `getContacts`
-virtual mocks with `__esModule: true` and `{ virtual: true }`. Use
+immutable. Retain `createElement` and each exact approved Apex method
+virtual mock with `__esModule: true` and `{ virtual: true }`. Use
 `jest.resetAllMocks()`, configure a deferred Promise before its action, and
 await enough microtask turns. A null or empty selector result caused by querying
 the component host must be repaired by querying the rendered template through
@@ -67,8 +70,9 @@ untrusted locators.
 Rule `controller_jest_execution_failure` means zero immutable controller
 assertions ran because the generated bundle could not load or execute. Restore
 standard plain JavaScript and valid imports: remove TypeScript access modifiers
-and unapproved `@api` state, consume `getAccounts` by wire or imperative call,
-and retain each datatable row's unique `Id` named by `key-field`. Then rerun the
+and unapproved `@api` state, consume the cacheable read through an `@wire`
+adapter and the user-triggered dependent read through an imperative call, and
+retain each datatable row's unique `Id` named by `key-field`. Then rerun the
 complete behavior suite. Two zero-test Jest failures after the same static LWC
 load error are dependent evidence for that root failure, not separate defects.
 
@@ -82,7 +86,10 @@ template.
 Artifact signals authorize only their generated files and never prescribe a
 reference implementation:
 
-- `salesforce_manifest_contract` covers `manifest/package.xml`.
+- `salesforce_manifest_contract` covers `manifest/package.xml`. Declare each
+  metadata type in exactly one `<types>` block whose single `<name>` lists every
+  member of that type; do not repeat a type name across separate blocks. Keep the
+  manifest dependency-closed at the required API version.
 - `salesforce_apex_controller_metadata_contract` and
   `salesforce_apex_test_metadata_contract` cover their Apex metadata.
 - `salesforce_apex_controller_contract` covers the generated service class;

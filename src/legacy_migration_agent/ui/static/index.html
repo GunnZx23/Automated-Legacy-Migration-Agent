@@ -25,12 +25,12 @@
           <small>Legacy modernization workspace</small>
         </span>
       </div>
-      <div class="header-runtime" role="status" aria-live="polite" aria-label="Local model runtime readiness">
+      <div class="header-runtime" role="status" aria-live="polite" aria-label="Model-provider runtime readiness">
         <span id="runtime-pulse" class="runtime-pulse" aria-hidden="true"></span>
-        <span id="mode-badge">Loading local Ollama…</span>
+        <span id="mode-badge">Loading model provider…</span>
         <span class="runtime-divider" aria-hidden="true"></span>
         <strong id="model-badge">Model not configured</strong>
-        <span id="model-revision-badge" hidden>Revision unavailable</span>
+        <span id="model-revision-badge" hidden>Runtime identity unavailable</span>
       </div>
     </header>
 
@@ -50,8 +50,9 @@
           <div>
             <strong id="boundary-title">Execution boundary</strong>
             <p id="boundary-notice">
-              Loading the server-owned Ollama configuration. The agent cannot deploy, mutate source,
-              or connect to a Salesforce org or Mule runtime.
+              Loading the server-owned model-provider configuration. Browser transport remains on
+              the loopback UI server. The agent cannot deploy, mutate source, or connect to a
+              Salesforce org or Mule runtime.
             </p>
           </div>
           <span class="boundary-tag">No org/runtime/deployment</span>

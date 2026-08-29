@@ -1,8 +1,8 @@
-"""Bounded Ollama-backed application service for the interactive Agent UI.
+"""Bounded model-backed application service for the interactive Agent UI.
 
 The browser selects one fixed scenario and supplies advisory conversation
 messages; it cannot author the launch request. The server owns the canonical
-launch contract, Ollama identity, filesystem routes, request identities,
+launch contract, model identity, filesystem routes, request identities,
 approved paths, validation commands, and deployment boundaries. The service
 executes the real :class:`AgentRun` lifecycle and projects its durable evidence
 into a deliberately small UI contract.
@@ -16,6 +16,7 @@ import re
 import secrets
 import stat
 import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +47,7 @@ from legacy_migration_agent.application.agent_run import (
     AgentRunModelClients,
     AgentRunStatus,
     assert_agent_request_secret_free,
+    build_claude_cli_model_clients,
     build_local_ollama_model_clients,
     get_agent_run_status,
     has_verified_terminal_agent_run_history,
@@ -81,8 +83,8 @@ from legacy_migration_agent.application.final_review import (
 )
 from legacy_migration_agent.application.migration_scenarios import (
     MigrationLaunchContract,
+    MigrationScenario,
     migration_launch_contract,
-    migration_scenario,
     migration_scenario_by_id,
     migration_scenarios,
     require_canonical_launch_contract,
@@ -97,6 +99,7 @@ from legacy_migration_agent.core.policies import (
     PolicyViolation,
 )
 from legacy_migration_agent.core.redaction import SecretRedactor
+from legacy_migration_agent.core.run_session import AgentRunContext
 from legacy_migration_agent.core.workspace import snapshot_tree
 from legacy_migration_agent.ui.contracts import (
     AgentPlanningDecisionView as AgentPlanningDecisionView,
@@ -122,14 +125,20 @@ _HANDLE_PATTERN: Final = re.compile(r"^[0-9a-f]{24}$")
 _SERVICE_LOCKS_GUARD = threading.Lock()
 _SERVICE_LOCKS: dict[tuple[Path, str], threading.RLock] = {}
 _REVIEWER_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+_UiModelProvider = Literal["ollama", "claude-cli"]
 _OLLAMA_RUNTIME_PROVIDER: Final[Literal["ollama"]] = "ollama"
-_OLLAMA_READINESS_TIMEOUT_SECONDS: Final = 3.0
+_CLAUDE_RUNTIME_PROVIDER: Final[Literal["claude-cli"]] = "claude-cli"
+_RUNTIME_READINESS_TIMEOUT_SECONDS: Final = 3.0
 _LOCAL_MODEL_APPROVER: Final = "local-ui-operator"
+_PROVIDER_BOUNDARIES: Final = {
+    _OLLAMA_RUNTIME_PROVIDER: "local_loopback",
+    _CLAUDE_RUNTIME_PROVIDER: "remote_provider_managed",
+}
 _CORRECTION_APPROVAL_ATTEMPT_TWO_PATH: Final = "control/correction-approval-attempt-2.json"
 
 
 class AgentUiService:
-    """Execute and inspect bounded migrations using one server-owned Ollama model."""
+    """Execute migrations using one immutable, server-owned model runtime."""
 
     def __init__(
         self,
@@ -137,7 +146,11 @@ class AgentUiService:
         *,
         run_root: str = ".runs/agent-ui",
         max_runs: int = 16,
-        ollama_model_id: str,
+        model_provider: str = _OLLAMA_RUNTIME_PROVIDER,
+        model_id: str | None = None,
+        model_timeout_seconds: float | None = None,
+        live_model_approval: LiveModelApproval | None = None,
+        ollama_model_id: str | None = None,
         ollama_timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
     ) -> None:
         if max_runs < 1 or max_runs > 128:
@@ -149,8 +162,46 @@ class AgentUiService:
         self._run_root_relative = normalized_run_root
         self._run_root = self._project_root.joinpath(*normalized_run_root.split("/"))
         self._max_runs = max_runs
-        self._ollama_model_id = _normalize_ollama_model_id(ollama_model_id)
-        self._ollama_timeout_seconds = _normalize_ollama_timeout_seconds(ollama_timeout_seconds)
+        self._model_provider = _normalize_model_provider(model_provider)
+        if model_id is not None and ollama_model_id is not None:
+            raise ValueError("configure exactly one server-owned model ID")
+        if model_id is None:
+            if self._model_provider != _OLLAMA_RUNTIME_PROVIDER:
+                raise ValueError("model_id is required for the selected provider")
+            selected_model_id = ollama_model_id
+            model_argument = "ollama_model_id"
+        else:
+            selected_model_id = model_id
+            model_argument = "model_id"
+        self._model_id = _normalize_model_id(selected_model_id, argument=model_argument)
+        selected_timeout: object = (
+            ollama_timeout_seconds
+            if model_timeout_seconds is None
+            else model_timeout_seconds
+        )
+        timeout_argument = (
+            "ollama_timeout_seconds"
+            if model_timeout_seconds is None
+            else "model_timeout_seconds"
+        )
+        self._model_timeout_seconds = _normalize_model_timeout_seconds(
+            selected_timeout,
+            argument=timeout_argument,
+        )
+        if self._model_provider == _CLAUDE_RUNTIME_PROVIDER:
+            if live_model_approval is None:
+                raise ValueError("Claude CLI requires explicit live-model approval")
+            self._live_model_approval = LiveModelApproval.model_validate(
+                live_model_approval.model_dump(mode="python")
+            )
+        elif live_model_approval is not None:
+            raise ValueError("local Ollama configuration cannot carry remote-provider approval")
+        else:
+            self._live_model_approval = LiveModelApproval(
+                allow_live_api=True,
+                allow_prompt_data_sharing=True,
+                approved_by=_LOCAL_MODEL_APPROVER,
+            )
         self._registry_lock = _shared_service_lock(self._run_root, "registry")
         self._projector = RunViewProjector(self._project_root, self._run_root)
 
@@ -173,41 +224,40 @@ class AgentUiService:
         """Return the immutable browser-safe model identity owned by the server."""
 
         return {
-            "provider": _OLLAMA_RUNTIME_PROVIDER,
-            "model_id": self._ollama_model_id,
-            "execution_boundary": "local_loopback",
+            "provider": self._model_provider,
+            "model_id": self._model_id,
+            "execution_boundary": _PROVIDER_BOUNDARIES[self._model_provider],
         }
 
     def runtime_readiness(self) -> dict[str, JsonScalar]:
-        """Probe only the fixed Ollama inventory seam and return sanitized readiness facts.
+        """Probe only the fixed runtime seam and return sanitized readiness facts.
 
-        The same loopback-only adapter used for model calls performs this check.  The
-        browser receives no endpoint, transport exception, inventory body, or alternate
-        provider control.
+        The same server-owned adapter used for model calls performs this check. The browser
+        receives no endpoint, transport exception, provider response, or provider control.
         """
 
         lifecycle_event(
             "ui.provider.readiness.started",
-            provider=_OLLAMA_RUNTIME_PROVIDER,
-            model_id=self._ollama_model_id,
+            provider=self._model_provider,
+            model_id=self._model_id,
         )
         reachable: bool | None = None
         installed: bool | None = None
         status = "readiness_unavailable"
         try:
-            models = self._local_models(self._ollama_model_id)
+            models = self._runtime_models(self._model_id)
             raw_probe = getattr(models.architect, "_resolve_model_revision", None)
             if not callable(raw_probe):
-                raise TypeError("local Ollama client does not expose its inventory probe")
+                raise TypeError("configured model client does not expose its readiness probe")
             probe = cast(Callable[..., str], raw_probe)
             revision = probe(
                 timeout_seconds=min(
-                    self._ollama_timeout_seconds,
-                    _OLLAMA_READINESS_TIMEOUT_SECONDS,
+                    self._model_timeout_seconds,
+                    _RUNTIME_READINESS_TIMEOUT_SECONDS,
                 )
             )
             if re.fullmatch(r"sha256:[0-9a-f]{64}", revision) is None:
-                raise ModelOutputError("local Ollama inventory returned an invalid revision")
+                raise ModelOutputError("model readiness probe returned an invalid identity")
         except ModelConfigurationError:
             reachable = True
             installed = False
@@ -215,16 +265,16 @@ class AgentUiService:
         except ModelOutputError:
             reachable = True
             installed = None
-            status = "inventory_unverified"
+            status = "runtime_unverified"
         except ModelRuntimeError:
             reachable = False
             installed = None
-            status = "ollama_unreachable"
+            status = "provider_unreachable"
         except Exception as error:
             lifecycle_event(
                 "ui.provider.readiness.failed",
                 level=logging.ERROR,
-                provider=_OLLAMA_RUNTIME_PROVIDER,
+                provider=self._model_provider,
                 public_status=status,
                 error_type=type(error).__name__,
             )
@@ -234,17 +284,17 @@ class AgentUiService:
             status = "ready"
         lifecycle_event(
             "ui.provider.readiness.completed",
-            provider=_OLLAMA_RUNTIME_PROVIDER,
+            provider=self._model_provider,
             public_status=status,
-            ollama_reachable=reachable,
-            model_installed=installed,
+            runtime_reachable=reachable,
+            model_available=installed,
         )
         return {
-            "provider": _OLLAMA_RUNTIME_PROVIDER,
-            "model_id": self._ollama_model_id,
+            "provider": self._model_provider,
+            "model_id": self._model_id,
             "configured": True,
-            "ollama_reachable": reachable,
-            "model_installed": installed,
+            "runtime_reachable": reachable,
+            "model_available": installed,
             "status": status,
         }
 
@@ -365,15 +415,14 @@ class AgentUiService:
                     launch_contract_digest=launch_contract_digest,
                     history=conversation_history(snapshot, user_message),
                 )
-                models = self._local_models(self._ollama_model_id)
+                models = self._runtime_models(self._model_id)
                 if snapshot.exchanges:
-                    expected_revision = snapshot.exchanges[
+                    expected_runtime_identity = snapshot.exchanges[
                         -1
-                    ].architect_run.model_call.model_revision
-                    bind_revision = getattr(models.architect, "bind_model_revision", None)
-                    if expected_revision is None or not callable(bind_revision):
+                    ].architect_run.model_call.resolved_runtime_identity_digest
+                    if expected_runtime_identity is None:
                         raise AgentUiError("conversation_unavailable")
-                    bind_revision(expected_revision)
+                    models.bind_recorded_runtime_identity(expected_runtime_identity)
                 architect = ArchitectAgent(
                     load_agent_registry(self._project_root / "agents"),
                     models.architect,
@@ -442,10 +491,15 @@ class AgentUiService:
                     raise AgentUiError("stale_conversation")
                 if snapshot.launch is not None:
                     run_view = self.get(snapshot.launch.handle)
+                    expected_runtime_identity = (
+                        snapshot.launch.resolved_runtime_identity_digest
+                    )
+                    if expected_runtime_identity is None:
+                        raise AgentUiError("conversation_unavailable")
                     self._verify_conversation_launch_binding(
                         view,
                         run_view,
-                        expected_model_revision=snapshot.launch.model_revision,
+                        expected_runtime_identity=expected_runtime_identity,
                     )
                     return view, run_view
                 if (
@@ -480,7 +534,11 @@ class AgentUiService:
                     reserved_handle = snapshot.launch_intent.handle
                 if snapshot.launch_intent is None:
                     raise AgentUiError("conversation_unavailable")
-                expected_model_revision = snapshot.launch_intent.model_revision
+                expected_runtime_identity = (
+                    snapshot.launch_intent.resolved_runtime_identity_digest
+                )
+                if expected_runtime_identity is None:
+                    raise AgentUiError("conversation_unavailable")
                 requested_at = snapshot.launch_intent.requested_at
                 lifecycle_event(
                     "ui.conversation.launch.started",
@@ -499,14 +557,14 @@ class AgentUiService:
                         run_view = self._recover_incomplete_reserved_start(
                             launch_contract,
                             handle=reserved_handle,
-                            expected_model_revision=expected_model_revision,
+                            expected_runtime_identity=expected_runtime_identity,
                             requested_at=requested_at,
                         )
                 else:
                     run_view = self.start(
                         launch_contract,
                         _reserved_handle=reserved_handle,
-                        _expected_model_revision=expected_model_revision,
+                        _expected_runtime_identity=expected_runtime_identity,
                         _requested_at=requested_at,
                     )
                 if run_view.handle != reserved_handle:
@@ -514,7 +572,7 @@ class AgentUiService:
                 self._verify_conversation_launch_binding(
                     view,
                     run_view,
-                    expected_model_revision=expected_model_revision,
+                    expected_runtime_identity=expected_runtime_identity,
                 )
                 updated = store.record_launch(
                     conversation_id,
@@ -544,7 +602,7 @@ class AgentUiService:
         launch_contract: MigrationLaunchContract,
         *,
         _reserved_handle: str | None = None,
-        _expected_model_revision: str | None = None,
+        _expected_runtime_identity: str | None = None,
         _requested_at: datetime | None = None,
     ) -> AgentRunView:
         """Run the real Architect and stop at the real manifest approval gate."""
@@ -560,9 +618,9 @@ class AgentUiService:
             or _HANDLE_PATTERN.fullmatch(_reserved_handle) is None
         ):
             raise AgentUiError("run_unavailable")
-        if _expected_model_revision is not None and (
+        if _expected_runtime_identity is not None and (
             _reserved_handle is None
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", _expected_model_revision) is None
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", _expected_runtime_identity) is None
         ):
             raise AgentUiError("run_unavailable")
         if _requested_at is not None and (
@@ -605,9 +663,9 @@ class AgentUiService:
                         _agent_requested_at() if _requested_at is None else _requested_at
                     ),
                 )
-                models = self._local_models(self._ollama_model_id)
-                if _expected_model_revision is not None:
-                    models.bind_recorded_model_revision(_expected_model_revision)
+                models = self._runtime_models(self._model_id)
+                if _expected_runtime_identity is not None:
+                    models.bind_recorded_runtime_identity(_expected_runtime_identity)
                 status = start_agent_run(
                     self._project_root,
                     run_dir,
@@ -647,7 +705,7 @@ class AgentUiService:
         launch_contract: MigrationLaunchContract,
         *,
         handle: str,
-        expected_model_revision: str,
+        expected_runtime_identity: str,
         requested_at: datetime,
     ) -> AgentRunView:
         """Recover only the exact unadvanced bootstrap bound by launch intent."""
@@ -664,8 +722,8 @@ class AgentUiService:
                 launch_contract=contract,
                 requested_at=requested_at,
             )
-            models = self._local_models(self._ollama_model_id)
-            models.bind_recorded_model_revision(expected_model_revision)
+            models = self._runtime_models(self._model_id)
+            models.bind_recorded_runtime_identity(expected_runtime_identity)
             status = recover_incomplete_agent_run_start(
                 self._project_root,
                 self._run_dir(handle),
@@ -714,6 +772,45 @@ class AgentUiService:
                 error_type=type(error).__name__,
             )
             raise AgentUiError("run_unavailable") from None
+
+    def progress(self, handle: str) -> dict[str, JsonScalar]:
+        """Project best-effort live phase progress WITHOUT taking the per-run lock.
+
+        The gated continuation (:meth:`decide` with ``approve``) and the bounded
+        retry (:meth:`retry`) hold ``_lock_for(handle)`` for the entire
+        multi-minute Engineer + Validator execution, so the authoritative,
+        fully verified :meth:`get` view is unavailable to a concurrent browser
+        poll — a lock-taking read would simply block until the run finished,
+        which is exactly the "looks stuck" experience this endpoint exists to
+        remove.
+
+        This read is therefore deliberately lock-free. It only inspects durable
+        model-run artifacts that the runtime publishes atomically (an exclusive
+        temporary file hard-linked into place, then fsynced — see
+        :meth:`ArtifactStore.write_json`), so a concurrent reader always sees
+        either no file or a complete file, never a torn one. It reads only file
+        *presence* and modification time — never file contents — so it cannot be
+        confused by a partially written body, and it reports a conservative
+        ``"unknown"`` phase on any filesystem error so the browser can keep
+        showing its last verified harness. It never blocks execution and never
+        mutates state.
+        """
+
+        self._require_known_handle(handle)
+        request_id, _, _ = self._identities(handle)
+        run_dir = self._run_dir(handle)
+        # During the multi-minute gated continuation the runtime routes each
+        # attempt-scoped model artifact to the in-flight transaction under
+        # ``state/`` (see ``_WorkflowArtifactStore``); the identical bytes are
+        # only promoted into ``evidence/`` at the terminal controller boundary.
+        # A live poll therefore has to read the in-flight root to see progress
+        # while the run is still executing, and falls back to the promoted
+        # evidence copy for finished (or already-promoted) attempts.
+        inflight_dir = (
+            run_dir / "state" / "inflight-model-runs" / "model-runs" / request_id
+        )
+        evidence_dir = run_dir / "evidence" / "model-runs" / request_id
+        return _project_live_progress(handle, inflight_dir, evidence_dir)
 
     def request_final_review(
         self,
@@ -957,7 +1054,7 @@ class AgentUiService:
                     handle=handle,
                     selection=selection,
                 )
-                scenario = migration_scenario(status.platform)
+                scenario = self._scenario_for_run(handle, status)
                 source = self._source_root(scenario.source_root)
                 source_before = snapshot_tree(source)
                 run_id, thread_id = self._run_thread_ids(handle)
@@ -1088,7 +1185,7 @@ class AgentUiService:
                     failed_signals=",".join(correction.failed_check_ids),
                 )
 
-                scenario = migration_scenario(status.platform)
+                scenario = self._scenario_for_run(handle, status)
                 source = self._source_root(scenario.source_root)
                 source_before = snapshot_tree(source)
                 run_id, thread_id = self._run_thread_ids(handle)
@@ -1242,7 +1339,7 @@ class AgentUiService:
     ) -> tuple[tuple[str, str], ...]:
         """Read the exact frozen source bound to a run for its usable-project ZIP."""
 
-        scenario = migration_scenario(status.platform)
+        scenario = self._scenario_for_run(handle, status)
         snapshot = snapshot_tree(self._source_root(scenario.source_root))
         request = MigrationRequest.model_validate(
             ArtifactStore(self._run_dir(handle) / "evidence").read_json("request.json")
@@ -1274,7 +1371,7 @@ class AgentUiService:
     ) -> None:
         """Replay-bind every public turn and enforce one local model revision."""
 
-        models = self._local_models(self._ollama_model_id)
+        models = self._runtime_models(self._model_id)
         architect = ArchitectAgent(
             load_agent_registry(self._project_root / "agents"),
             models.architect,
@@ -1314,15 +1411,16 @@ class AgentUiService:
             )
             call = exchange.architect_run.model_call
             if (
-                call.provider != _OLLAMA_RUNTIME_PROVIDER
-                or call.model_id != self._ollama_model_id
-                or call.resolved_execution_boundary != "local_loopback"
-                or call.model_revision is None
+                call.provider != self._model_provider
+                or call.model_id != self._model_id
+                or call.resolved_execution_boundary
+                != _PROVIDER_BOUNDARIES[self._model_provider]
+                or call.resolved_runtime_identity_digest is None
             ):
                 raise AgentUiError("conversation_unavailable")
             if expected_revision is None:
-                expected_revision = call.model_revision
-            elif call.model_revision != expected_revision:
+                expected_revision = call.resolved_runtime_identity_digest
+            elif call.resolved_runtime_identity_digest != expected_revision:
                 raise AgentUiError("conversation_unavailable")
             architect.verify_conversation_replay(exchange.architect_run, context)
             prior_exchanges.append(exchange)
@@ -1332,11 +1430,13 @@ class AgentUiService:
         conversation: ArchitectConversationView,
         run: AgentRunView,
         *,
-        expected_model_revision: str,
+        expected_runtime_identity: str,
     ) -> None:
         """Require exact scenario-contract and model-revision launch provenance."""
 
-        revision_bound = run.boundaries.model_revision == expected_model_revision
+        revision_bound = (
+            run.boundaries.runtime_identity_digest == expected_runtime_identity
+        )
         if (
             conversation.readiness.platform is None
             or conversation.readiness.scenario_id is None
@@ -1395,22 +1495,30 @@ class AgentUiService:
         status: AgentRunStatus,
     ) -> AgentRunModelClients:
         if (
-            status.provider_id == _OLLAMA_RUNTIME_PROVIDER
-            and self._ollama_model_id == status.model_id
+            status.provider_id == self._model_provider
+            and self._model_id == status.model_id
         ):
-            return self._local_models(status.model_id)
+            return self._runtime_models(status.model_id)
         raise AgentUiError("run_unavailable")
 
     def _local_models(self, model_id: str) -> AgentRunModelClients:
         return build_local_ollama_model_clients(
             model_id=model_id,
-            timeout_seconds=self._ollama_timeout_seconds,
-            approval=LiveModelApproval(
-                allow_live_api=True,
-                allow_prompt_data_sharing=True,
-                approved_by=_LOCAL_MODEL_APPROVER,
-            ),
+            timeout_seconds=self._model_timeout_seconds,
+            approval=self._live_model_approval,
         )
+
+    def _claude_models(self, model_id: str) -> AgentRunModelClients:
+        return build_claude_cli_model_clients(
+            model_id=model_id,
+            timeout_seconds=self._model_timeout_seconds,
+            approval=self._live_model_approval,
+        )
+
+    def _runtime_models(self, model_id: str) -> AgentRunModelClients:
+        if self._model_provider == _OLLAMA_RUNTIME_PROVIDER:
+            return self._local_models(model_id)
+        return self._claude_models(model_id)
 
     def _load_status(self, handle: str) -> AgentRunStatus:
         run_id, thread_id = self._run_thread_ids(handle)
@@ -1517,6 +1625,26 @@ class AgentUiService:
     def _run_dir(self, handle: str) -> Path:
         return self._run_root / handle
 
+    def _scenario_for_run(self, handle: str, status: AgentRunStatus) -> MigrationScenario:
+        """Resolve the exact unit bound to a run from its persisted slice id.
+
+        A platform may expose several bounded units, so the run's own persisted
+        ``slice_id`` — never the platform — is the source of truth for which
+        unit produced this run. Resolving by platform would silently recover the
+        primary unit and bind the wrong frozen source tree for a sibling unit.
+        """
+
+        run_context = AgentRunContext.model_validate(
+            ArtifactStore(self._run_dir(handle) / "evidence").read_json("run-context.json")
+        )
+        try:
+            scenario = migration_scenario_by_id(run_context.slice_id)
+        except KeyError:
+            raise AgentUiError("run_unavailable") from None
+        if scenario.platform is not status.platform:
+            raise AgentUiError("run_unavailable")
+        return scenario
+
     def _source_root(self, source_relative: str) -> Path:
         source = self._project_root.joinpath(*source_relative.split("/"))
         resolved = source.resolve(strict=True)
@@ -1569,27 +1697,33 @@ def _safe_project_root(path: Path) -> Path:
     return root
 
 
-def _normalize_ollama_model_id(value: str) -> str:
+def _normalize_model_provider(value: str) -> _UiModelProvider:
+    if value not in {_OLLAMA_RUNTIME_PROVIDER, _CLAUDE_RUNTIME_PROVIDER}:
+        raise ValueError("model_provider must be ollama or claude-cli")
+    return value
+
+
+def _normalize_model_id(value: object, *, argument: str) -> str:
     if not isinstance(value, str):
-        raise ValueError("ollama_model_id must be a string")
+        raise ValueError(f"{argument} must be a string")
     normalized = value.strip()
     if not normalized or len(normalized) > 300:
-        raise ValueError("ollama_model_id must contain 1 to 300 characters")
+        raise ValueError(f"{argument} must contain 1 to 300 characters")
     if any(character in normalized for character in ("\x00", "\r", "\n")):
-        raise ValueError("ollama_model_id contains a forbidden control character")
+        raise ValueError(f"{argument} contains a forbidden control character")
     return normalized
 
 
-def _normalize_ollama_timeout_seconds(value: object) -> float:
+def _normalize_model_timeout_seconds(value: object, *, argument: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("ollama_timeout_seconds must be a number")
+        raise ValueError(f"{argument} must be a number")
     normalized = float(value)
     if (
         not math.isfinite(normalized)
         or not MIN_OLLAMA_TIMEOUT_SECONDS <= normalized <= MAX_OLLAMA_TIMEOUT_SECONDS
     ):
         raise ValueError(
-            "ollama_timeout_seconds must be between "
+            f"{argument} must be between "
             f"{MIN_OLLAMA_TIMEOUT_SECONDS:g} and {MAX_OLLAMA_TIMEOUT_SECONDS:g}"
         )
     return normalized
@@ -1604,6 +1738,96 @@ def _shared_service_lock(run_root: Path, key: str) -> threading.RLock:
 
     with _SERVICE_LOCKS_GUARD:
         return _SERVICE_LOCKS.setdefault((run_root, key), threading.RLock())
+
+
+def _artifact_started_millis(path: Path) -> int | None:
+    """Return an artifact's publication time (epoch ms) as the phase-start proxy."""
+
+    try:
+        return int(path.stat().st_mtime * 1000)
+    except OSError:
+        return None
+
+
+def _project_live_progress(
+    handle: str,
+    inflight_dir: Path,
+    evidence_dir: Path,
+) -> dict[str, JsonScalar]:
+    """Derive the active model phase from published model-run artifacts alone.
+
+    Each artifact is resolved across two roots: the in-flight transaction under
+    ``state/`` (written live, while the gated continuation is still running) and
+    the promoted ``evidence/`` copy (written at the terminal boundary). The
+    in-flight root is preferred because it appears first and its modification
+    time is the true phase-start instant, so live elapsed clocks stay honest.
+
+    Phase transitions are inferred purely from which per-attempt artifacts exist
+    so far:
+
+    * ``engineer-invocation-lease-attempt-N`` present, ``engineer-attempt-N``
+      absent  → the Engineer is still generating (phase ``"engineer"``).
+    * ``engineer-attempt-N`` present, ``report-attempt-N`` absent → controller
+      checks and the optional Validator advisory are running (``"validator"``).
+    * ``report-attempt-N`` present → that attempt's deterministic report exists,
+      so the gated request is finishing (``"complete"``).
+    * No engineer lease yet → the continuation has not dispatched the Engineer
+      (``"pending"``).
+
+    Elapsed time is measured from the modification time of the artifact that
+    marks the start of the active phase. Any filesystem error collapses to a
+    conservative ``"unknown"`` phase.
+    """
+
+    def _resolve(name: str) -> Path | None:
+        """Return the live in-flight artifact if present, else the promoted one."""
+
+        inflight = inflight_dir / name
+        if inflight.exists():
+            return inflight
+        evidence = evidence_dir / name
+        if evidence.exists():
+            return evidence
+        return None
+
+    result: dict[str, JsonScalar] = {
+        "handle": handle,
+        "phase": "unknown",
+        "attempt": None,
+        "elapsed_seconds": None,
+    }
+    try:
+        attempt: int | None = None
+        for candidate in (2, 1):
+            if _resolve(f"engineer-invocation-lease-attempt-{candidate}.json") is not None:
+                attempt = candidate
+                break
+        if attempt is None:
+            result["phase"] = "pending"
+            return result
+        result["attempt"] = attempt
+        report_done = _resolve(f"report-attempt-{attempt}.json")
+        engineer_done = _resolve(f"engineer-attempt-{attempt}.json")
+        if report_done is not None:
+            result["phase"] = "complete"
+            return result
+        if engineer_done is not None:
+            result["phase"] = "validator"
+            started = _artifact_started_millis(
+                _resolve(f"validator-invocation-lease-attempt-{attempt}.json") or engineer_done
+            )
+        else:
+            result["phase"] = "engineer"
+            lease = _resolve(f"engineer-invocation-lease-attempt-{attempt}.json")
+            started = _artifact_started_millis(lease) if lease is not None else None
+        if started is not None:
+            result["elapsed_seconds"] = max(0, (int(time.time() * 1000) - started) // 1000)
+        return result
+    except OSError:
+        result["phase"] = "unknown"
+        result["attempt"] = None
+        result["elapsed_seconds"] = None
+        return result
 
 
 __all__ = [

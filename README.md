@@ -8,13 +8,20 @@
 The Automated Legacy Migration Agent is a local, human-gated capstone reference
 implementation that uses a real LLM to turn one bounded legacy source slice
 into an isolated, reviewable migration candidate. The reusable orchestration
-harness is demonstrated through two fixed synthetic scenarios; it does not
-accept an arbitrary repository or claim general-purpose migration support. The
-two supported scenarios are:
+harness is demonstrated through three fixed synthetic scenarios across two
+platform migration types; it does not accept an arbitrary repository or claim
+general-purpose migration support. The supported migrations are:
 
 - Salesforce Visualforce/Apex to an additive Lightning Web Component (LWC)
-  and Apex implementation; and
+  and Apex implementation, in two bounded units — a smaller Account/Contact
+  explorer and a larger Case Management console; and
 - Mule 3 to a separate Mule 4 application with DataWeave 2 and MUnit.
+
+The two Salesforce units share one recipe, analyzer, validator factory, and
+agent prompts; only their controller-approved unit definitions differ. This is
+the capstone's central claim: a materially different, non-trivial Salesforce
+slice runs through the same harness without scenario-specific orchestration
+code or golden-output comparison.
 
 The primary interface is a conversational browser application backed by local
 Ollama and `qwen3.8:latest`. The runtime has exactly three model roles:
@@ -106,7 +113,8 @@ Qwen command, waits for the loopback URL, and opens the integrated browser.
 
 ## Using the application
 
-1. Choose **Visualforce to Lightning Web Component** or **Mule 3 to Mule 4**.
+1. Choose one of the fixed scenarios — the **Account/Contact** or **Case
+   Management** Salesforce Visualforce-to-LWC unit, or **Mule 3 to Mule 4**.
    The selection identifies a fixed controller-owned scenario; it is not a
    suggestion to the model.
 2. Send a normal conversational message. The example buttons fill a complete
@@ -213,11 +221,12 @@ produces the complete `MigrationLaunchContract`:
 | Runtime implementation | `analyzer_version`, `adapter_id` |
 | Knowledge boundary | `wiki_as_of`, `wiki_query`, `wiki_max_primary_hits` |
 
-The two supported scenario IDs are:
+The three supported scenario IDs are:
 
 | Scenario ID | Source | Target |
 |---|---|---|
-| `salesforce-vf-to-lwc` | `fixtures/salesforce/account-contact-explorer/input` | Additive LWC, sharing-aware Apex, metadata, Apex tests, and LWC Jest tests |
+| `salesforce-vf-to-lwc` | `fixtures/salesforce/account-contact-explorer/input` | Additive `accountContactExplorer` LWC, sharing-aware Apex, metadata, Apex tests, and LWC Jest tests |
+| `case-management-console` | `fixtures/salesforce/case-management-console/input` | Additive `caseManagementConsole` LWC with account/status filtering, sharing-aware Apex, metadata, Apex tests, and LWC Jest tests |
 | `mulesoft-mule3-to-mule4` | `fixtures/mulesoft/customer-status-api/input` | Separate Mule 4.9.20/Java 17 application with DataWeave 2 and MUnit |
 
 The controller passes the contract's `canonical_description` verbatim into
@@ -341,6 +350,28 @@ until a separately authorized Salesforce org validation proves that the exact
 candidate compiles and runs. The current first-attempt Qwen 3.8 candidate has
 that separate check-only evidence; see [Evaluation status](#evaluation-status).
 
+### Second Salesforce unit: Case Management console
+
+The `case-management-console` unit is the capstone's non-trivial Salesforce
+slice. Its source-only fixture is a legacy Visualforce console
+(`LegacyCaseManagementConsole.page`) whose controller delegates to a separate
+`LegacyCaseQueryService` selector, adding account selection, an OPEN/CLOSED/ALL
+status filter, a bounded case datatable ordered by `CaseNumber`, an explicit
+clear action, and stale-response protection. It runs through the same recipe,
+analyzer, validator factory, and Architect/Engineer/Validator prompts as the
+Account/Contact unit; only its controller-approved unit definition, dependency
+seeds, behavior contract, and eleven approved output paths differ. The target
+is an additive `caseManagementConsole` LWC bundle, a sharing-aware
+`CaseManagementConsoleController`, generated Apex and Jest tests, permission
+metadata, and `manifest/package.xml`. Its independent controller-owned Jest
+suite asserts twelve observable behaviors (against nine for Account/Contact),
+including status-filter handling, the keyed datatable, and the clear action.
+This unit is exercised end-to-end by the deterministic recorded-model workflow
+test and a browser-driven run, both reaching `ready_for_human_review` with all
+seven required local checks passing on the real Jest/sandbox toolchain. It does
+not yet have a successful live-model migration or org evidence; see
+[Evaluation status](#evaluation-status).
+
 ## MuleSoft migration slice
 
 The source-only fixture preserves three synthetic Mule 3 files: application
@@ -412,8 +443,9 @@ Salesforce runs require these controller-owned check IDs, in dependency order:
 3. `salesforce-toolchain-contract`;
 4. `salesforce-jest-sandbox-probe`;
 5. `salesforce-lwc-jest` for every candidate-authored Jest test;
-6. `salesforce-lwc-controller-jest` for the independent nine-test behavior
-   boundary; and
+6. `salesforce-lwc-controller-jest` for the independent controller-owned
+   behavior boundary (nine tests for Account/Contact, twelve for Case
+   Management); and
 7. `salesforce-workspace-fingerprint`.
 
 MuleSoft runs require:
@@ -433,7 +465,10 @@ account-load failure, the account-selection gate, explicit contact loading,
 loading state, stale-response rejection after an account change, blank-selection
 reset, empty results, and safe contact-load failure. They assert observable
 behavior without prescribing private helper names, boolean polarity, request
-tokens, same-account reload mechanics, or a particular test-source shape.
+tokens, same-account reload mechanics, or a particular test-source shape. The
+Case Management unit has its own twelve-behavior controller-owned suite covering
+the analogous states plus status-filter handling, the keyed case datatable, and
+the explicit clear action; it is pinned by the same toolchain-digest contract.
 
 ## Bounded correction attempt
 
@@ -574,7 +609,7 @@ loopback surface.
 |---|---|
 | `GET /api/config` | Return browser-safe model configuration and CSRF token |
 | `GET /api/readiness` | Probe sanitized Ollama reachability and selected-model installation without invoking an agent |
-| `GET /api/scenarios` | Return public display data and canonical request for the two fixed scenarios |
+| `GET /api/scenarios` | Return public display data and canonical request for the three fixed scenarios |
 | `POST /api/conversations` | Create a conversation from `{scenario_id}`; `null` is allowed and creates no run |
 | `GET /api/conversations/<id>` | Reload verified public exchanges, readiness, model receipts, and optional launch handle |
 | `POST /api/conversations/<id>/messages` | Append `{message, scenario_id}` and invoke only the Architect intake operation |
@@ -705,7 +740,8 @@ uv run --frozen legacy-migration-agent agent-request-create \
   --output .runs/requests/salesforce-1.json
 ```
 
-For MuleSoft, use `--scenario-id mulesoft-mule3-to-mule4`. There are no CLI
+For MuleSoft, use `--scenario-id mulesoft-mule3-to-mule4`; for the Case
+Management unit, use `--scenario-id case-management-console`. There are no CLI
 arguments for an arbitrary platform, source root, target description, Wiki
 cutoff, path inventory, adapter, or runtime version; those values come from the
 selected launch contract.
@@ -809,16 +845,20 @@ failure.
 
 Known limitations:
 
-- only two small synthetic migrations are supported;
+- only three small synthetic migration units across two platform recipes are
+  supported;
 - static analyzers cannot prove every dynamic or external dependency;
 - the local workspace/sandbox is an application-level control, not a hardened
   hostile multi-user container boundary;
 - local reviewer labels are not authenticated identities;
-- one exact Salesforce candidate has passed a separately authorized Developer
-  Edition check-only validation, but the agent does not perform org operations;
+- one exact Account/Contact Salesforce candidate has passed a separately
+  authorized Developer Edition check-only validation, but the agent does not
+  perform org operations, and the Case Management unit has no such org evidence;
 - Mule runtime/MUnit execution is disabled pending an attested runtime;
-- Qwen can still produce plausible but incomplete code, which is why
-  deterministic checks and final human review are mandatory; and
+- Qwen can still produce plausible but incomplete or contract-invalid output —
+  a live `qwen3.8:latest` attempt on the larger Case Management unit failed the
+  Engineer typed contract and produced no candidate — which is why deterministic
+  checks, fail-closed typed contracts, and final human review are mandatory; and
 - no deployment, Git publication, production integration, or user acceptance
   is performed by an agent run.
 
@@ -850,6 +890,22 @@ platform evidence, and a statistically meaningful benchmark.
   zero failures. The generated Jest file was correctly excluded from Metadata
   API and remained part of local Jest validation. The durable receipt is
   `evaluation/platform-validation/salesforce-capstone-dev-qwen38-run-18d5d840.json`.
+- The `case-management-console` unit is proven at the harness level only. The
+  deterministic recorded-model workflow test and a browser-driven run both reach
+  `ready_for_human_review` with all seven required local checks passing on the
+  real Jest/sandbox toolchain. Because these use a model double, they are harness
+  evidence that the shared harness generalizes to a second, larger Salesforce
+  unit — not a live migration-quality result.
+- A genuine live `qwen3.8:latest` attempt on the Case unit is an honest negative.
+  The conversational Architect and the Architect manifest proposal (~303 s)
+  succeeded, but the Engineer's eleven-file output failed the typed
+  `EngineerModelOutcome` contract with one schema validation error, so the
+  harness fail-closed with a non-retry-eligible `controlled_failure`, wrote no
+  candidate, and never ran validation. Retrying identically would not change the
+  result because the model runs at temperature zero. The Account/Contact unit
+  remains the only unit with a successful live migration and external platform
+  evidence; the larger Case unit exercises the harness's generalization and its
+  fail-closed contract, not live model success.
 - No Mule runtime result, deployment, human acceptance, or statistically
   controlled latency/token comparison is claimed.
 

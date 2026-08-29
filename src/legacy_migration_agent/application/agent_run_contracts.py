@@ -84,24 +84,24 @@ AgentRunOperation = Literal["start", "resume", "retry"]
 
 _AGENT_RUN_FAILURE_EXPLANATIONS: dict[AgentRunFailureReason, tuple[str, str]] = {
     "configuration_invalid": (
-        "The controller rejected the local model configuration before a usable response.",
-        "Check that the configured Ollama model is installed, then start a fresh run.",
+        "The controller rejected the configured model runtime before a usable response.",
+        "Check the configured provider, model identity, and approval state, then start a fresh run.",
     ),
     "provider_refusal": (
-        "The local model declined to produce the requested structured role output.",
+        "The configured model declined to produce the requested structured role output.",
         "Refine the bounded migration request and start a fresh run.",
     ),
     "response_incomplete": (
-        "The local model response ended before the structured role output was complete.",
+        "The model response ended before the structured role output was complete.",
         "Start a fresh run; reduce model load or allow a longer server-owned timeout if needed.",
     ),
     "structured_output_invalid": (
-        "The local model responded, but its role output did not satisfy the typed contract.",
+        "The model responded, but its role output did not satisfy the typed contract.",
         "Start a fresh run and use the harness trace to identify the rejected role boundary.",
     ),
     "unauthorized_tool_call": (
         (
-            "The local model returned a native provider tool call instead of the required "
+            "The model returned a native provider tool call instead of the required "
             "structured role response."
         ),
         (
@@ -110,12 +110,12 @@ _AGENT_RUN_FAILURE_EXPLANATIONS: dict[AgentRunFailureReason, tuple[str, str]] = 
         ),
     ),
     "model_inventory_invalid": (
-        "The local Ollama model inventory could not prove the selected model identity.",
-        "Confirm the exact model alias and digest with ollama list, then start a fresh run.",
+        "The configured runtime could not prove the selected model identity.",
+        "Confirm the server-selected provider and model identity, then start a fresh run.",
     ),
     "provider_response_invalid": (
-        "Ollama returned a response that failed the controller's provider-protocol checks.",
-        "Confirm the local Ollama service and selected model, then start a fresh run.",
+        "The provider returned a response that failed controller-owned protocol checks.",
+        "Confirm the configured provider and selected model, then start a fresh run.",
     ),
     "required_approval_missing": (
         "The Controller-expanded manifest was missing its required human-approval binding.",
@@ -228,15 +228,12 @@ _AGENT_RUN_FAILURE_EXPLANATIONS: dict[AgentRunFailureReason, tuple[str, str]] = 
         "Start a fresh run and inspect the public policy phase in the harness trace.",
     ),
     "provider_timeout": (
-        "The local Ollama request exceeded the server-owned inference deadline.",
-        (
-            "Confirm Ollama is responsive, then restart with a longer timeout or a smaller "
-            "installed model."
-        ),
+        "The model request exceeded the server-owned inference deadline.",
+        "Confirm the configured provider is responsive, then restart with a longer timeout.",
     ),
     "provider_unavailable": (
-        "The controller could not complete the local Ollama request.",
-        "Confirm Ollama is running and the configured model is installed, then start a fresh run.",
+        "The controller could not complete the configured model request.",
+        "Confirm the configured provider and model are available, then start a fresh run.",
     ),
     "deterministic_validation_failed": (
         (

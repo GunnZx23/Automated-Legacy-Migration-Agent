@@ -7,12 +7,18 @@ from pathlib import Path
 from typing import IO, Any
 
 import pytest
-from salesforce_candidate_factory import salesforce_candidate_outputs
+from salesforce_candidate_factory import (
+    case_management_candidate_outputs,
+    salesforce_candidate_outputs,
+)
 
 from legacy_migration_agent.core.workspace import IsolatedWorkspace
 from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+    CASE_AGENT_OUTPUT_PATHS,
+    CASE_LWC_CONTROLLER_TEST_PATH,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
     CONTROLLER_PATH,
     CONTROLLER_TEST_PATH,
     JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
@@ -41,6 +47,7 @@ from legacy_migration_agent.platforms.local_checks import (
 
 REPOSITORY = Path(__file__).parents[1]
 FIXTURE = REPOSITORY / "fixtures" / "salesforce" / "account-contact-explorer"
+CASE_FIXTURE = REPOSITORY / "fixtures" / "salesforce" / "case-management-console"
 TOOLCHAIN = REPOSITORY / "tooling" / "lwc-jest"
 CANDIDATE_BUILDER = Path(__file__).with_name("salesforce_candidate_factory.py")
 
@@ -473,6 +480,49 @@ def test_candidate_contract_uses_only_in_memory_outputs_and_candidate_root(
         assert revision_result["passed"] is True
 
 
+def case_candidate_from_memory(outputs: dict[str, bytes]) -> IsolatedWorkspace:
+    workspace = IsolatedWorkspace(CASE_FIXTURE / "input", CASE_AGENT_OUTPUT_PATHS)
+    for path, content in outputs.items():
+        workspace.write_bytes(path, content)
+    return workspace
+
+
+def test_case_management_candidate_passes_static_and_closure_checks() -> None:
+    outputs = case_management_candidate_outputs()
+
+    with case_candidate_from_memory(outputs) as workspace:
+        result = check_salesforce_candidate(
+            workspace.root, unit_id=CASE_MANAGEMENT_CONSOLE_UNIT_ID
+        )
+        dependency_result, graph = check_dependency_closure(
+            workspace.root, unit_id=CASE_MANAGEMENT_CONSOLE_UNIT_ID
+        )
+        changes = workspace.audit_changes()
+
+        assert result["check"] == "salesforce-candidate-contract"
+        assert result["passed"] is True
+        assert result["agent_output_files"] == 11
+        assert result["org_validation_performed"] is False
+        assert result["deployment_claim"] is False
+        assert changes.changed_paths == CASE_AGENT_OUTPUT_PATHS
+        assert dependency_result["unresolved"] is False
+        assert graph.has_unresolved is False
+
+
+def test_check_dependency_closure_rejects_unknown_unit() -> None:
+    outputs = salesforce_candidate_outputs()
+    with candidate_from_memory(outputs) as workspace:
+        with pytest.raises(LocalCheckFailure, match="unsupported Salesforce migration unit"):
+            check_dependency_closure(workspace.root, unit_id="bogus")
+
+
+def test_check_salesforce_candidate_rejects_unknown_unit() -> None:
+    outputs = salesforce_candidate_outputs()
+    with candidate_from_memory(outputs) as workspace:
+        with pytest.raises(LocalCheckFailure, match="unsupported Salesforce migration unit"):
+            check_salesforce_candidate(workspace.root, unit_id="does-not-exist")
+
+
 @pytest.mark.parametrize(
     "declaration",
     (
@@ -657,6 +707,113 @@ def test_candidate_contract_rejects_technical_or_dynamic_error_disclosure(
         unsafe_exception,
         1,
     ).encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,)
+
+
+def _constant_bound_safe_error_source(account_message: str, contact_message: str) -> bytes:
+    """Rewrite the controller to the constant + ``setMessage`` + throw-variable
+    safe-error shape, declaring class-level ``final String`` message constants.
+
+    This mirrors the idiomatic form a live model (Claude/Sonnet) emits for a
+    controlled query failure: ``AuraHandledException e = new AuraHandledException(CONST);
+    e.setMessage(CONST); throw e;`` — semantically equivalent to the reference
+    ``throw new AuraHandledException('literal');`` the factory ships.
+    """
+
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    source = source.replace(
+        "public with sharing class AccountContactExplorerController {",
+        "public with sharing class AccountContactExplorerController {\n"
+        f"    private static final String ACCOUNTS_ERROR = '{account_message}';\n"
+        f"    private static final String CONTACTS_ERROR = '{contact_message}';",
+        1,
+    )
+    for constant, inline_throw in (
+        ("ACCOUNTS_ERROR", "throw new AuraHandledException('Accounts could not be read.');"),
+        ("CONTACTS_ERROR", "throw new AuraHandledException('Contacts could not be read.');"),
+    ):
+        assert inline_throw in source
+        source = source.replace(
+            inline_throw,
+            f"AuraHandledException handled = new AuraHandledException({constant});\n"
+            f"                        handled.setMessage({constant});\n"
+            f"                        throw handled;",
+            1,
+        )
+    return source.encode()
+
+
+def test_candidate_contract_accepts_constant_bound_safe_error_via_setmessage() -> None:
+    outputs = salesforce_candidate_outputs()
+    outputs[CONTROLLER_PATH] = _constant_bound_safe_error_source(
+        "Accounts could not be read.",
+        "Contacts could not be read.",
+    )
+
+    with candidate_from_memory(outputs) as workspace:
+        result = check_salesforce_candidate(workspace.root)
+
+    assert result["passed"] is True
+    assert result["apex_tests_prepared"] is True
+
+
+def test_candidate_contract_rejects_constant_bound_technical_error_message() -> None:
+    # A leaky class-level constant must not launder a technical disclosure past
+    # the widened check: the referenced name never enters the safe-constant set.
+    outputs = salesforce_candidate_outputs()
+    outputs[CONTROLLER_PATH] = _constant_bound_safe_error_source(
+        "Reading accounts raised an exception.",
+        "Contacts could not be read.",
+    )
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,)
+
+
+def test_candidate_contract_rejects_dynamic_setmessage_in_constructed_exception() -> None:
+    # The construction form still forbids a dynamic message on any span — here a
+    # setMessage that echoes the caught exception's text.
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    source = source.replace(
+        "public with sharing class AccountContactExplorerController {",
+        "public with sharing class AccountContactExplorerController {\n"
+        "    private static final String ACCOUNTS_ERROR = 'Accounts could not be read.';",
+        1,
+    )
+    source = source.replace(
+        "throw new AuraHandledException('Accounts could not be read.');",
+        "AuraHandledException handled = new AuraHandledException(ACCOUNTS_ERROR);\n"
+        "                        handled.setMessage(queryError.getMessage());\n"
+        "                        throw handled;",
+        1,
+    )
+    outputs[CONTROLLER_PATH] = source.encode()
+
+    failure = rejected_candidate(outputs)
+
+    assert failure.failure_code == "salesforce_apex_controller_contract"
+    assert failure.diagnostic_ids == (APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,)
+
+
+def test_candidate_contract_rejects_reference_to_undeclared_error_constant() -> None:
+    # A bare identifier that resolves to no known-safe constant is rejected, so a
+    # typo or out-of-scope reference cannot slip an unaudited message through.
+    outputs = salesforce_candidate_outputs()
+    source = outputs[CONTROLLER_PATH].decode()
+    source = source.replace(
+        "throw new AuraHandledException('Accounts could not be read.');",
+        "throw new AuraHandledException(UNDECLARED_ERROR);",
+        1,
+    )
+    outputs[CONTROLLER_PATH] = source.encode()
 
     failure = rejected_candidate(outputs)
 
@@ -1323,6 +1480,41 @@ def test_toolchain_contract_returns_pinned_digests_without_candidate_inspection(
     ):
         expected = f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
         assert result[key] == expected
+
+
+def test_case_toolchain_contract_returns_pinned_case_controller_digest(
+    tmp_path: Path,
+) -> None:
+    toolchain = tmp_path / "tooling" / "lwc-jest"
+    shutil.copytree(TOOLCHAIN, toolchain)
+
+    result = check_lwc_jest_toolchain(
+        toolchain,
+        unit_id=CASE_MANAGEMENT_CONSOLE_UNIT_ID,
+    )
+
+    assert result["passed"] is True
+    assert result["version"] == "7.9.0"
+    assert result["locked_packages"] == 561
+    assert result["candidate_content_inspected"] is False
+    assert result["network_accessed"] is False
+    assert result["install_performed"] is False
+    assert result["lwc_jest_executed"] is False
+    # The Case unit shares the pinned toolchain manifest, lock, config, and setup
+    # with the account/contact unit and pins its own controller-owned suite.
+    assert result["manifest_sha256"] == LWC_JEST_TOOLCHAIN_DIGESTS["package.json"]
+    assert result["lock_sha256"] == LWC_JEST_TOOLCHAIN_DIGESTS["package-lock.json"]
+    assert result["config_sha256"] == LWC_JEST_TOOLCHAIN_DIGESTS["jest.config.js"]
+    assert result["setup_sha256"] == LWC_JEST_TOOLCHAIN_DIGESTS["jest.setup.js"]
+    case_suite = toolchain / CASE_LWC_CONTROLLER_TEST_PATH
+    expected_case_digest = f"sha256:{hashlib.sha256(case_suite.read_bytes()).hexdigest()}"
+    assert result["controller_test_sha256"] == expected_case_digest
+    assert (
+        result["controller_test_sha256"]
+        != LWC_JEST_TOOLCHAIN_DIGESTS[
+            "controller-tests/accountContactExplorer.controller.test.js"
+        ]
+    )
 
 
 def test_toolchain_contract_rejects_lock_tampering(tmp_path: Path) -> None:

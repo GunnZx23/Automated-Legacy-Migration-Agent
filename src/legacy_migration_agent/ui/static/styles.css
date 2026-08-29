@@ -1375,8 +1375,10 @@ textarea {
 }
 
 .model-call-item {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 0.15rem 0.55rem;
   padding: 0.5rem 0.55rem;
   background: white;
@@ -1384,11 +1386,24 @@ textarea {
   border-radius: 8px;
 }
 
+/* Thread connector: bridge the list gap so consecutive turns read as one
+   agent-to-agent conversation rather than a flat log. */
+.model-call-item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 1.35rem;
+  top: 100%;
+  width: 2px;
+  height: 0.38rem;
+  background: var(--line);
+  transform: translateX(-50%);
+}
+
 .model-call-role {
   display: grid;
   width: 1.6rem;
   height: 1.6rem;
-  grid-row: 1 / span 2;
+  align-self: start;
   color: white;
   background: var(--forest);
   border-radius: 7px;
@@ -1397,9 +1412,40 @@ textarea {
   font-weight: 800;
 }
 
+.model-call-role.is-engineer {
+  background: var(--blue);
+}
+
+.model-call-role.is-validator {
+  background: var(--violet);
+}
+
+.model-call-body {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
 .model-call-item strong {
   font-size: 0.69rem;
   text-transform: capitalize;
+}
+
+.model-call-descriptor {
+  margin-left: 0.35rem;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.model-call-turn {
+  color: var(--ink-soft);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .model-call-meta {

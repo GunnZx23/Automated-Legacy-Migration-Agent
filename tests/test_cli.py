@@ -10,6 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    MAX_CLAUDE_TIMEOUT_SECONDS,
+    MIN_CLAUDE_TIMEOUT_SECONDS,
+)
+from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
 from legacy_migration_agent.application.migration_scenarios import migration_scenario
 from legacy_migration_agent.cli import build_parser, main
 from legacy_migration_agent.contracts import (
@@ -355,11 +360,12 @@ def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
     assert parsed.open_browser is True
     assert parsed.ollama_model == "qwen3.8:latest"
     assert parsed.ollama_timeout_seconds == 600.0
+    assert parsed.claude_model is None
     with pytest.raises(SystemExit):
         parser.parse_args(["ui"])
     with pytest.raises(SystemExit):
         parser.parse_args(["ui", "--port", "80"])
-    for timeout in ("0", "601", "nan", "inf", "not-a-number"):
+    for timeout in ("0", "901", "nan", "inf", "not-a-number"):
         with pytest.raises(SystemExit):
             parser.parse_args(
                 [
@@ -371,27 +377,78 @@ def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
                 ]
             )
 
+    claude = parser.parse_args(
+        [
+            "ui",
+            "--claude-model",
+            "claude-sonnet-5",
+            "--claude-timeout-seconds",
+            "900",
+            "--approved-by",
+            "demo-operator",
+            "--allow-live-api",
+            "--allow-prompt-data-sharing",
+        ]
+    )
+    assert claude.claude_model == "claude-sonnet-5"
+    assert claude.ollama_model is None
+    assert claude.claude_timeout_seconds == 900.0
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "ui",
+                "--ollama-model",
+                "qwen3.8:latest",
+                "--claude-model",
+                "claude-sonnet-5",
+            ]
+        )
+
 
 def test_vscode_launch_profile_opens_only_the_integrated_browser() -> None:
     launch = json.loads((PROJECT_ROOT / ".vscode/launch.json").read_text(encoding="utf-8"))
 
     assert launch["version"] == "0.2.0"
-    assert len(launch["configurations"]) == 1
-    profile = launch["configurations"][0]
-    assert profile["name"] == "Agent UI: VS Code Integrated Browser"
-    assert profile["type"] == "node-terminal"
-    assert profile["request"] == "launch"
-    assert profile["cwd"] == "${workspaceFolder}"
-    assert profile["command"] == (
-        "uv run --frozen legacy-migration-agent ui --project-root . "
-        "--ollama-model qwen3.8:latest --ollama-timeout-seconds 600"
-    )
-    assert "--open-browser" not in profile["command"]
-    assert profile["serverReadyAction"] == {
+    configurations = launch["configurations"]
+    assert configurations, "expected at least one debug configuration"
+
+    expected_ready_action = {
         "pattern": r"Agent UI available at (http://127\.0\.0\.1:\d+/)",
         "uriFormat": "%s",
         "action": "openIntegratedBrowser",
     }
+    for profile in configurations:
+        # Every profile must surface the server through the *integrated* browser
+        # and never auto-open an external one.
+        assert profile["request"] == "launch"
+        assert profile["serverReadyAction"] == expected_ready_action
+        assert "--open-browser" not in profile.get("command", "")
+        assert "--open-browser" not in profile.get("args", [])
+
+    by_name = {profile["name"]: profile for profile in configurations}
+
+    # The offline CLI profile still forwards the exact bounded server configuration.
+    cli_profile = by_name["Agent UI: VS Code Integrated Browser"]
+    assert cli_profile["type"] == "node-terminal"
+    assert cli_profile["cwd"] == "${workspaceFolder}"
+    assert cli_profile["command"] == (
+        "uv run --frozen legacy-migration-agent ui --project-root . "
+        "--ollama-model qwen3.8:latest --ollama-timeout-seconds 600"
+    )
+
+    # The live Claude profile uses the same first-class CLI path as an operator.
+    live_profile = by_name["Agent UI: live Claude"]
+    assert live_profile["type"] == "node-terminal"
+    assert live_profile["cwd"] == "${workspaceFolder}"
+    live_command = live_profile["command"]
+    assert "tooling/e2e/live_claude_serve.py" not in live_command
+    assert "--claude-model claude-sonnet-5" in live_command
+    assert "--claude-timeout-seconds 900" in live_command
+    assert "--approved-by local-demo-operator" in live_command
+    assert "--allow-live-api" in live_command
+    assert "--allow-prompt-data-sharing" in live_command
+    live_timeout = float(live_command.split("--claude-timeout-seconds ", 1)[1].split()[0])
+    assert MIN_CLAUDE_TIMEOUT_SECONDS <= live_timeout <= MAX_CLAUDE_TIMEOUT_SECONDS
 
 
 def test_ui_command_forwards_only_the_bounded_server_configuration(
@@ -400,23 +457,27 @@ def test_ui_command_forwards_only_the_bounded_server_configuration(
 ) -> None:
     from legacy_migration_agent.ui import server as server_module
 
-    calls: list[tuple[Path, int, bool, str, float]] = []
+    calls: list[tuple[Path, int, bool, str, str, float, LiveModelApproval | None]] = []
 
     def fake_serve_ui(
         project_root: Path,
         *,
         port: int,
         open_browser: bool,
-        ollama_model_id: str,
-        ollama_timeout_seconds: float,
+        model_provider: str,
+        model_id: str,
+        model_timeout_seconds: float,
+        live_model_approval: LiveModelApproval | None,
     ) -> None:
         calls.append(
             (
                 project_root,
                 port,
                 open_browser,
-                ollama_model_id,
-                ollama_timeout_seconds,
+                model_provider,
+                model_id,
+                model_timeout_seconds,
+                live_model_approval,
             )
         )
 
@@ -438,7 +499,51 @@ def test_ui_command_forwards_only_the_bounded_server_configuration(
     )
 
     assert result == 0
-    assert calls == [(tmp_path, 9123, True, "qwen3.8:latest", 600.0)]
+    assert calls == [(tmp_path, 9123, True, "ollama", "qwen3.8:latest", 600.0, None)]
+
+
+def test_ui_command_requires_explicit_claude_approval_and_forwards_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from legacy_migration_agent.ui import server as server_module
+
+    calls: list[dict[str, object]] = []
+
+    def fake_serve_ui(project_root: Path, **kwargs: object) -> None:
+        calls.append({"project_root": project_root, **kwargs})
+
+    monkeypatch.setattr(server_module, "serve_ui", fake_serve_ui)
+    base = [
+        "ui",
+        "--project-root",
+        str(tmp_path),
+        "--claude-model",
+        "claude-sonnet-5",
+        "--claude-timeout-seconds",
+        "900",
+    ]
+    with pytest.raises(ValueError, match="Claude UI use requires"):
+        main(base)
+
+    result = main(
+        [
+            *base,
+            "--approved-by",
+            "demo-operator",
+            "--allow-live-api",
+            "--allow-prompt-data-sharing",
+        ]
+    )
+
+    assert result == 0
+    assert calls[0]["project_root"] == tmp_path
+    assert calls[0]["model_provider"] == "claude-cli"
+    assert calls[0]["model_id"] == "claude-sonnet-5"
+    assert calls[0]["model_timeout_seconds"] == 900.0
+    approval = calls[0]["live_model_approval"]
+    assert isinstance(approval, LiveModelApproval)
+    assert approval.approved_by == "demo-operator"
 
 
 def test_ui_command_does_not_import_dormant_cli_capabilities() -> None:

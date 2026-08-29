@@ -23,6 +23,7 @@ OutputModel = TypeVar("OutputModel", bound=BaseModel)
 ModelExecutionBoundary: TypeAlias = Literal[
     "offline_recorded",
     "remote_no_store",
+    "remote_provider_managed",
     "local_loopback",
 ]
 
@@ -129,6 +130,14 @@ class ModelCallRecord(StrictModel):
             "model ID is mutable."
         ),
     )
+    runtime_identity_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description=(
+            "Digest binding the configured runtime identity. For a remote CLI this covers "
+            "the executable version, model alias, and authenticated provider, not model weights."
+        ),
+    )
     live_approval: LiveModelApproval | None = None
     system_prompt_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     input_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -145,6 +154,21 @@ class ModelCallRecord(StrictModel):
                 raise ValueError("remote model records require exact approval evidence")
             if self.usage is None:
                 raise ValueError("remote model records require measured call telemetry")
+        elif boundary == "remote_provider_managed":
+            if not self.live_invocation or self.store_false_sent:
+                raise ValueError(
+                    "provider-managed remote records cannot claim a no-store API control"
+                )
+            if self.live_approval is None:
+                raise ValueError("remote model records require exact approval evidence")
+            if self.usage is None:
+                raise ValueError("remote model records require measured call telemetry")
+            if self.model_revision is not None:
+                raise ValueError(
+                    "provider-managed remote records cannot claim an observed model revision"
+                )
+            if self.runtime_identity_digest is None:
+                raise ValueError("provider-managed remote records require runtime identity")
         elif boundary == "local_loopback":
             # ``live_invocation`` predates local inference and means a live
             # remote-provider call.  Local execution is recorded explicitly by
@@ -155,12 +179,25 @@ class ModelCallRecord(StrictModel):
                 raise ValueError("local loopback records require exact approval evidence")
             if self.usage is None:
                 raise ValueError("local loopback records require measured call telemetry")
+            if self.model_revision is None:
+                raise ValueError("local loopback records require an observed model revision")
+            if (
+                self.runtime_identity_digest is not None
+                and self.runtime_identity_digest != self.model_revision
+            ):
+                raise ValueError("local runtime identity must equal its observed model revision")
         else:
             if self.live_invocation:
                 raise ValueError("offline model records cannot claim remote invocation")
             if self.live_approval is not None:
                 raise ValueError("offline model records cannot carry live approval evidence")
         return self
+
+    @property
+    def resolved_runtime_identity_digest(self) -> Sha256Digest | None:
+        """Return the explicit runtime identity or the legacy local revision binding."""
+
+        return self.runtime_identity_digest or self.model_revision
 
     @property
     def resolved_execution_boundary(self) -> ModelExecutionBoundary:
@@ -216,6 +253,19 @@ def model_call_record(
         revision = raw_revision
     if boundary == "local_loopback" and revision is None:
         raise ModelEvidenceError("local model invocation did not retain an observed revision")
+    raw_runtime_identity = getattr(client, "runtime_identity_digest", None)
+    runtime_identity: str | None = None
+    if raw_runtime_identity is not None:
+        if (
+            not isinstance(raw_runtime_identity, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", raw_runtime_identity) is None
+        ):
+            raise ModelEvidenceError("model invocation exposed an invalid runtime identity")
+        runtime_identity = raw_runtime_identity
+    if boundary == "local_loopback" and runtime_identity is None:
+        runtime_identity = revision
+    if boundary == "remote_provider_managed" and runtime_identity is None:
+        raise ModelEvidenceError("remote CLI invocation did not retain its runtime identity")
     return ModelCallRecord(
         provider=client.provider,
         model_id=client.model_id,
@@ -225,6 +275,7 @@ def model_call_record(
         store_false_sent=client.store_false_sent,
         execution_boundary=boundary,
         model_revision=revision,
+        runtime_identity_digest=runtime_identity,
         live_approval=approval,
         system_prompt_digest=_text_digest(system_prompt),
         input_digest=artifact_digest(input_value),
@@ -246,8 +297,9 @@ def verify_model_call_record(
 
     The provider response itself is deliberately not replayed.  This boundary
     proves that the immutable structured artifact still belongs to the current
-    Markdown agent definition and frozen context.  A live record is accepted
-    only when the original adapter recorded ``store=False``.
+    Markdown agent definition and frozen context. The strict OpenAI boundary
+    additionally verifies its explicit ``store=False`` control; provider-managed
+    remote runtimes retain their separately validated approval and boundary facts.
     """
 
     mismatches: list[str] = []
@@ -487,6 +539,11 @@ def model_execution_boundary(client: StructuredModelClient) -> ModelExecutionBou
     value = getattr(client, "execution_boundary", None)
     if value is None:
         return "remote_no_store" if client.live_invocation else "offline_recorded"
-    if value not in {"offline_recorded", "remote_no_store", "local_loopback"}:
+    if value not in {
+        "offline_recorded",
+        "remote_no_store",
+        "remote_provider_managed",
+        "local_loopback",
+    }:
         raise ModelEvidenceError("model client exposed an unknown execution boundary")
     return cast(ModelExecutionBoundary, value)

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from legacy_migration_agent.contracts import Platform
 
 if TYPE_CHECKING:
+    from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
     from legacy_migration_agent.application.agent_run import (
         AgentRunModelClients,
         AgentRunStatus,
@@ -87,12 +88,15 @@ def dispatch_uncontrolled_command(args: argparse.Namespace) -> int:
     if args.command == "ui":
         from legacy_migration_agent.ui.server import serve_ui
 
+        provider, model_id, timeout_seconds, approval = _ui_model_from_args(args)
         serve_ui(
             args.project_root,
             port=args.port,
             open_browser=args.open_browser,
-            ollama_model_id=args.ollama_model,
-            ollama_timeout_seconds=args.ollama_timeout_seconds,
+            model_provider=provider,
+            model_id=model_id,
+            model_timeout_seconds=timeout_seconds,
+            live_model_approval=approval,
         )
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
@@ -593,3 +597,47 @@ def _reject_live_arguments(args: argparse.Namespace) -> None:
         raise ModelConfigurationError(
             "reject or modify decisions cannot accept live-provider arguments"
         )
+
+
+def _ui_model_from_args(
+    args: argparse.Namespace,
+) -> tuple[str, str, float, LiveModelApproval | None]:
+    """Resolve the CLI-owned UI provider without exposing selection to the browser."""
+
+    if args.claude_model is not None:
+        from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
+
+        if args.ollama_timeout_seconds is not None:
+            raise ValueError("--ollama-timeout-seconds requires --ollama-model")
+        approved_by = (args.approved_by or "").strip()
+        if (
+            args.claude_timeout_seconds is None
+            or not approved_by
+            or not args.allow_live_api
+            or not args.allow_prompt_data_sharing
+        ):
+            raise ValueError(
+                "Claude UI use requires --claude-timeout-seconds, --approved-by, "
+                "--allow-live-api, and --allow-prompt-data-sharing"
+            )
+        approval = LiveModelApproval(
+            allow_live_api=True,
+            allow_prompt_data_sharing=True,
+            approved_by=approved_by,
+        )
+        return "claude-cli", args.claude_model, args.claude_timeout_seconds, approval
+
+    if args.claude_timeout_seconds is not None:
+        raise ValueError("--claude-timeout-seconds requires --claude-model")
+    if args.approved_by is not None or args.allow_live_api or args.allow_prompt_data_sharing:
+        raise ValueError("remote-provider approval flags require --claude-model")
+    from legacy_migration_agent.agent_runtime.ollama_model import (
+        DEFAULT_OLLAMA_TIMEOUT_SECONDS,
+    )
+
+    timeout = (
+        DEFAULT_OLLAMA_TIMEOUT_SECONDS
+        if args.ollama_timeout_seconds is None
+        else args.ollama_timeout_seconds
+    )
+    return "ollama", args.ollama_model, timeout, None

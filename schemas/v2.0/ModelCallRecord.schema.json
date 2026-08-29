@@ -110,6 +110,7 @@
           "enum": [
             "offline_recorded",
             "remote_no_store",
+            "remote_provider_managed",
             "local_loopback"
           ],
           "type": "string"
@@ -172,6 +173,20 @@
       "minLength": 1,
       "title": "Provider",
       "type": "string"
+    },
+    "runtime_identity_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Digest binding the configured runtime identity. For a remote CLI this covers the executable version, model alias, and authenticated provider, not model weights.",
+      "title": "Runtime Identity Digest"
     },
     "store_false_sent": {
       "title": "Store False Sent",

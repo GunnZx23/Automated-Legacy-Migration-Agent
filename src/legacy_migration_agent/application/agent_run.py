@@ -18,12 +18,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from legacy_migration_agent.agent_runtime.agent_definitions import (
     AgentRegistry,
     AgentRole,
     load_agent_registry,
+)
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+    ClaudeCliStructuredModelClient,
 )
 from legacy_migration_agent.agent_runtime.correction import (
     CorrectionAction,
@@ -119,12 +123,16 @@ from legacy_migration_agent.application.agent_run_models import (
     _SanitizedModelClient,
 )
 from legacy_migration_agent.application.agent_run_models import (
+    build_claude_cli_model_clients as _build_claude_cli_model_clients,
+)
+from legacy_migration_agent.application.agent_run_models import (
     build_live_openai_model_clients as _build_live_openai_model_clients,
 )
 from legacy_migration_agent.application.agent_run_models import (
     build_local_ollama_model_clients as _build_local_ollama_model_clients,
 )
 from legacy_migration_agent.application.migration_scenarios import (
+    CASE_WIKI_QUERY,
     MULESOFT_WIKI_QUERY,
     SALESFORCE_WIKI_QUERY,
     MigrationLaunchContract,
@@ -177,6 +185,8 @@ from legacy_migration_agent.platforms.platform_runtime import (
     RevisionBoundArchitectContextFactory,
 )
 from legacy_migration_agent.platforms.salesforce_runtime import (
+    CASE_SALESFORCE_PLATFORM_ADAPTER,
+    CASE_SOURCE_ENTRY,
     SALESFORCE_API_RUNTIME,
     SALESFORCE_PLATFORM_ADAPTER,
     SALESFORCE_RUNTIME_CONFIG,
@@ -247,6 +257,22 @@ def build_local_ollama_model_clients(
         approval=approval,
         timeout_seconds=timeout_seconds,
         client_factory=OllamaStructuredModelClient,
+    )
+
+
+def build_claude_cli_model_clients(
+    *,
+    model_id: str,
+    approval: LiveModelApproval,
+    timeout_seconds: float = DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+) -> AgentRunModelClients:
+    """Build an approved Claude CLI bundle while preserving facade patch seams."""
+
+    return _build_claude_cli_model_clients(
+        model_id=model_id,
+        approval=approval,
+        timeout_seconds=timeout_seconds,
+        client_factory=ClaudeCliStructuredModelClient,
     )
 
 
@@ -387,7 +413,7 @@ def prepare_agent_run_request(
     contract = _canonical_launch_contract(launch_contract)
     assert_agent_request_secret_free({"request_id": request_id})
     root = _safe_project_root(project_root)
-    preset = _preset_for(contract.platform)
+    preset = _preset_for(contract.scenario_id)
     source = _safe_source_root(root, contract.source_root)
     request = MigrationRequest(
         request_id=request_id,
@@ -648,7 +674,7 @@ def _prepare_agent_run_start(
     contract = _canonical_launch_contract(launch_contract)
     assert_agent_request_secret_free(request)
     parsed_request = _parse_request(request)
-    preset = _preset_for(contract.platform)
+    preset = _preset_for(contract.scenario_id)
     _validate_preset_request(parsed_request, contract, preset)
     root = _safe_project_root(project_root)
     _validate_run_location(root, run_dir, contract.source_root)
@@ -1238,32 +1264,54 @@ def _persist_operation_failure(
     return failure
 
 
-def _preset_for(platform: Platform) -> _PlatformPreset:
-    if platform is Platform.SALESFORCE:
-        return _PlatformPreset(
-            preset_id="salesforce-vf-to-lwc",
-            runtime=SALESFORCE_RUNTIME_CONFIG,
-            adapter=SALESFORCE_PLATFORM_ADAPTER,
-            entry_path=SALESFORCE_SOURCE_ENTRY,
-            target_runtime=SALESFORCE_TARGET_RUNTIME,
-            source_version=SALESFORCE_API_RUNTIME,
-            target_version=SALESFORCE_API_RUNTIME,
-            wiki_query=SALESFORCE_WIKI_QUERY,
-            wiki_max_primary_hits=1,
-        )
-    if platform is Platform.MULESOFT:
-        return _PlatformPreset(
-            preset_id="mulesoft-mule3-to-mule4",
-            runtime=MULESOFT_RUNTIME_CONFIG,
-            adapter=MULESOFT_PLATFORM_ADAPTER,
-            entry_path=MULE3_APP,
-            target_runtime=MULESOFT_TARGET_RUNTIME,
-            source_version=MULESOFT_SOURCE_VERSION,
-            target_version=MULESOFT_TARGET_VERSION,
-            wiki_query=MULESOFT_WIKI_QUERY,
-            wiki_max_primary_hits=1,
-        )
-    raise PolicyViolation(f"unsupported migration platform: {platform}")
+# Runtime presets are keyed by scenario id (preset_id == scenario_id) so a
+# platform may expose several bounded units. Each preset's fixed values must
+# equal the canonical launch contract derived from the matching migration
+# scenario; `_validate_launch_contract_preset` enforces that exact agreement.
+_PRESETS_BY_SCENARIO: Final[dict[str, _PlatformPreset]] = {
+    "salesforce-vf-to-lwc": _PlatformPreset(
+        preset_id="salesforce-vf-to-lwc",
+        runtime=SALESFORCE_RUNTIME_CONFIG,
+        adapter=SALESFORCE_PLATFORM_ADAPTER,
+        entry_path=SALESFORCE_SOURCE_ENTRY,
+        target_runtime=SALESFORCE_TARGET_RUNTIME,
+        source_version=SALESFORCE_API_RUNTIME,
+        target_version=SALESFORCE_API_RUNTIME,
+        wiki_query=SALESFORCE_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+    ),
+    "case-management-console": _PlatformPreset(
+        preset_id="case-management-console",
+        runtime=SALESFORCE_RUNTIME_CONFIG,
+        adapter=CASE_SALESFORCE_PLATFORM_ADAPTER,
+        entry_path=CASE_SOURCE_ENTRY,
+        target_runtime=SALESFORCE_TARGET_RUNTIME,
+        source_version=SALESFORCE_API_RUNTIME,
+        target_version=SALESFORCE_API_RUNTIME,
+        wiki_query=CASE_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+    ),
+    "mulesoft-mule3-to-mule4": _PlatformPreset(
+        preset_id="mulesoft-mule3-to-mule4",
+        runtime=MULESOFT_RUNTIME_CONFIG,
+        adapter=MULESOFT_PLATFORM_ADAPTER,
+        entry_path=MULE3_APP,
+        target_runtime=MULESOFT_TARGET_RUNTIME,
+        source_version=MULESOFT_SOURCE_VERSION,
+        target_version=MULESOFT_TARGET_VERSION,
+        wiki_query=MULESOFT_WIKI_QUERY,
+        wiki_max_primary_hits=1,
+    ),
+}
+
+
+def _preset_for(scenario_id: str) -> _PlatformPreset:
+    """Resolve one bounded unit's runtime preset by scenario id, failing closed."""
+
+    preset = _PRESETS_BY_SCENARIO.get(scenario_id)
+    if preset is None:
+        raise PolicyViolation(f"unsupported migration scenario: {scenario_id!r}")
+    return preset
 
 
 def _canonical_launch_contract(
@@ -1559,7 +1607,7 @@ def _load_components(
     failure = lifecycle.failure
     if request is not None and _parse_request(request) != canonical_request:
         raise PolicyViolation("caller request differs from immutable run evidence")
-    preset = _preset_for(canonical_request.platform)
+    preset = _preset_for(contract.scenario_id)
     _validate_preset_request(canonical_request, contract, preset)
     if config.preset_id != preset.preset_id:
         raise PolicyViolation("stored run preset does not match the canonical request")
@@ -1759,6 +1807,18 @@ def _verify_recorded_execution_boundary(
             ) from None
         except ModelRuntimeError:
             raise
+    elif recorded == "remote_provider_managed":
+        identity_digest = model_call.resolved_runtime_identity_digest
+        if identity_digest is None:
+            raise PolicyViolation("stored remote runtime evidence has no identity digest")
+        try:
+            models.bind_recorded_runtime_identity(identity_digest)
+        except ModelConfigurationError:
+            raise PolicyViolation(
+                "remote runtime identity differs from immutable run evidence"
+            ) from None
+        except ModelRuntimeError:
+            raise
 
 
 def _compose(
@@ -1782,7 +1842,7 @@ def _compose(
     ):
         raise PolicyViolation("role model identity does not match the run session")
     session.enable_inflight_model_routing()
-    preset = _preset_for(request.platform)
+    preset = _preset_for(config.preset_id)
     graph_root = session.evidence_dir / "graphs"
     if read_only:
         try:
@@ -2650,6 +2710,7 @@ __all__ = [
     "AgentRunModelClients",
     "AgentRunStatus",
     "build_local_ollama_model_clients",
+    "build_claude_cli_model_clients",
     "build_live_openai_model_clients",
     "get_agent_run_status",
     "has_verified_terminal_agent_run_history",

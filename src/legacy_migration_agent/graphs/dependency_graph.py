@@ -108,6 +108,19 @@ _STANDARD_SCHEMA: dict[str, tuple[str, ...]] = {
         "Type",
         "Website",
     ),
+    "Case": (
+        "Id",
+        "AccountId",
+        "CaseNumber",
+        "ContactId",
+        "CreatedDate",
+        "Description",
+        "IsClosed",
+        "OwnerId",
+        "Priority",
+        "Status",
+        "Subject",
+    ),
     "Contact": (
         "Id",
         "AccountId",
@@ -122,6 +135,16 @@ _STANDARD_SCHEMA: dict[str, tuple[str, ...]] = {
     "Profile": (
         "Id",
         "Name",
+    ),
+    "Task": (
+        "Id",
+        "ActivityDate",
+        "OwnerId",
+        "Priority",
+        "Status",
+        "Subject",
+        "WhatId",
+        "WhoId",
     ),
     "User": (
         "Id",
@@ -358,6 +381,19 @@ class _SalesforceGraphBuilder:
             self.apex[name.casefold()] = node_id
             self.apex_methods[name.casefold()] = self._apex_method_names(file.text)
 
+        # Inner types (for example a nested custom exception class) compile as
+        # part of their enclosing top-level class's unit.  A bare reference to
+        # such a type from within the same repository is evidence for that
+        # enclosing class, not a separate unresolvable symbol.  A distinct
+        # top-level class of the same name always takes precedence.
+        for path, file in sorted(source_files.items()):
+            name = Path(path).name.removesuffix(".cls")
+            node_id = self.apex[name.casefold()]
+            for nested_name in self._nested_apex_type_names(file.text):
+                if nested_name.casefold() in self.apex:
+                    continue
+                self.apex[nested_name.casefold()] = node_id
+
         for path in sorted(self.files):
             if not path.endswith(".cls-meta.xml"):
                 continue
@@ -381,6 +417,11 @@ class _SalesforceGraphBuilder:
             r"[A-Za-z_][\w.<>,\[\]?\s]*?\s+([A-Za-z_]\w*)\s*\("
         )
         return {match.group(1).casefold() for match in pattern.finditer(text)}
+
+    @staticmethod
+    def _nested_apex_type_names(text: str) -> set[str]:
+        pattern = re.compile(r"(?im)\b(?:class|interface|enum)\s+([A-Za-z_]\w*)")
+        return {match.group(1) for match in pattern.finditer(text)}
 
     def _index_pages(self) -> None:
         for path in sorted(self.files):

@@ -5,19 +5,20 @@ the Visualforce controls, controller properties and actions, validation
 messages, query limits, sort order, loading behavior, empty results, errors,
 and partial-page rerenders.
 
-For this bounded fixture, either `@wire(getAccounts)` or an imperative
-`getAccounts()` call may load Account choices. The Contacts call must remain
-imperative because the user explicitly starts it with **Load**. Do not reject a
-candidate merely for choosing wire versus imperative Account retrieval when
-the rendered behavior and safe-error handling are correct.
+Load the initial options with an `@wire` adapter bound to the read-only,
+cacheable controller method named in `manifest.implementation_contract`.
+Binding a `@AuraEnabled(cacheable=true)` read with `@wire` is the standard
+reactive Lightning pattern, so the component reacts to the adapter's data and
+error branches rather than fetching imperatively on init. The user-triggered
+dependent load must remain an imperative call because the user explicitly
+starts it with **Load**.
 
-Project correction rule `lwc_template_binding_invalid`: Salesforce API 67
-supports complex template expressions. Prefer standard JavaScript getters when
-they make nontrivial presentation logic easier to read and test, but treat that
-as a project maintainability convention rather than a Salesforce compiler
-restriction. The pinned LWC compiler and Jest runner are authoritative for
-expression syntax. Keep `data-role` and `data-state` hooks literal or bound to a
-simple property so the public semantic test surface remains stable.
+Project correction rule `lwc_template_binding_invalid`: the pinned LWC compiler
+supports complex template expressions, so this is a project maintainability
+convention, not a compiler restriction. Prefer standard JavaScript getters for
+nontrivial presentation logic, and keep `data-role` and `data-state` hooks
+literal or bound to a simple property so the public semantic test surface stays
+stable.
 
 For a combobox, a placeholder is not the required blank choice. Include a
 rendered option whose value is the empty string, followed by the returned

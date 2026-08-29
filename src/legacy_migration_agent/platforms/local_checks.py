@@ -17,6 +17,7 @@ import json
 import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 from xml.etree import ElementTree
@@ -31,6 +32,7 @@ from legacy_migration_agent.graphs.dependency_graph import (
 API_VERSION = "67.0"
 METADATA_NAMESPACE = "http://soap.sforce.com/2006/04/metadata"
 TARGET_ENTRY = "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js"
+SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: Final = "salesforce-vf-to-lwc"
 
 LWC_JEST_PACKAGE = "@salesforce/sfdx-lwc-jest"
 LWC_JEST_VERSION = "7.9.0"
@@ -100,6 +102,52 @@ SALESFORCE_AGENT_OUTPUT_PATHS = tuple(
     )
 )
 
+# --- Case Management Console migration unit ---------------------------------
+# A second Salesforce migration unit resolved entirely as data from the
+# per-unit registries below. Its writable inventory, semantic template surface,
+# and closure target mirror the account/contact shapes with Case-specific names.
+CASE_MANAGEMENT_CONSOLE_UNIT_ID: Final = "case-management-console"
+CASE_TARGET_ENTRY = "force-app/main/default/lwc/caseManagementConsole/caseManagementConsole.js"
+CASE_MANIFEST_PATH = MANIFEST_PATH
+CASE_CONTROLLER_PATH = "force-app/main/default/classes/CaseManagementConsoleController.cls"
+CASE_CONTROLLER_METADATA_PATH = f"{CASE_CONTROLLER_PATH}-meta.xml"
+CASE_CONTROLLER_TEST_PATH = (
+    "force-app/main/default/classes/CaseManagementConsoleControllerTest.cls"
+)
+CASE_CONTROLLER_TEST_METADATA_PATH = f"{CASE_CONTROLLER_TEST_PATH}-meta.xml"
+CASE_LWC_ROOT = "force-app/main/default/lwc/caseManagementConsole"
+CASE_LWC_HTML_PATH = f"{CASE_LWC_ROOT}/caseManagementConsole.html"
+CASE_LWC_JAVASCRIPT_PATH = f"{CASE_LWC_ROOT}/caseManagementConsole.js"
+CASE_LWC_CSS_PATH = f"{CASE_LWC_ROOT}/caseManagementConsole.css"
+CASE_LWC_METADATA_PATH = f"{CASE_LWC_ROOT}/caseManagementConsole.js-meta.xml"
+CASE_LWC_TEST_PATH = f"{CASE_LWC_ROOT}/__tests__/caseManagementConsole.test.js"
+CASE_PERMISSION_SET_PATH = (
+    "force-app/main/default/permissionsets/CaseManagementConsoleUser.permissionset-meta.xml"
+)
+CASE_SEMANTIC_DATA_ROLES: Final[frozenset[str]] = frozenset(
+    {"account-selector", "status-filter", "load-cases", "clear-selection", "case-results"}
+)
+CASE_SEMANTIC_DATA_STATES: Final[frozenset[str]] = frozenset(
+    {"guidance", "warning", "loading", "empty", "error", "results"}
+)
+CASE_AGENT_OUTPUT_PATHS = tuple(
+    sorted(
+        (
+            CASE_MANIFEST_PATH,
+            CASE_CONTROLLER_PATH,
+            CASE_CONTROLLER_METADATA_PATH,
+            CASE_CONTROLLER_TEST_PATH,
+            CASE_CONTROLLER_TEST_METADATA_PATH,
+            CASE_LWC_HTML_PATH,
+            CASE_LWC_JAVASCRIPT_PATH,
+            CASE_LWC_CSS_PATH,
+            CASE_LWC_METADATA_PATH,
+            CASE_LWC_TEST_PATH,
+            CASE_PERMISSION_SET_PATH,
+        )
+    )
+)
+
 # These names belong only to the controller-owned independent behavior suite.
 # Candidate-authored test titles are intentionally unconstrained.
 SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES: Final[tuple[str, ...]] = (
@@ -134,12 +182,125 @@ SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE: Final[dict[str, str]] = {
 SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: Final = (
     "controller_jest_execution_failure"
 )
+
+# --- Case Management Console controller-owned Jest suite --------------------
+# The Case unit pins its own controller-owned behavior suite. It reuses the
+# shared, immutable toolchain files (package manifests, Jest config, and setup)
+# byte-for-byte; only the pinned controller-suite entry is unit-specific.
+CASE_LWC_CONTROLLER_TEST_PATH = "controller-tests/caseManagementConsole.controller.test.js"
+CASE_LWC_JEST_TOOLCHAIN_DIGESTS = {
+    "package.json": LWC_JEST_TOOLCHAIN_DIGESTS["package.json"],
+    "package-lock.json": LWC_JEST_TOOLCHAIN_DIGESTS["package-lock.json"],
+    "jest.config.js": LWC_JEST_TOOLCHAIN_DIGESTS["jest.config.js"],
+    LWC_JEST_SETUP_PATH: LWC_JEST_TOOLCHAIN_DIGESTS[LWC_JEST_SETUP_PATH],
+    CASE_LWC_CONTROLLER_TEST_PATH: (
+        "sha256:e0764dfd788d2b849e41ce7d3a510bbd8c1dee52fe2783d5c4f87091ee7b5ae7"
+    ),
+}
+CASE_SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES: Final[tuple[str, ...]] = (
+    "controller: lists account options with a blank choice from the wire adapter",
+    "controller: defaults the status filter to Open with all choices",
+    "controller: renders scoped case results in a keyed datatable",
+    "controller: warns and issues no query for a blank account",
+    "controller: renders empty state only after an empty success",
+    "controller: exposes loading state while cases are pending",
+    "controller: renders a safe case-load failure",
+    "controller: ignores a response made stale by account change",
+    "controller: clears results and prompts to reselect on clear",
+    "controller: enables Load only after account selection",
+    "controller: requests cases only after the Load action",
+    "controller: renders a safe account-wire failure",
+)
+CASE_SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE: Final[dict[str, str]] = {
+    title: diagnostic_id
+    for title, diagnostic_id in zip(
+        CASE_SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES,
+        (
+            "controller_jest_account_options",
+            "controller_jest_status_default",
+            "controller_jest_case_results",
+            "controller_jest_blank_selection",
+            "controller_jest_empty_state",
+            "controller_jest_loading_state",
+            "controller_jest_cases_error",
+            "controller_jest_stale_response",
+            "controller_jest_clear_selection",
+            "controller_jest_selection_gate",
+            "controller_jest_explicit_load",
+            "controller_jest_account_error",
+        ),
+        strict=True,
+    )
+}
+
+
+@dataclass(frozen=True)
+class _SalesforceControllerJestSpec:
+    """One migration unit's controller-owned Jest suite identity.
+
+    The controller-owned behavior suite is trusted, immutable tooling the model
+    never authors. Each unit pins the checked-in suite path, the exact behavior
+    titles the suite must report, the behavior-title to diagnostic-id map, and
+    the full pinned toolchain digest inventory (whose controller-suite entry is
+    unit-specific). The account/contact entry references the module-level
+    constants byte-for-byte so a second unit can be added as pure data.
+    """
+
+    controller_test_path: str
+    behavior_titles: tuple[str, ...]
+    diagnostic_by_title: Mapping[str, str]
+    toolchain_digests: Mapping[str, str]
+
+
+_SALESFORCE_CONTROLLER_JEST_BY_UNIT: Final[dict[str, _SalesforceControllerJestSpec]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: _SalesforceControllerJestSpec(
+        controller_test_path=LWC_CONTROLLER_TEST_PATH,
+        behavior_titles=SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES,
+        diagnostic_by_title=SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE,
+        toolchain_digests=LWC_JEST_TOOLCHAIN_DIGESTS,
+    ),
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: _SalesforceControllerJestSpec(
+        controller_test_path=CASE_LWC_CONTROLLER_TEST_PATH,
+        behavior_titles=CASE_SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES,
+        diagnostic_by_title=CASE_SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE,
+        toolchain_digests=CASE_LWC_JEST_TOOLCHAIN_DIGESTS,
+    ),
+}
+
+
+def resolve_salesforce_controller_jest_spec(
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+) -> _SalesforceControllerJestSpec:
+    """Resolve one unit's controller-owned Jest suite spec, failing closed."""
+
+    spec = _SALESFORCE_CONTROLLER_JEST_BY_UNIT.get(unit_id)
+    if spec is None:
+        raise LocalCheckFailure("unsupported Salesforce migration unit")
+    return spec
+
+
+# The complete controller-owned diagnostic vocabulary is the union across every
+# registered unit plus the shared execution-failure signal. With account/contact
+# as the sole registered unit this equals its title-derived id set exactly, and a
+# second unit's diagnostic ids extend the union as pure data.
 SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS: Final[frozenset[str]] = frozenset(
     {
-        *SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE.values(),
         SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
+        *(
+            diagnostic_id
+            for spec in _SALESFORCE_CONTROLLER_JEST_BY_UNIT.values()
+            for diagnostic_id in spec.diagnostic_by_title.values()
+        ),
     }
 )
+
+# Per-unit controller-owned behavior diagnostic ids, keyed by migration unit id.
+# Correction path mapping is unit-aware: a unit's behavior diagnostics bind that
+# unit's LWC bundle. The union above stays the complete controller vocabulary.
+SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS_BY_UNIT: Final[dict[str, frozenset[str]]] = {
+    unit_id: frozenset(spec.diagnostic_by_title.values())
+    for unit_id, spec in _SALESFORCE_CONTROLLER_JEST_BY_UNIT.items()
+}
 
 SALESFORCE_IMPLEMENTATION_CONTRACT = (
     (
@@ -152,8 +313,9 @@ SALESFORCE_IMPLEMENTATION_CONTRACT = (
     ),
     (
         "Use Salesforce API 67.0. Keep the deployment manifest dependency-closed for the new and "
-        "preserved legacy artifacts. Apex metadata must be Active; expose the LWC only on "
-        "lightning__AppPage and lightning__Tab."
+        "preserved legacy artifacts, declaring each metadata type in exactly one <types> block "
+        "whose single <name> lists every member of that type. Apex metadata must be Active; expose "
+        "the LWC only on lightning__AppPage and lightning__Tab."
     ),
     (
         "Expose public with sharing class AccountContactExplorerController with exactly the two "
@@ -222,6 +384,99 @@ SALESFORCE_IMPLEMENTATION_CONTRACT = (
         "controller class accesses, and only the legacy Visualforce page access. Do not grant "
         "create, edit, delete, modify-all, view-all, view-all-fields, user or administrative "
         "capabilities."
+    ),
+)
+
+# Case Management Console implementation contract. It mirrors the account/contact
+# contract structure with the Case unit's controller, LWC bundle, status-filter
+# behavior, keyed case datatable, explicit clear action, and permission surface.
+CASE_IMPLEMENTATION_CONTRACT = (
+    (
+        "Write only the eleven approved Salesforce candidate artifacts: manifest/package.xml; "
+        "the CaseManagementConsoleController class, generated Apex test and their metadata; the "
+        "caseManagementConsole HTML, JavaScript, CSS, metadata and Jest test; and the "
+        "CaseManagementConsoleUser permission set. Keep synthetic Jest data inline in the test "
+        "file rather than generating separate data files. Preserve all legacy Apex (including "
+        "LegacyCaseManagementConsoleController and LegacyCaseQueryService), Visualforce and "
+        "project files. Do not generate or modify controller-owned Jest tooling."
+    ),
+    (
+        "Use Salesforce API 67.0. Keep the deployment manifest dependency-closed for the new and "
+        "preserved legacy artifacts, declaring each metadata type in exactly one <types> block "
+        "whose single <name> lists every member of that type. Apex metadata must be Active; expose "
+        "the LWC only on lightning__AppPage and lightning__Tab."
+    ),
+    (
+        "Expose public with sharing class CaseManagementConsoleController with exactly the two "
+        "public static cacheable methods getAccounts() and getCases(Id accountId, String "
+        "statusFilter). Query only the required Account and Case fields, use static SOQL WITH "
+        "USER_MODE, filter cases by the selected account, preserve ordering by CaseNumber, and cap "
+        "each query at 1 through 100 rows with either a literal LIMIT or a positive compile-time "
+        "Integer constant. Offer the OPEN, CLOSED and ALL status choices, default to Open, and "
+        "apply the selected status filter to the case query. Return an empty list for a null "
+        "selection before querying. Catch each query failure and translate it to an "
+        "AuraHandledException whose sole argument is a fixed safe, nontechnical string; never pass "
+        "through exception details. Include no DML, dynamic query, callout, external endpoint, "
+        "credential, authorization value or secret. Internal constants, helpers, control flow, "
+        "query layout and safe wording are candidate-owned."
+    ),
+    (
+        "Generate an @IsTest Apex class that exercises both public controller methods with "
+        "isolated synthetic Account and Case data and meaningful assertions for account results, "
+        "a selected account with cases scoped by status, a selected account without cases, and a "
+        "null selection. Do not create User records, query Profile, or use System.runAs to "
+        "fabricate a permission failure; those tests are org-configuration-dependent, while the "
+        "controller's safe exception translation is checked separately. Test names, helpers, "
+        "setup, counts, record values and assertion forms are candidate-owned. Do not use "
+        "SeeAllData=true, dynamic query, callouts, external endpoints, credentials or secrets."
+    ),
+    (
+        "Export a standard-JavaScript LightningElement component whose only static dependencies "
+        "are lwc and the two controller methods. Let the user select an account, choose a status "
+        "filter, explicitly load cases, and clear the selection. Render an actual account option "
+        "whose value is the empty string; a combobox placeholder is not that option. Render "
+        "returned account options, the status choices defaulting to Open, keyed case results, "
+        "loading, empty and controlled error states. Bind disabled to a disabled-state getter that "
+        "returns true for a blank selection; do not bind a positive canLoadCases getter directly "
+        "because that reverses the Load gate. On clear, drop loaded cases and pending work, hide "
+        "results and loading, disable Load, and show safe reselect guidance; and prevent a "
+        "response made stale by an account change from overwriting current state. Do not render "
+        "the case-results hook in empty, guidance, or controlled-error states. Expose each case's "
+        "CaseNumber, Subject, Status, Priority and contact name and retain a unique key value for "
+        "structured rows. State fields, helpers, async guards, control flow and wording are "
+        "candidate-owned. Include no dynamic module loading, host or test globals, network "
+        "primitives, reflective execution, external URLs or secrets."
+    ),
+    (
+        "Provide an accessible local UI with stable data-role values account-selector, "
+        "status-filter, load-cases, clear-selection and case-results, data-state values loading "
+        "and empty, and role=alert for controlled guidance and errors. Put the account-selector "
+        "hook on the interactive control. Hooks may be literal values or simple property bindings "
+        "so their rendered values remain stable for the public semantic test surface. Salesforce "
+        "API 67 supports complex template expressions elsewhere in the component; using a "
+        "JavaScript getter for a nontrivial value is a maintainability convention, not a compiler "
+        "restriction. The pinned LWC compiler and Jest runner remain authoritative for expression "
+        "syntax. Do not use external scripts, frames, imports or URL-backed CSS."
+    ),
+    (
+        "Generate executable LWC Jest tests for important outcomes, including successful loading, "
+        "status-filter handling, controlled failures, clear-selection and stale-response handling. "
+        "Keep bounded synthetic Account and Case data inline. Put the named import of every used "
+        "Jest API from @jest/globals before every other static import so the pinned transform "
+        "initializes jest before loading the component and its hoisted virtual Apex mock "
+        "factories. Test titles, helpers, assertions, mock implementation and all remaining source "
+        "order are candidate-owned and validated by the pinned Jest runner. Arrange initial-load "
+        "mock outcomes before createElement and appendChild; do not call non-@api component "
+        "methods through the host element. Do not include skipped or focused tests, dangerous "
+        "Node capabilities, network access, dynamic code execution, external endpoints, "
+        "credentials, authorization values or secrets."
+    ),
+    (
+        "Keep CaseManagementConsoleUser least-privileged and read-only: Account, Contact and Case "
+        "read access only, the required Case fields readable but not editable, only the legacy "
+        "and new controller class accesses (including LegacyCaseQueryService), and only the legacy "
+        "Visualforce page access. Do not grant create, edit, delete, modify-all, view-all, "
+        "view-all-fields, user or administrative capabilities."
     ),
 )
 
@@ -302,16 +557,27 @@ def _candidate_stage(failure_code: str, action: Callable[[], None]) -> None:
         ) from exc
 
 
-def check_salesforce_candidate(root: Path) -> dict[str, Any]:
+def check_salesforce_candidate(
+    root: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+) -> dict[str, Any]:
     """Validate a candidate solution without consulting a fixture or lockfile.
 
     This is a static, fail-closed preflight. It validates Salesforce metadata,
     source-level security constraints, and the presence of focused Apex and LWC
     tests. It intentionally makes no claim that Apex, Jest, or deployment ran.
+
+    Every migration-unit-specific expectation is resolved from the requested
+    unit's :class:`_SalesforceUnitProfile`; an unknown unit fails closed.
     """
 
+    profile = _SALESFORCE_PROFILE_BY_UNIT.get(unit_id)
+    if profile is None:
+        raise LocalCheckFailure("unsupported Salesforce migration unit")
+
     root = _root(root)
-    required = SALESFORCE_AGENT_OUTPUT_PATHS
+    required = profile.agent_output_paths
     try:
         paths = {relative: _file(root, relative) for relative in required}
     except LocalCheckFailure as exc:
@@ -324,47 +590,47 @@ def check_salesforce_candidate(root: Path) -> dict[str, Any]:
     stages: tuple[tuple[str, Callable[[], None]], ...] = (
         (
             "salesforce_manifest_contract",
-            lambda: _check_manifest(_xml_root(paths[MANIFEST_PATH])),
+            lambda: _check_manifest(_xml_root(paths[profile.manifest_path]), profile),
         ),
         (
             "salesforce_apex_controller_metadata_contract",
-            lambda: _check_apex_metadata(_xml_root(paths[CONTROLLER_METADATA_PATH])),
+            lambda: _check_apex_metadata(_xml_root(paths[profile.controller_metadata_path])),
         ),
         (
             "salesforce_apex_test_metadata_contract",
-            lambda: _check_apex_metadata(_xml_root(paths[CONTROLLER_TEST_METADATA_PATH])),
+            lambda: _check_apex_metadata(_xml_root(paths[profile.controller_test_metadata_path])),
         ),
         (
             "salesforce_apex_controller_contract",
-            lambda: _check_controller(_text(paths[CONTROLLER_PATH])),
+            lambda: _check_controller(_text(paths[profile.controller_path]), profile),
         ),
         (
             "salesforce_apex_test_contract",
-            lambda: _check_controller_test(_text(paths[CONTROLLER_TEST_PATH])),
+            lambda: _check_controller_test(_text(paths[profile.controller_test_path]), profile),
         ),
         (
             "salesforce_lwc_javascript_contract",
-            lambda: _check_lwc_javascript(_text(paths[LWC_JAVASCRIPT_PATH])),
+            lambda: _check_lwc_javascript(_text(paths[profile.lwc_javascript_path]), profile),
         ),
         (
             "salesforce_lwc_template_contract",
-            lambda: _check_lwc_template(_text(paths[LWC_HTML_PATH])),
+            lambda: _check_lwc_template(_text(paths[profile.lwc_html_path]), profile),
         ),
         (
             "salesforce_lwc_styles_contract",
-            lambda: _check_lwc_styles(_text(paths[LWC_CSS_PATH])),
+            lambda: _check_lwc_styles(_text(paths[profile.lwc_css_path])),
         ),
         (
             "salesforce_lwc_metadata_contract",
-            lambda: _check_lwc_metadata(_xml_root(paths[LWC_METADATA_PATH])),
+            lambda: _check_lwc_metadata(_xml_root(paths[profile.lwc_metadata_path])),
         ),
         (
             "salesforce_lwc_jest_contract",
-            lambda: _check_lwc_test(_text(paths[LWC_TEST_PATH])),
+            lambda: _check_lwc_test(_text(paths[profile.lwc_test_path]), profile),
         ),
         (
             "salesforce_permission_set_contract",
-            lambda: _check_permission_set(_xml_root(paths[PERMISSION_SET_PATH])),
+            lambda: _check_permission_set(_xml_root(paths[profile.permission_set_path]), profile),
         ),
     )
     failures: list[LocalCheckFailure] = []
@@ -402,11 +668,22 @@ def check_salesforce_candidate(root: Path) -> dict[str, Any]:
     }
 
 
-def check_lwc_jest_toolchain(toolchain_root: Path) -> dict[str, Any]:
-    """Validate the immutable Jest harness without inspecting a candidate."""
+def check_lwc_jest_toolchain(
+    toolchain_root: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+) -> dict[str, Any]:
+    """Validate the immutable Jest harness without inspecting a candidate.
 
+    The controller-owned suite path and the pinned toolchain digest inventory are
+    resolved from the requested unit's controller-Jest spec; an unknown unit fails
+    closed.
+    """
+
+    spec = resolve_salesforce_controller_jest_spec(unit_id)
+    toolchain_digests = spec.toolchain_digests
     root = _root(toolchain_root)
-    paths = {relative: _file(root, relative) for relative in LWC_JEST_TOOLCHAIN_DIGESTS}
+    paths = {relative: _file(root, relative) for relative in toolchain_digests}
     contents = {
         relative: _bytes(
             path,
@@ -417,7 +694,7 @@ def check_lwc_jest_toolchain(toolchain_root: Path) -> dict[str, Any]:
     digests = {
         name: f"sha256:{hashlib.sha256(content).hexdigest()}" for name, content in contents.items()
     }
-    _require(digests == LWC_JEST_TOOLCHAIN_DIGESTS, "toolchain content digests")
+    _require(digests == toolchain_digests, "toolchain content digests")
 
     package = _json_object_bytes(contents["package.json"])
     lock = _json_object_bytes(contents["package-lock.json"])
@@ -447,7 +724,7 @@ def check_lwc_jest_toolchain(toolchain_root: Path) -> dict[str, Any]:
         "lock_sha256": digests["package-lock.json"],
         "config_sha256": digests["jest.config.js"],
         "setup_sha256": digests[LWC_JEST_SETUP_PATH],
-        "controller_test_sha256": digests[LWC_CONTROLLER_TEST_PATH],
+        "controller_test_sha256": digests[spec.controller_test_path],
         "candidate_content_inspected": False,
         "network_accessed": False,
         "install_performed": False,
@@ -455,20 +732,273 @@ def check_lwc_jest_toolchain(toolchain_root: Path) -> dict[str, Any]:
     }
 
 
-def check_dependency_closure(root: Path) -> tuple[dict[str, Any], Any]:
+@dataclass(frozen=True)
+class _SalesforceClosureSpec:
+    """One migration unit's fixed dependency-closure target and expected nodes."""
+
+    target_entry: str
+    expected_nodes: frozenset[tuple[NodeKind, str]]
+
+
+_SALESFORCE_CLOSURE_BY_UNIT: Final[dict[str, _SalesforceClosureSpec]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: _SalesforceClosureSpec(
+        target_entry=TARGET_ENTRY,
+        expected_nodes=frozenset(
+            {
+                (NodeKind.LWC_COMPONENT, "accountContactExplorer"),
+                (NodeKind.APEX_CLASS, "AccountContactExplorerController"),
+                (NodeKind.APEX_TEST, "AccountContactExplorerControllerTest"),
+                (NodeKind.PERMISSION_SET, "AccountContactExplorerUser"),
+                (NodeKind.VISUALFORCE_PAGE, "LegacyAccountContactExplorer"),
+            }
+        ),
+    ),
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: _SalesforceClosureSpec(
+        target_entry=CASE_TARGET_ENTRY,
+        expected_nodes=frozenset(
+            {
+                (NodeKind.LWC_COMPONENT, "caseManagementConsole"),
+                (NodeKind.APEX_CLASS, "CaseManagementConsoleController"),
+                (NodeKind.APEX_TEST, "CaseManagementConsoleControllerTest"),
+                (NodeKind.PERMISSION_SET, "CaseManagementConsoleUser"),
+                (NodeKind.VISUALFORCE_PAGE, "LegacyCaseManagementConsole"),
+            }
+        ),
+    ),
+}
+
+
+@dataclass(frozen=True)
+class _ApexControllerMethodSpec:
+    """One controller method's public interface and single static-SOQL contract."""
+
+    return_type: str  # SObject list element type in the public method signature
+    method_name: str  # public @AuraEnabled(cacheable=true) method name
+    arguments: str  # regex fragment matching the method's parameter list
+    query_object: str  # FROM object of the method's single method-bound static query
+    query_fields: frozenset[str]  # exact selected-field set required in that query
+    query_order_by: tuple[str, ...]  # required ORDER BY field sequence
+    selection_filter: str | None  # regex requiring a bound WHERE filter, or None
+    null_selection_guard: str | None  # regex requiring an early empty-list return, or None
+
+
+@dataclass(frozen=True)
+class _SalesforceUnitProfile:
+    """Every migration-unit-specific literal the candidate validator resolves per unit.
+
+    The account/contact profile below reproduces the previously hard-coded
+    account/contact expectations byte-for-byte. Shared prose/title constants stay
+    at module scope (external modules import them); this profile only references
+    them so a second unit can be added by supplying data alone.
+    """
+
+    # Candidate inventory: the model-writable output scope plus the individual
+    # relative path each validation stage consumes.
+    agent_output_paths: tuple[str, ...]
+    manifest_path: str
+    controller_path: str
+    controller_metadata_path: str
+    controller_test_path: str
+    controller_test_metadata_path: str
+    lwc_javascript_path: str
+    lwc_html_path: str
+    lwc_css_path: str
+    lwc_metadata_path: str
+    lwc_test_path: str
+    permission_set_path: str
+    # Deployment manifest: exact per-type member inventory.
+    manifest_members: Mapping[str, frozenset[str]]
+    # Apex controller + generated test.
+    controller_class_name: str
+    controller_test_class_name: str
+    controller_methods: tuple[_ApexControllerMethodSpec, ...]
+    # LWC: the wire/imperative Apex module targets, the component's own Jest
+    # module, and the semantic template data-role / data-state vocabularies.
+    lwc_apex_modules: tuple[str, ...]
+    lwc_component_module: str
+    lwc_template_data_roles: frozenset[str]
+    lwc_template_data_states: frozenset[str]
+    # Permission set: the objects, class accesses, field permissions, and the
+    # single legacy page access the least-privileged profile grants.
+    permission_objects: frozenset[str]
+    permission_class_accesses: frozenset[str]
+    permission_field_permissions: frozenset[str]
+    permission_page_access: str
+
+
+_SALESFORCE_PROFILE_BY_UNIT: Final[dict[str, _SalesforceUnitProfile]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: _SalesforceUnitProfile(
+        agent_output_paths=SALESFORCE_AGENT_OUTPUT_PATHS,
+        manifest_path=MANIFEST_PATH,
+        controller_path=CONTROLLER_PATH,
+        controller_metadata_path=CONTROLLER_METADATA_PATH,
+        controller_test_path=CONTROLLER_TEST_PATH,
+        controller_test_metadata_path=CONTROLLER_TEST_METADATA_PATH,
+        lwc_javascript_path=LWC_JAVASCRIPT_PATH,
+        lwc_html_path=LWC_HTML_PATH,
+        lwc_css_path=LWC_CSS_PATH,
+        lwc_metadata_path=LWC_METADATA_PATH,
+        lwc_test_path=LWC_TEST_PATH,
+        permission_set_path=PERMISSION_SET_PATH,
+        manifest_members={
+            "ApexClass": frozenset(
+                {
+                    "AccountContactExplorerController",
+                    "AccountContactExplorerControllerTest",
+                    "LegacyAccountContactExplorerController",
+                    "LegacyAcctContactExplorerCtrlTest",
+                }
+            ),
+            "ApexPage": frozenset({"LegacyAccountContactExplorer"}),
+            "LightningComponentBundle": frozenset({"accountContactExplorer"}),
+            "PermissionSet": frozenset({"AccountContactExplorerUser"}),
+        },
+        controller_class_name="AccountContactExplorerController",
+        controller_test_class_name="AccountContactExplorerControllerTest",
+        controller_methods=(
+            _ApexControllerMethodSpec(
+                return_type="Account",
+                method_name="getAccounts",
+                arguments=r"\(\s*\)",
+                query_object="Account",
+                query_fields=frozenset({"Id", "Name"}),
+                query_order_by=("Name",),
+                selection_filter=None,
+                null_selection_guard=None,
+            ),
+            _ApexControllerMethodSpec(
+                return_type="Contact",
+                method_name="getContacts",
+                arguments=r"\(\s*Id\s+accountId\s*\)",
+                query_object="Contact",
+                query_fields=frozenset({"Id", "FirstName", "LastName", "Email", "Phone"}),
+                query_order_by=("LastName", "FirstName"),
+                selection_filter=r"\bWHERE\s+AccountId\s*=\s*:accountId\b",
+                null_selection_guard=(
+                    r"\bif\s*\(\s*(?:accountId\s*==\s*null|null\s*==\s*accountId)\s*\)\s*"
+                    r"\{\s*return\s+new\s+List\s*<\s*Contact\s*>\s*\(\s*\)\s*;\s*\}"
+                ),
+            ),
+        ),
+        lwc_apex_modules=(
+            "@salesforce/apex/AccountContactExplorerController.getAccounts",
+            "@salesforce/apex/AccountContactExplorerController.getContacts",
+        ),
+        lwc_component_module="c/accountContactExplorer",
+        lwc_template_data_roles=LWC_SEMANTIC_DATA_ROLES,
+        lwc_template_data_states=LWC_SEMANTIC_DATA_STATES,
+        permission_objects=frozenset({"Account", "Contact"}),
+        permission_class_accesses=frozenset(
+            {
+                "LegacyAccountContactExplorerController",
+                "AccountContactExplorerController",
+            }
+        ),
+        permission_field_permissions=frozenset({"Contact.Email", "Contact.Phone"}),
+        permission_page_access="LegacyAccountContactExplorer",
+    ),
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: _SalesforceUnitProfile(
+        agent_output_paths=CASE_AGENT_OUTPUT_PATHS,
+        manifest_path=CASE_MANIFEST_PATH,
+        controller_path=CASE_CONTROLLER_PATH,
+        controller_metadata_path=CASE_CONTROLLER_METADATA_PATH,
+        controller_test_path=CASE_CONTROLLER_TEST_PATH,
+        controller_test_metadata_path=CASE_CONTROLLER_TEST_METADATA_PATH,
+        lwc_javascript_path=CASE_LWC_JAVASCRIPT_PATH,
+        lwc_html_path=CASE_LWC_HTML_PATH,
+        lwc_css_path=CASE_LWC_CSS_PATH,
+        lwc_metadata_path=CASE_LWC_METADATA_PATH,
+        lwc_test_path=CASE_LWC_TEST_PATH,
+        permission_set_path=CASE_PERMISSION_SET_PATH,
+        manifest_members={
+            "ApexClass": frozenset(
+                {
+                    "CaseManagementConsoleController",
+                    "CaseManagementConsoleControllerTest",
+                    "LegacyCaseManagementConsoleController",
+                    "LegacyCaseQueryService",
+                    "LegacyCaseConsoleCtrlTest",
+                }
+            ),
+            "ApexPage": frozenset({"LegacyCaseManagementConsole"}),
+            "LightningComponentBundle": frozenset({"caseManagementConsole"}),
+            "PermissionSet": frozenset({"CaseManagementConsoleUser"}),
+        },
+        controller_class_name="CaseManagementConsoleController",
+        controller_test_class_name="CaseManagementConsoleControllerTest",
+        controller_methods=(
+            _ApexControllerMethodSpec(
+                return_type="Account",
+                method_name="getAccounts",
+                arguments=r"\(\s*\)",
+                query_object="Account",
+                query_fields=frozenset({"Id", "Name"}),
+                query_order_by=("Name",),
+                selection_filter=None,
+                null_selection_guard=None,
+            ),
+            _ApexControllerMethodSpec(
+                return_type="Case",
+                method_name="getCases",
+                arguments=r"\(\s*Id\s+accountId\s*,\s*String\s+statusFilter\s*\)",
+                query_object="Case",
+                query_fields=frozenset(
+                    {"Id", "CaseNumber", "Subject", "Status", "Priority", "Contact.Name"}
+                ),
+                query_order_by=("CaseNumber",),
+                selection_filter=r"\bWHERE\s+AccountId\s*=\s*:accountId\b",
+                null_selection_guard=(
+                    r"\bif\s*\(\s*(?:accountId\s*==\s*null|null\s*==\s*accountId)\s*\)\s*"
+                    r"\{\s*return\s+new\s+List\s*<\s*Case\s*>\s*\(\s*\)\s*;\s*\}"
+                ),
+            ),
+        ),
+        lwc_apex_modules=(
+            "@salesforce/apex/CaseManagementConsoleController.getAccounts",
+            "@salesforce/apex/CaseManagementConsoleController.getCases",
+        ),
+        lwc_component_module="c/caseManagementConsole",
+        lwc_template_data_roles=CASE_SEMANTIC_DATA_ROLES,
+        lwc_template_data_states=CASE_SEMANTIC_DATA_STATES,
+        permission_objects=frozenset({"Account", "Contact", "Case"}),
+        permission_class_accesses=frozenset(
+            {
+                "CaseManagementConsoleController",
+                "LegacyCaseManagementConsoleController",
+                "LegacyCaseQueryService",
+            }
+        ),
+        permission_field_permissions=frozenset(
+            {
+                "Case.ContactId",
+                "Case.Description",
+                "Case.IsClosed",
+                "Case.Priority",
+                "Case.Status",
+                "Case.Subject",
+            }
+        ),
+        permission_page_access="LegacyCaseManagementConsole",
+    ),
+}
+
+
+def check_dependency_closure(
+    root: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+) -> tuple[dict[str, Any], Any]:
     """Require a resolved target LWC/Apex/test/permission dependency closure."""
+
+    spec = _SALESFORCE_CLOSURE_BY_UNIT.get(unit_id)
+    if spec is None:
+        raise LocalCheckFailure("unsupported Salesforce migration unit")
 
     root = _root(root)
     revision = content_revision(root)
-    graph = build_salesforce_dependency_graph(root, (TARGET_ENTRY,), revision)
+    graph = build_salesforce_dependency_graph(root, (spec.target_entry,), revision)
     _require(not graph.has_unresolved, "resolved dependency closure")
-    expected = {
-        (NodeKind.LWC_COMPONENT, "accountContactExplorer"),
-        (NodeKind.APEX_CLASS, "AccountContactExplorerController"),
-        (NodeKind.APEX_TEST, "AccountContactExplorerControllerTest"),
-        (NodeKind.PERMISSION_SET, "AccountContactExplorerUser"),
-        (NodeKind.VISUALFORCE_PAGE, "LegacyAccountContactExplorer"),
-    }
+    expected = set(spec.expected_nodes)
     observed = {(node.kind, node.name) for node in graph.nodes if node.resolved}
     _require(expected <= observed, "required dependency nodes")
     return (
@@ -522,10 +1052,13 @@ def check_workspace_revision(root: Path, expected_revision: str) -> dict[str, An
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="legacy-migration-local-check")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("candidate-contract")
-    subparsers.add_parser("dependency-closure")
+    candidate = subparsers.add_parser("candidate-contract")
+    candidate.add_argument("--unit", default=SALESFORCE_ACCOUNT_CONTACT_UNIT_ID)
+    dependency = subparsers.add_parser("dependency-closure")
+    dependency.add_argument("--unit", default=SALESFORCE_ACCOUNT_CONTACT_UNIT_ID)
     toolchain = subparsers.add_parser("toolchain-contract")
     toolchain.add_argument("--toolchain-root", type=Path, required=True)
+    toolchain.add_argument("--unit", default=SALESFORCE_ACCOUNT_CONTACT_UNIT_ID)
     revision = subparsers.add_parser("workspace-revision")
     revision.add_argument("--expected", required=True)
     return parser
@@ -535,11 +1068,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "candidate-contract":
-            result = check_salesforce_candidate(Path.cwd())
+            result = check_salesforce_candidate(Path.cwd(), unit_id=args.unit)
         elif args.command == "dependency-closure":
-            result, _ = check_dependency_closure(Path.cwd())
+            result, _ = check_dependency_closure(Path.cwd(), unit_id=args.unit)
         elif args.command == "toolchain-contract":
-            result = check_lwc_jest_toolchain(args.toolchain_root)
+            result = check_lwc_jest_toolchain(args.toolchain_root, unit_id=args.unit)
         elif args.command == "workspace-revision":
             result = check_workspace_revision(Path.cwd(), args.expected)
         else:  # pragma: no cover - argparse makes this unreachable
@@ -574,7 +1107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _check_manifest(package_root: ElementTree.Element) -> None:
+def _check_manifest(package_root: ElementTree.Element, profile: _SalesforceUnitProfile) -> None:
     _require(
         package_root.tag == f"{{{METADATA_NAMESPACE}}}Package",
         "package metadata root",
@@ -594,18 +1127,7 @@ def _check_manifest(package_root: ElementTree.Element) -> None:
         _require(name is not None and name not in observed and bool(members), "package type")
         observed[cast(str, name)] = members
     _require(
-        observed
-        == {
-            "ApexClass": {
-                "AccountContactExplorerController",
-                "AccountContactExplorerControllerTest",
-                "LegacyAccountContactExplorerController",
-                "LegacyAcctContactExplorerCtrlTest",
-            },
-            "ApexPage": {"LegacyAccountContactExplorer"},
-            "LightningComponentBundle": {"accountContactExplorer"},
-            "PermissionSet": {"AccountContactExplorerUser"},
-        },
+        observed == profile.manifest_members,
         "package members",
     )
 
@@ -742,12 +1264,70 @@ def _matching_block_end(code: str, opening: int, label: str) -> int:
     raise LocalCheckFailure(f"{label} braces")
 
 
+_TECHNICAL_APEX_MESSAGE_MARKERS: Final = (
+    "exception",
+    "stack trace",
+    "select ",
+    " from ",
+    "accountid",
+    "getmessage",
+)
+
+
+def _is_nontechnical_apex_message(message: str) -> bool:
+    """Return whether a fixed user-facing message leaks no technical detail."""
+
+    normalized = message.casefold()
+    return not any(marker in normalized for marker in _TECHNICAL_APEX_MESSAGE_MARKERS)
+
+
+def _safe_apex_message_constants(code: str, source: str) -> frozenset[str]:
+    """Collect class ``final String`` constants whose value is a safe fixed message.
+
+    The declaration is located in the lexical view (so a ``final String`` phrase
+    inside a comment or string literal cannot masquerade as one) and its
+    initializer must be a single string literal, read back from the original
+    source and screened for technical-disclosure markers. Only safe names are
+    returned, so a catch that references an unknown or leaky constant still fails.
+    """
+
+    safe: set[str] = set()
+    for match in re.finditer(
+        r"\bfinal\s+String\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=",
+        code,
+        re.I,
+    ):
+        # In the lexical view a string literal (quotes included) is blanked to
+        # spaces, so the initializer span cannot be captured by a regex group —
+        # a greedy pattern would swallow it as whitespace. Anchor on ``=`` and
+        # take the initializer as the source text up to the next statement
+        # terminator (``;`` never appears inside a blanked literal).
+        value_start = match.end()
+        semicolon = code.find(";", value_start)
+        if semicolon == -1:
+            continue
+        # A blank lexical-view initializer means it holds only a string literal;
+        # any operator, identifier, or call would leave visible code characters.
+        if code[value_start:semicolon].strip():
+            continue
+        literal = re.fullmatch(
+            r"\s*'(?P<message>(?:\\.|[^'\\\r\n]){1,200})'\s*",
+            source[value_start:semicolon],
+        )
+        if literal is None:
+            continue
+        if _is_nontechnical_apex_message(literal.group("message")):
+            safe.add(match.group("name"))
+    return frozenset(safe)
+
+
 def _require_controlled_query_failure(
     code_body: str,
     source_body: str,
     query: str,
     *,
     object_name: str,
+    safe_message_constants: frozenset[str],
 ) -> None:
     query_offset = code_body.find(query)
     _require(query_offset >= 0, f"{object_name} query position")
@@ -769,77 +1349,107 @@ def _require_controlled_query_failure(
     catch_end = _matching_block_end(code_body, catch_opening, f"{object_name} catch block")
     catch_code = code_body[catch_opening + 1 : catch_end]
     catch_source = source_body[catch_opening + 1 : catch_end]
-    throws = tuple(
-        re.finditer(
-            r"\bthrow\s+new\s+AuraHandledException\s*\((?P<argument>.*?)\)\s*;",
+    # A controlled catch throws exactly one AuraHandledException whose every
+    # user-facing message is a fixed safe literal. Two equivalent shapes are
+    # accepted: an inline ``throw new AuraHandledException(<message>);`` and a
+    # ``AuraHandledException e = new AuraHandledException(<message>);
+    # [e.setMessage(<message>);] throw e;`` construction. In both, <message> must
+    # be an inline string literal or a reference to a class-level safe
+    # ``final String`` constant; a dynamic value, concatenation, or exception
+    # passthrough is rejected. Requiring a single throw and a single
+    # ``new AuraHandledException`` blocks decoy or re-thrown-exception variants.
+    throw_statements = tuple(
+        re.finditer(r"\bthrow\b(?P<expr>[^;]*);", catch_code, re.I | re.DOTALL)
+    )
+    _require(len(throw_statements) == 1, f"{object_name} controlled query failure")
+    _require(
+        len(re.findall(r"\bnew\s+AuraHandledException\b", catch_code, re.I)) == 1,
+        f"{object_name} single safe exception",
+    )
+    throw = throw_statements[0]
+    expr_offset = throw.start("expr")
+    throw_expr = throw.group("expr")
+    message_spans: list[tuple[int, int]] = []
+
+    inline = re.fullmatch(
+        r"\s*new\s+AuraHandledException\s*\((?P<argument>.*?)\)\s*",
+        throw_expr,
+        re.I | re.DOTALL,
+    )
+    if inline is not None:
+        message_spans.append(
+            (expr_offset + inline.start("argument"), expr_offset + inline.end("argument"))
+        )
+    else:
+        thrown = re.fullmatch(r"\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*", throw_expr)
+        _require(thrown is not None, f"{object_name} controlled query failure")
+        assert thrown is not None
+        variable = thrown.group("name")
+        constructions = tuple(
+            re.finditer(
+                rf"\bAuraHandledException\s+{re.escape(variable)}\s*=\s*"
+                r"new\s+AuraHandledException\s*\((?P<argument>.*?)\)\s*;",
+                catch_code,
+                re.I | re.DOTALL,
+            )
+        )
+        _require(len(constructions) == 1, f"{object_name} controlled query failure")
+        construction = constructions[0]
+        message_spans.append((construction.start("argument"), construction.end("argument")))
+        for setter in re.finditer(
+            rf"\b{re.escape(variable)}\s*\.\s*setMessage\s*\((?P<argument>.*?)\)\s*;",
             catch_code,
             re.I | re.DOTALL,
-        )
-    )
-    _require(len(throws) == 1, f"{object_name} controlled query failure")
-    throw = throws[0]
-    _require(
-        not throw.group("argument").strip(),
-        f"{object_name} fixed safe error argument",
-    )
-    source_argument = catch_source[throw.start("argument") : throw.end("argument")]
-    literal = re.fullmatch(
-        r"\s*'(?P<message>(?:\\.|[^'\\\r\n]){1,200})'\s*",
-        source_argument,
-    )
-    _require(literal is not None, f"{object_name} fixed safe error message")
-    assert literal is not None
-    normalized_message = literal.group("message").casefold()
-    _require(
-        not any(
-            marker in normalized_message
-            for marker in (
-                "exception",
-                "stack trace",
-                "select ",
-                " from ",
-                "accountid",
-                "getmessage",
+        ):
+            message_spans.append((setter.start("argument"), setter.end("argument")))
+
+    for start, end in message_spans:
+        code_argument = catch_code[start:end].strip()
+        source_argument = catch_source[start:end]
+        if code_argument:
+            # Non-blank in the lexical view means the argument is not a string
+            # literal; the only safe alternative is a bare reference to a known
+            # safe ``final String`` constant.
+            _require(
+                re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", code_argument) is not None
+                and code_argument in safe_message_constants,
+                f"{object_name} fixed safe error message",
             )
-        ),
-        f"{object_name} nontechnical error message",
-    )
+            continue
+        literal = re.fullmatch(
+            r"\s*'(?P<message>(?:\\.|[^'\\\r\n]){1,200})'\s*",
+            source_argument,
+        )
+        _require(literal is not None, f"{object_name} fixed safe error message")
+        assert literal is not None
+        _require(
+            _is_nontechnical_apex_message(literal.group("message")),
+            f"{object_name} nontechnical error message",
+        )
 
 
-def _check_controller(controller: str) -> None:
+def _check_controller(controller: str, profile: _SalesforceUnitProfile) -> None:
     code, string_literals = _apex_lexical_view(controller)
     sharing_declarations = tuple(
         match.group(1).lower() if match.group(1) is not None else "none"
         for match in re.finditer(
             r"(?im)^\s*(?:public|global)\s+"
             r"(?:(with|without|inherited)\s+sharing\s+)?"
-            r"class\s+AccountContactExplorerController\b",
+            rf"class\s+{re.escape(profile.controller_class_name)}\b",
             code,
         )
     )
     _require(sharing_declarations == ("with",), "with-sharing Apex declaration")
 
-    public_methods = (
-        (
-            "Account",
-            "getAccounts",
-            r"\(\s*\)",
-        ),
-        (
-            "Contact",
-            "getContacts",
-            r"\(\s*Id\s+accountId\s*\)",
-        ),
-    )
     public_interface_is_valid = True
-    for return_type, method_name, arguments in public_methods:
+    for method in profile.controller_methods:
         public_interface_is_valid = (
             public_interface_is_valid
             and len(
                 re.findall(
                     r"@AuraEnabled\s*\(\s*cacheable\s*=\s*true\s*\)\s*"
-                    rf"public\s+static\s+List\s*<\s*{return_type}\s*>\s+"
-                    rf"{method_name}\s*{arguments}",
+                    rf"public\s+static\s+List\s*<\s*{method.return_type}\s*>\s+"
+                    rf"{method.method_name}\s*{method.arguments}",
                     code,
                     re.I,
                 )
@@ -847,7 +1457,7 @@ def _check_controller(controller: str) -> None:
             == 1
         )
     public_interface_is_valid = public_interface_is_valid and (
-        len(re.findall(r"@AuraEnabled\b", code, re.I)) == len(public_methods)
+        len(re.findall(r"@AuraEnabled\b", code, re.I)) == len(profile.controller_methods)
     )
     if not public_interface_is_valid:
         raise LocalCheckFailure(
@@ -855,91 +1465,66 @@ def _check_controller(controller: str) -> None:
             diagnostic_ids=(APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,),
         )
 
-    get_accounts_bounds = _apex_method_bounds(
-        code,
-        return_type="Account",
-        method_name="getAccounts",
-        arguments=r"\(\s*\)",
-    )
-    get_contacts_bounds = _apex_method_bounds(
-        code,
-        return_type="Contact",
-        method_name="getContacts",
-        arguments=r"\(\s*Id\s+accountId\s*\)",
-    )
-    get_accounts_body = code[slice(*get_accounts_bounds)]
-    get_contacts_body = code[slice(*get_contacts_bounds)]
-    get_accounts_source = controller[slice(*get_accounts_bounds)]
-    get_contacts_source = controller[slice(*get_contacts_bounds)]
     all_static_queries = _apex_static_queries(code)
     _require(
         all(re.search(r"\bWITH\s+USER_MODE\b", query, re.I) for query in all_static_queries),
         "Apex user-mode queries",
     )
-    account_queries = tuple(
-        query
-        for query in _apex_static_queries(get_accounts_body)
-        if re.search(r"\bFROM\s+Account\b", query, re.I)
-    )
-    contact_queries = tuple(
-        query
-        for query in _apex_static_queries(get_contacts_body)
-        if re.search(r"\bFROM\s+Contact\b", query, re.I)
-    )
-    _require(
-        len(account_queries) == 1 and len(contact_queries) == 1,
-        "method-bound Account and Contact static queries",
-    )
     integer_constants = _apex_integer_constants(code)
-    _require_soql_contract(
-        account_queries[0],
-        object_name="Account",
-        fields=frozenset({"Id", "Name"}),
-        order_by=("Name",),
-        integer_constants=integer_constants,
-    )
-    _require_soql_contract(
-        contact_queries[0],
-        object_name="Contact",
-        fields=frozenset({"Id", "FirstName", "LastName", "Email", "Phone"}),
-        order_by=("LastName", "FirstName"),
-        integer_constants=integer_constants,
-    )
-    _require(
-        re.search(
-            r"\bWHERE\s+AccountId\s*=\s*:accountId\b",
-            contact_queries[0],
-            re.I,
+    safe_message_constants = _safe_apex_message_constants(code, controller)
+
+    method_bound_queries: list[tuple[_ApexControllerMethodSpec, str, str, str]] = []
+    for method in profile.controller_methods:
+        bounds = _apex_method_bounds(
+            code,
+            return_type=method.return_type,
+            method_name=method.method_name,
+            arguments=method.arguments,
         )
-        is not None,
-        "selected-account Contact query",
-    )
-    contact_query_offset = get_contacts_body.find(contact_queries[0])
-    _require(contact_query_offset >= 0, "Contact query position")
-    before_contact_query = get_contacts_body[:contact_query_offset]
-    _require(
-        re.search(
-            r"\bif\s*\(\s*(?:accountId\s*==\s*null|null\s*==\s*accountId)\s*\)\s*"
-            r"\{\s*return\s+new\s+List\s*<\s*Contact\s*>\s*\(\s*\)\s*;\s*\}",
-            before_contact_query,
-            re.I | re.DOTALL,
+        code_body = code[slice(*bounds)]
+        source_body = controller[slice(*bounds)]
+        queries = tuple(
+            query
+            for query in _apex_static_queries(code_body)
+            if re.search(rf"\bFROM\s+{re.escape(method.query_object)}\b", query, re.I)
         )
-        is not None,
-        "Contact null-selection guard",
-    )
+        _require(len(queries) == 1, "method-bound static query")
+        query = queries[0]
+        _require_soql_contract(
+            query,
+            object_name=method.query_object,
+            fields=method.query_fields,
+            order_by=method.query_order_by,
+            integer_constants=integer_constants,
+        )
+        if method.selection_filter is not None:
+            _require(
+                re.search(method.selection_filter, query, re.I) is not None,
+                "selected-parent method-bound query",
+            )
+        if method.null_selection_guard is not None:
+            query_offset = code_body.find(query)
+            _require(query_offset >= 0, "method-bound query position")
+            _require(
+                re.search(
+                    method.null_selection_guard,
+                    code_body[:query_offset],
+                    re.I | re.DOTALL,
+                )
+                is not None,
+                "null-selection guard",
+            )
+        method_bound_queries.append((method, code_body, source_body, query))
+
     try:
-        _require_controlled_query_failure(
-            get_accounts_body,
-            get_accounts_source,
-            account_queries[0],
-            object_name="Account",
-        )
-        _require_controlled_query_failure(
-            get_contacts_body,
-            get_contacts_source,
-            contact_queries[0],
-            object_name="Contact",
-        )
+        for method, code_body, source_body, query in method_bound_queries:
+            _require_controlled_query_failure(
+                code_body,
+                source_body,
+                query,
+                object_name=method.query_object,
+                safe_message_constants=safe_message_constants,
+            )
     except LocalCheckFailure as exc:
         raise LocalCheckFailure(
             "local Apex controlled-query error assertion failed",
@@ -1073,12 +1658,22 @@ def _apex_lexical_view(source: str) -> tuple[str, tuple[str, ...]]:
     return "".join(code), tuple(string_literals)
 
 
-def _check_controller_test(test_source: str) -> None:
+def _check_controller_test(test_source: str, profile: _SalesforceUnitProfile) -> None:
     code, string_literals = _apex_lexical_view(test_source)
+    controller = profile.controller_class_name
+    # The unfiltered "list all" method carries no null-selection guard; the
+    # parent-filtered method does. This resolves which method owns the plain
+    # result coverage and which owns the populated/empty/null coverage.
+    (list_method,) = tuple(
+        method for method in profile.controller_methods if method.null_selection_guard is None
+    )
+    (filtered_method,) = tuple(
+        method for method in profile.controller_methods if method.null_selection_guard is not None
+    )
     _require(
         re.search(
             r"@IsTest\b(?:\s*\(\s*\))?\s*"
-            r"(?:private|public)?\s*class\s+AccountContactExplorerControllerTest\b",
+            rf"(?:private|public)?\s*class\s+{re.escape(profile.controller_test_class_name)}\b",
             code,
             re.I,
         )
@@ -1099,7 +1694,7 @@ def _check_controller_test(test_source: str) -> None:
     )
     _require(
         re.search(
-            r"\bAccountContactExplorerController\s*\.\s*getAccounts\s*\(\s*\)",
+            rf"\b{re.escape(controller)}\s*\.\s*{re.escape(list_method.method_name)}\s*\(\s*\)",
             code,
             re.I,
         )
@@ -1108,7 +1703,7 @@ def _check_controller_test(test_source: str) -> None:
     )
     contact_calls = tuple(
         re.finditer(
-            r"\bAccountContactExplorerController\s*\.\s*getContacts\s*"
+            rf"\b{re.escape(controller)}\s*\.\s*{re.escape(filtered_method.method_name)}\s*"
             r"\(\s*(?P<argument>[^()]*)\s*\)",
             code,
             re.I,
@@ -1127,8 +1722,9 @@ def _check_controller_test(test_source: str) -> None:
         "Apex selected-account Contact coverage",
     )
     _require(
-        len(re.findall(r"\bnew\s+Account\s*\(", code, re.I)) >= 2
-        and re.search(r"\bnew\s+Contact\s*\(", code, re.I) is not None
+        len(re.findall(rf"\bnew\s+{re.escape(list_method.query_object)}\s*\(", code, re.I)) >= 2
+        and re.search(rf"\bnew\s+{re.escape(filtered_method.query_object)}\s*\(", code, re.I)
+        is not None
         and len(re.findall(r"\binsert\b", code, re.I)) >= 2,
         "isolated Apex Account and Contact test records",
     )
@@ -1236,7 +1832,7 @@ def _forbidden_static_computed_property(source: str) -> bool:
     return re.search(r"(?i)\b(?:__proto__|constructor|prototype)\s*:", source) is not None
 
 
-def _check_lwc_javascript(source: str) -> None:
+def _check_lwc_javascript(source: str, profile: _SalesforceUnitProfile) -> None:
     source = _without_c_style_comments(source, line_comments=True)
     code_view, _ = _javascript_code_view(source)
 
@@ -1264,13 +1860,7 @@ def _check_lwc_javascript(source: str) -> None:
         static_imports.append(module_name)
         import_bindings[module_name] = declaration.group("bindings")
 
-    allowed_static_imports = frozenset(
-        {
-            "lwc",
-            "@salesforce/apex/AccountContactExplorerController.getAccounts",
-            "@salesforce/apex/AccountContactExplorerController.getContacts",
-        }
-    )
+    allowed_static_imports = frozenset({"lwc", *profile.lwc_apex_modules})
     lwc_named_imports = re.search(
         r"\{(?P<bindings>[\s\S]*?)\}",
         import_bindings.get("lwc", ""),
@@ -1327,10 +1917,7 @@ def _check_lwc_javascript(source: str) -> None:
         and export_tokens[0].start() == public_export.start()
     )
 
-    apex_modules = (
-        "@salesforce/apex/AccountContactExplorerController.getAccounts",
-        "@salesforce/apex/AccountContactExplorerController.getContacts",
-    )
+    apex_modules = profile.lwc_apex_modules
     apex_bindings: list[str] = []
     apex_bindings_are_used = True
     for module_name in apex_modules:
@@ -1406,7 +1993,7 @@ def _check_lwc_javascript(source: str) -> None:
     )
 
 
-def _check_lwc_template(template: str) -> None:
+def _check_lwc_template(template: str, profile: _SalesforceUnitProfile) -> None:
     template = _without_html_comments(template)
     _require(
         re.fullmatch(r"\s*<template(?:\s[^>]*)?>.*</template>\s*", template, re.DOTALL) is not None,
@@ -1422,8 +2009,8 @@ def _check_lwc_template(template: str) -> None:
         "forbidden LWC template capability",
     )
     for attribute, values in (
-        ("data-role", LWC_SEMANTIC_DATA_ROLES),
-        ("data-state", LWC_SEMANTIC_DATA_STATES),
+        ("data-role", profile.lwc_template_data_roles),
+        ("data-state", profile.lwc_template_data_states),
     ):
         missing_literals = tuple(
             value
@@ -1552,7 +2139,7 @@ def _dangerous_jest_module_target(target: str) -> bool:
     }
 
 
-def _check_lwc_test(test_source: str) -> None:
+def _check_lwc_test(test_source: str, profile: _SalesforceUnitProfile) -> None:
     test_source = _without_c_style_comments(test_source, line_comments=True)
     code_view, _ = _javascript_code_view(test_source)
     _require(
@@ -1575,9 +2162,8 @@ def _check_lwc_test(test_source: str) -> None:
             "@jest/globals",
             "@salesforce/sfdx-lwc-jest",
             "lwc",
-            "c/accountContactExplorer",
-            "@salesforce/apex/AccountContactExplorerController.getAccounts",
-            "@salesforce/apex/AccountContactExplorerController.getContacts",
+            profile.lwc_component_module,
+            *profile.lwc_apex_modules,
         }
     )
     require_inventory_is_valid = True
@@ -1819,7 +2405,7 @@ def _without_html_comments(source: str) -> str:
     return "".join(output)
 
 
-def _check_permission_set(root: ElementTree.Element) -> None:
+def _check_permission_set(root: ElementTree.Element, profile: _SalesforceUnitProfile) -> None:
     _require(
         root.tag == f"{{{METADATA_NAMESPACE}}}PermissionSet",
         "permission set root",
@@ -1828,12 +2414,12 @@ def _check_permission_set(root: ElementTree.Element) -> None:
     _require_xml_child_inventory(
         root,
         {
-            "classAccesses": 2,
+            "classAccesses": len(profile.permission_class_accesses),
             "description": 1,
-            "fieldPermissions": 2,
+            "fieldPermissions": len(profile.permission_field_permissions),
             "hasActivationRequired": 1,
             "label": 1,
-            "objectPermissions": 2,
+            "objectPermissions": len(profile.permission_objects),
             "pageAccesses": 1,
         },
     )
@@ -1842,7 +2428,7 @@ def _check_permission_set(root: ElementTree.Element) -> None:
         "permission set activation",
     )
     object_permissions = root.findall("m:objectPermissions", namespace)
-    _require(len(object_permissions) == 2, "permission object count")
+    _require(len(object_permissions) == len(profile.permission_objects), "permission object count")
     objects: set[str] = set()
     for permission in object_permissions:
         _require_xml_child_inventory(
@@ -1859,7 +2445,7 @@ def _check_permission_set(root: ElementTree.Element) -> None:
             },
         )
         object_name = permission.findtext("m:object", namespaces=namespace)
-        _require(object_name in {"Account", "Contact"}, "standard object permission")
+        _require(object_name in profile.permission_objects, "standard object permission")
         objects.add(cast(str, object_name))
         _require(
             permission.findtext("m:allowRead", namespaces=namespace) == "true",
@@ -1877,7 +2463,7 @@ def _check_permission_set(root: ElementTree.Element) -> None:
                 permission.findtext(f"m:{operation}", namespaces=namespace) == "false",
                 "read-only permission",
             )
-    _require(objects == {"Account", "Contact"}, "permission objects")
+    _require(objects == profile.permission_objects, "permission objects")
 
     class_accesses = root.findall("m:classAccesses", namespace)
     for access in class_accesses:
@@ -1888,12 +2474,8 @@ def _check_permission_set(root: ElementTree.Element) -> None:
         if access.findtext("m:enabled", namespaces=namespace) == "true"
     }
     _require(
-        len(class_accesses) == 2
-        and classes
-        == {
-            "LegacyAccountContactExplorerController",
-            "AccountContactExplorerController",
-        },
+        len(class_accesses) == len(profile.permission_class_accesses)
+        and classes == profile.permission_class_accesses,
         "Apex class access",
     )
 
@@ -1902,21 +2484,21 @@ def _check_permission_set(root: ElementTree.Element) -> None:
     for access in field_accesses:
         _require_xml_child_inventory(access, {"editable": 1, "field": 1, "readable": 1})
         field = access.findtext("m:field", namespaces=namespace)
-        _require(field in {"Contact.Email", "Contact.Phone"}, "Contact field permission")
+        _require(field in profile.permission_field_permissions, "Contact field permission")
         _require(
             access.findtext("m:readable", namespaces=namespace) == "true"
             and access.findtext("m:editable", namespaces=namespace) == "false",
             "read-only field permission",
         )
         fields.add(cast(str, field))
-    _require(fields == {"Contact.Email", "Contact.Phone"}, "required Contact fields")
+    _require(fields == profile.permission_field_permissions, "required Contact fields")
 
     page_accesses = root.findall("m:pageAccesses", namespace)
     _require(len(page_accesses) == 1, "legacy page access count")
     page_access = page_accesses[0]
     _require_xml_child_inventory(page_access, {"apexPage": 1, "enabled": 1})
     _require(
-        page_access.findtext("m:apexPage", namespaces=namespace) == "LegacyAccountContactExplorer"
+        page_access.findtext("m:apexPage", namespaces=namespace) == profile.permission_page_access
         and page_access.findtext("m:enabled", namespaces=namespace) == "true",
         "legacy page access",
     )

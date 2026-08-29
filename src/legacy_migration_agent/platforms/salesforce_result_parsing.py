@@ -19,20 +19,20 @@ from legacy_migration_agent.core.redaction import SecretRedactor
 from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
+    CASE_LWC_TEST_PATH,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
     JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
     JEST_UNAPPROVED_MODULE_TARGET_DIAGNOSTIC_ID,
-    LWC_CONTROLLER_TEST_PATH,
     LWC_JEST_SETUP_PATH,
-    LWC_JEST_TOOLCHAIN_DIGESTS,
     LWC_JEST_VERSION,
     LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID,
     LWC_TEST_PATH,
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
     SALESFORCE_AGENT_OUTPUT_PATHS,
     SALESFORCE_CANDIDATE_FAILURE_CODES,
     SALESFORCE_CANDIDATE_STATIC_DIAGNOSTIC_IDS,
-    SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES,
-    SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE,
     SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
+    resolve_salesforce_controller_jest_spec,
 )
 from legacy_migration_agent.platforms.local_checks import (
     SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID as SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
@@ -53,23 +53,48 @@ _MAX_JEST_TESTS: Final = 10_000
 
 _SummaryParser = Callable[[ExecutionResult, Path], str]
 
+# The candidate-authored LWC Jest suite path is unit-specific: each Salesforce
+# migration unit owns a distinct approved test module, so the account/contact
+# and Case Management Console units resolve their own suite from public
+# constants rather than a shared hardcoded path.
+_CANDIDATE_LWC_TEST_PATH_BY_UNIT: Final[Mapping[str, str]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: LWC_TEST_PATH,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: CASE_LWC_TEST_PATH,
+}
+
+
+def _candidate_lwc_test_path(unit_id: str) -> str:
+    try:
+        return _CANDIDATE_LWC_TEST_PATH_BY_UNIT[unit_id]
+    except KeyError as exc:
+        raise ValueError(f"unsupported Salesforce migration unit: {unit_id}") from exc
+
 
 def _summary_parser(
     command_id: str,
     *,
     controller_test_path: Path | None = None,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
 ) -> _SummaryParser:
     parsers: Mapping[str, _SummaryParser] = {
         SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID: _candidate_summary,
         SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID: _dependency_summary,
-        SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID: _toolchain_summary,
-        SALESFORCE_LWC_JEST_COMMAND_ID: _jest_summary,
+        SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID: partial(
+            _toolchain_summary, unit_id=unit_id
+        ),
+        SALESFORCE_LWC_JEST_COMMAND_ID: partial(
+            _jest_summary, lwc_test_path=_candidate_lwc_test_path(unit_id)
+        ),
         SALESFORCE_WORKSPACE_FINGERPRINT_COMMAND_ID: _workspace_summary,
     }
     if command_id == SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID:
         if controller_test_path is None:
             raise AssertionError("controller Jest parser requires its immutable suite path")
-        return partial(_controller_jest_summary, controller_test_path=controller_test_path)
+        return partial(
+            _controller_jest_summary,
+            controller_test_path=controller_test_path,
+            unit_id=unit_id,
+        )
     return parsers[command_id]
 
 
@@ -80,6 +105,7 @@ def _result_from_execution(
     parser: _SummaryParser,
     *,
     controller_test_path: Path | None = None,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
 ) -> CheckResult:
     result = partial(_check_result, check)
     if execution.receipt.exit_code != 0:
@@ -96,7 +122,11 @@ def _result_from_execution(
             return result(CheckStatus.UNAVAILABLE, summary, execution)
         if check.command_id == SALESFORCE_LWC_JEST_COMMAND_ID:
             try:
-                failure_summary = _jest_failure_summary(execution, candidate_root)
+                failure_summary = _jest_failure_summary(
+                    execution,
+                    candidate_root,
+                    lwc_test_path=_candidate_lwc_test_path(unit_id),
+                )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 summary = (
                     "Jest did not produce complete terminal JSON; its local runtime is "
@@ -120,6 +150,7 @@ def _result_from_execution(
                 failure_summary, diagnostic_ids = _controller_jest_failure_evidence(
                     execution,
                     controller_test_path,
+                    unit_id=unit_id,
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 summary = (
@@ -277,7 +308,19 @@ def _dependency_summary(execution: ExecutionResult, _candidate_root: Path) -> st
     )
 
 
-def _toolchain_summary(execution: ExecutionResult, _candidate_root: Path) -> str:
+def _toolchain_summary(
+    execution: ExecutionResult,
+    _candidate_root: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+) -> str:
+    # The pinned toolchain inventory is resolved from the migration unit's
+    # controller-Jest spec: the manifest, lock, Jest config, and setup entries
+    # are shared byte-for-byte across units, while the controller-owned suite
+    # entry is unit-specific. Comparing against the module-level account/contact
+    # inventory would reject any second unit's own controller suite.
+    spec = resolve_salesforce_controller_jest_spec(unit_id)
+    toolchain_digests = spec.toolchain_digests
     value = _json_object(execution.stdout)
     _require_fields(
         value,
@@ -296,19 +339,19 @@ def _toolchain_summary(execution: ExecutionResult, _candidate_root: Path) -> str
         "lock_sha256": "package-lock.json",
         "config_sha256": "jest.config.js",
         "setup_sha256": LWC_JEST_SETUP_PATH,
-        "controller_test_sha256": LWC_CONTROLLER_TEST_PATH,
+        "controller_test_sha256": spec.controller_test_path,
     }
     for field, filename in expected_keys.items():
-        if value.get(field) != LWC_JEST_TOOLCHAIN_DIGESTS[filename]:
+        if value.get(field) != toolchain_digests[filename]:
             raise ValueError("toolchain digest evidence does not match the pinned contract")
     packages = _bounded_int(value.get("locked_packages"), minimum=1, maximum=10_000)
     return (
         f"Pinned LWC Jest {LWC_JEST_VERSION} contract passed packages={packages}; "
-        f"manifest={LWC_JEST_TOOLCHAIN_DIGESTS['package.json']}; "
-        f"lock={LWC_JEST_TOOLCHAIN_DIGESTS['package-lock.json']}; "
-        f"config={LWC_JEST_TOOLCHAIN_DIGESTS['jest.config.js']}; "
-        f"setup={LWC_JEST_TOOLCHAIN_DIGESTS[LWC_JEST_SETUP_PATH]}; "
-        f"controller-suite={LWC_JEST_TOOLCHAIN_DIGESTS[LWC_CONTROLLER_TEST_PATH]}."
+        f"manifest={toolchain_digests['package.json']}; "
+        f"lock={toolchain_digests['package-lock.json']}; "
+        f"config={toolchain_digests['jest.config.js']}; "
+        f"setup={toolchain_digests[LWC_JEST_SETUP_PATH]}; "
+        f"controller-suite={toolchain_digests[spec.controller_test_path]}."
     )
 
 
@@ -336,7 +379,12 @@ def _jest_suite(
     return suite
 
 
-def _jest_summary(execution: ExecutionResult, candidate_root: Path) -> str:
+def _jest_summary(
+    execution: ExecutionResult,
+    candidate_root: Path,
+    *,
+    lwc_test_path: str = LWC_TEST_PATH,
+) -> str:
     value = _json_object(execution.stdout)
     if value.get("success") is not True or value.get("wasInterrupted") is not False:
         raise ValueError("Jest did not report complete success")
@@ -370,7 +418,7 @@ def _jest_summary(execution: ExecutionResult, candidate_root: Path) -> str:
     suite = _jest_suite(
         value,
         total_suites,
-        candidate_root / LWC_TEST_PATH,
+        candidate_root / lwc_test_path,
         "Jest",
         "results",
         "Jest result",
@@ -406,7 +454,11 @@ def _controller_jest_summary(
     execution: ExecutionResult,
     _candidate_root: Path,
     controller_test_path: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
 ) -> str:
+    spec = resolve_salesforce_controller_jest_spec(unit_id)
+    behavior_titles = spec.behavior_titles
     value = _json_object(execution.stdout)
     if value.get("success") is not True or value.get("wasInterrupted") is not False:
         raise ValueError("controller Jest did not report complete success")
@@ -415,7 +467,7 @@ def _controller_jest_summary(
     failed_suites = _bounded_int(value.get("numFailedTestSuites"), minimum=0, maximum=1)
     pending_suites = _bounded_int(value.get("numPendingTestSuites"), minimum=0, maximum=1)
     runtime_errors = _bounded_int(value.get("numRuntimeErrorTestSuites"), minimum=0, maximum=1)
-    required_tests = len(SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES)
+    required_tests = len(behavior_titles)
     total_tests = _bounded_int(
         value.get("numTotalTests"), minimum=required_tests, maximum=required_tests
     )
@@ -468,7 +520,7 @@ def _controller_jest_summary(
         if not isinstance(title, str) or status != "passed":
             raise ValueError("controller Jest assertion evidence is invalid")
         titles.add(title)
-    if titles != set(SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES):
+    if titles != set(behavior_titles):
         raise ValueError("controller Jest behavior inventory is incomplete")
     return (
         "Controller-owned LWC behavior Jest passed "
@@ -480,7 +532,12 @@ def _controller_jest_summary(
 def _controller_jest_failure_evidence(
     execution: ExecutionResult,
     controller_test_path: Path,
+    *,
+    unit_id: str = SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
 ) -> tuple[str, tuple[str, ...]]:
+    spec = resolve_salesforce_controller_jest_spec(unit_id)
+    behavior_titles = spec.behavior_titles
+    diagnostic_by_title = spec.diagnostic_by_title
     value = _json_object(execution.stdout)
     if value.get("success") is not False or value.get("wasInterrupted") is not False:
         raise ValueError("controller Jest failure evidence is incomplete")
@@ -489,7 +546,7 @@ def _controller_jest_failure_evidence(
     failed_suites = _bounded_int(value.get("numFailedTestSuites"), minimum=0, maximum=1)
     pending_suites = _bounded_int(value.get("numPendingTestSuites"), minimum=0, maximum=1)
     runtime_errors = _bounded_int(value.get("numRuntimeErrorTestSuites"), minimum=0, maximum=1)
-    maximum_tests = len(SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES)
+    maximum_tests = len(behavior_titles)
     total_tests = _bounded_int(value.get("numTotalTests"), minimum=0, maximum=maximum_tests)
     passed_tests = _bounded_int(value.get("numPassedTests"), minimum=0, maximum=maximum_tests)
     failed_tests = _bounded_int(value.get("numFailedTests"), minimum=0, maximum=maximum_tests)
@@ -520,7 +577,7 @@ def _controller_jest_failure_evidence(
         status = assertion.get("status")
         if (
             not isinstance(title, str)
-            or title not in SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE
+            or title not in diagnostic_by_title
             or status not in {"passed", "failed", "pending", "todo"}
         ):
             raise ValueError("controller Jest failure assertion evidence is invalid")
@@ -529,9 +586,7 @@ def _controller_jest_failure_evidence(
     if len(failed_titles) != failed_tests:
         raise ValueError("controller Jest failed assertion inventory is inconsistent")
     diagnostic_ids = tuple(
-        dict.fromkeys(
-            SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_BY_TITLE[title] for title in failed_titles
-        )
+        dict.fromkeys(diagnostic_by_title[title] for title in failed_titles)
     )
     if not diagnostic_ids:
         diagnostic_ids = (SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,)
@@ -546,7 +601,12 @@ def _controller_jest_failure_evidence(
     )
 
 
-def _jest_failure_summary(execution: ExecutionResult, candidate_root: Path) -> str:
+def _jest_failure_summary(
+    execution: ExecutionResult,
+    candidate_root: Path,
+    *,
+    lwc_test_path: str = LWC_TEST_PATH,
+) -> str:
     value = _json_object(execution.stdout)
     if value.get("success") is not False or value.get("wasInterrupted") is not False:
         raise ValueError("Jest failure evidence is incomplete")
@@ -570,7 +630,7 @@ def _jest_failure_summary(execution: ExecutionResult, candidate_root: Path) -> s
     suite = _jest_suite(
         value,
         total_suites,
-        candidate_root / LWC_TEST_PATH,
+        candidate_root / lwc_test_path,
         "Jest failure",
         "evidence",
         "Jest failure",

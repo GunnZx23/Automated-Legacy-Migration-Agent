@@ -128,7 +128,7 @@ def test_lightning_data_service_get_record_example_is_discoverable():
         (
             "jest_unapproved_module_target",
             "salesforce-validation",
-            "@salesforce/apex/AccountContactExplorerController.getAccounts",
+            "@salesforce/apex/<ApprovedController>.<method>",
         ),
         (
             "jest_globals_import_order",
@@ -209,7 +209,7 @@ def test_combined_jest_execution_correction_retains_the_actionable_checklist() -
     for critical_rule in (
         "standard plain JavaScript",
         "TypeScript access modifiers",
-        "getAccounts",
+        "each exact approved Apex method",
         "createElement",
         "__esModule: true",
         "{ virtual: true }",
@@ -247,11 +247,11 @@ def test_production_salesforce_query_supplies_generation_guidance_to_engineer() 
         "controller_jest_empty_state",
         "never before the first explicit Load",
         "no visible `contact-results` hook",
-        "public static List<Account> getAccounts()",
-        "public static List<Contact> getContacts(Id accountId)",
-        "AccountContactExplorerUser",
-        "Do not create a second permission set or modify a profile",
-        "Do not create `User` records, query",
+        "manifest.implementation_contract",
+        "approved manifest, not from this page",
+        "expose no additional Aura-enabled method",
+        "do not create a second permission set or",
+        "do not create `User` records",
         "The local controller contract checks safe",
     ):
         assert required_guidance in selected

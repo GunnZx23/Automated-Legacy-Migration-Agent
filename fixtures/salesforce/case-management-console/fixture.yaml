@@ -1,0 +1,98 @@
+schema_version: "1.0"
+fixture_id: salesforce-case-management-console
+title: Case Management Console
+platform: salesforce
+public_synthetic: true
+api_version: "67.0"
+migration_kind: visualforce_to_lwc
+fixture_scope:
+  source_only: true
+  shipped_tree: input
+  candidate_tree: not_shipped
+  candidate_origin: agent_generated_in_isolated_workspace
+
+source:
+  root: input
+  entrypoint: force-app/main/default/pages/LegacyCaseManagementConsole.page
+  controller: force-app/main/default/classes/LegacyCaseManagementConsoleController.cls
+  unit_test: force-app/main/default/classes/LegacyCaseConsoleCtrlTest.cls
+  permission_set: force-app/main/default/permissionsets/CaseManagementConsoleUser.permissionset-meta.xml
+
+behavior:
+  accounts:
+    maximum: 50
+    order_by:
+      - Name ASC
+    includes_blank_option: true
+  cases:
+    maximum: 100
+    order_by:
+      - CaseNumber DESC
+    status_filter:
+      values:
+        - OPEN
+        - CLOSED
+        - ALL
+      default: OPEN
+    fields:
+      - CaseNumber
+      - Subject
+      - Status
+      - Priority
+      - Contact.Name
+  interaction:
+    explicit_load_button: true
+    load_disabled_without_selection: true
+    blank_selection_warning: true
+    empty_case_state: true
+    loading_state: true
+    controlled_error_state: true
+    stale_response_ignored_after_selection_change: true
+    clear_selection_resets_results_and_shows_guidance: true
+
+security:
+  sharing_model: with_sharing
+  query_access_mode: user_mode
+  standard_objects_only:
+    - Account
+    - Contact
+    - Case
+  permission_set_access: read_only
+  dml_allowed: false
+  external_calls: false
+  secrets: false
+
+validation:
+  local_required:
+    - id: input-fixture-structure
+      assertion: Every declared source path exists below the input root.
+    - id: generated-candidate-contract
+      assertion: Every model-generated candidate must pass the controller-owned Salesforce static and dependency checks.
+    - id: controller-lwc-jest
+      assertions:
+        - Candidate-authored Jest tests execute as required evidence.
+        - The independent controller suite verifies rendered behavior and status-filter handling.
+      working_directory: isolated generated candidate
+      command: controller-owned pinned Jest validation
+  org_required_for_deployment_claim:
+    - id: apex-tests
+      tests:
+        - LegacyCaseConsoleCtrlTest
+        - CaseManagementConsoleControllerTest
+      assertions:
+        - Case results are scoped by the selected Account and status filter, ordered by CaseNumber, and capped at 100.
+        - Blank Account selection returns no cases and never issues an unbounded query.
+    - id: metadata-validation
+      manifest: generated candidate manifest/package.xml
+  final_state: source_fixture_ready_for_model_generation
+
+decision_required:
+  action: destructive_change
+  condition: Retire any legacy artifact after side-by-side acceptance.
+
+acceptance:
+  - All version-bearing Salesforce metadata and project/package manifests use API version 67.0.
+  - The LWC is exposed on Lightning App pages and as a Lightning tab.
+  - The generated permission set grants read but no create, edit, or delete access.
+  - Null Account selection returns no cases and never issues an unbounded query.
+  - No production, deployment, commit, push, or destructive action is implied.

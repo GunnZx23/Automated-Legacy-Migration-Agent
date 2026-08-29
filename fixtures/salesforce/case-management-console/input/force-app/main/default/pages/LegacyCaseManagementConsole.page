@@ -1,0 +1,49 @@
+<apex:page controller="LegacyCaseManagementConsoleController"
+           readOnly="true"
+           lightningStylesheets="true"
+           showHeader="true"
+           sidebar="false">
+    <apex:form>
+        <apex:pageMessages id="messages" />
+        <apex:pageBlock title="Case Management Console">
+            <apex:pageBlockSection columns="1">
+                <apex:selectList value="{!selectedAccountId}" size="1" label="Account">
+                    <apex:selectOptions value="{!accountOptions}" />
+                </apex:selectList>
+                <apex:selectList value="{!statusFilter}" size="1" label="Status">
+                    <apex:selectOptions value="{!statusFilterOptions}" />
+                </apex:selectList>
+                <apex:commandButton value="Load Cases"
+                                    action="{!loadCases}"
+                                    status="loadingStatus"
+                                    reRender="messages,casesPanel" />
+                <apex:commandButton value="Clear Selection"
+                                    action="{!clearSelection}"
+                                    status="loadingStatus"
+                                    reRender="messages,casesPanel"
+                                    immediate="true" />
+                <apex:actionStatus id="loadingStatus"
+                                   startText="Loading cases..."
+                                   stopText="" />
+            </apex:pageBlockSection>
+
+            <apex:outputPanel id="casesPanel" layout="block">
+                <apex:outputPanel rendered="{!AND(ISNULL(selectedAccountId), NOT(hasSearched))}">
+                    <apex:outputText value="Select an account, choose a status, and click Load Cases to view its cases." />
+                </apex:outputPanel>
+
+                <apex:outputPanel rendered="{!AND(hasSearched, cases.size == 0)}">
+                    <apex:outputText value="No cases were found for the selected account and status filter." />
+                </apex:outputPanel>
+
+                <apex:pageBlockTable value="{!cases}" var="caseRecord" rendered="{!AND(hasSearched, cases.size > 0)}">
+                    <apex:column headerValue="Case Number" value="{!caseRecord.CaseNumber}" />
+                    <apex:column headerValue="Subject" value="{!caseRecord.Subject}" />
+                    <apex:column headerValue="Status" value="{!caseRecord.Status}" />
+                    <apex:column headerValue="Priority" value="{!caseRecord.Priority}" />
+                    <apex:column headerValue="Contact" value="{!caseRecord.Contact.Name}" />
+                </apex:pageBlockTable>
+            </apex:outputPanel>
+        </apex:pageBlock>
+    </apex:form>
+</apex:page>

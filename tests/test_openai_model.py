@@ -12,6 +12,7 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     ModelEvidenceError,
     ModelOutputError,
     ModelRefusalError,
+    ModelUsageEvidence,
     OpenAIResponsesModelClient,
     model_call_record,
     verify_model_call_record,
@@ -307,6 +308,131 @@ def test_live_model_call_record_requires_store_false_evidence() -> None:
             system_prompt="bounded role",
             input_value=Input(value="frozen"),
             output_value=Output(answer="ok"),
+        )
+
+
+def test_provider_managed_remote_record_is_truthful_and_uses_runtime_identity() -> None:
+    class ClaudeManagedClient:
+        provider = "claude-cli"
+        model_id = "claude-sonnet-5"
+        live_invocation = True
+        store_false_sent = False
+        execution_boundary = "remote_provider_managed"
+        model_revision = None
+        runtime_identity_digest = "sha256:" + "e" * 64
+        live_approval = LiveModelApproval(
+            allow_live_api=True,
+            allow_prompt_data_sharing=True,
+            approved_by="course-demo-operator",
+        )
+        last_usage = ModelUsageEvidence(
+            latency_ms=34,
+            provider_usage_reported=True,
+            input_tokens=13,
+            output_tokens=8,
+            total_tokens=21,
+        )
+
+    input_value = Input(value="frozen")
+    output_value = Output(answer="ok")
+    record = model_call_record(
+        ClaudeManagedClient(),  # type: ignore[arg-type]
+        agent_version="role/v1",
+        agent_definition_digest="sha256:" + "a" * 64,
+        system_prompt="bounded role",
+        input_value=input_value,
+        output_value=output_value,
+    )
+
+    verify_model_call_record(
+        record,
+        agent_version="role/v1",
+        agent_definition_digest="sha256:" + "a" * 64,
+        system_prompt="bounded role",
+        input_value=input_value,
+        output_value=output_value,
+    )
+    assert record.provider == "claude-cli"
+    assert record.model_id == "claude-sonnet-5"
+    assert record.live_invocation is True
+    assert record.store_false_sent is False
+    assert record.execution_boundary == "remote_provider_managed"
+    assert record.model_revision is None
+    assert record.runtime_identity_digest == "sha256:" + "e" * 64
+    assert record.resolved_runtime_identity_digest == "sha256:" + "e" * 64
+    assert record.live_approval == ClaudeManagedClient.live_approval
+    assert record.usage == ClaudeManagedClient.last_usage
+    serialized = record.model_dump(mode="json")
+    assert "model_revision" not in serialized
+    assert serialized["runtime_identity_digest"] == "sha256:" + "e" * 64
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"store_false_sent": True}, "cannot claim a no-store"),
+        ({"live_invocation": False}, "cannot claim a no-store"),
+        ({"live_approval": None}, "exact approval"),
+        ({"usage": None}, "measured call telemetry"),
+        ({"runtime_identity_digest": None}, "runtime identity"),
+        ({"model_revision": "sha256:" + "f" * 64}, "observed model revision"),
+    ],
+)
+def test_provider_managed_remote_record_rejects_false_or_incomplete_evidence(
+    overrides: dict[str, object],
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "provider": "claude-cli",
+        "model_id": "claude-sonnet-5",
+        "agent_version": "role/v1",
+        "agent_definition_digest": "sha256:" + "a" * 64,
+        "live_invocation": True,
+        "store_false_sent": False,
+        "execution_boundary": "remote_provider_managed",
+        "model_revision": None,
+        "runtime_identity_digest": "sha256:" + "e" * 64,
+        "live_approval": LiveModelApproval(
+            allow_live_api=True,
+            allow_prompt_data_sharing=True,
+            approved_by="course-demo-operator",
+        ),
+        "system_prompt_digest": "sha256:" + "b" * 64,
+        "input_digest": "sha256:" + "c" * 64,
+        "output_digest": "sha256:" + "d" * 64,
+        "usage": ModelUsageEvidence(
+            latency_ms=34,
+            provider_usage_reported=False,
+        ),
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match=message):
+        ModelCallRecord.model_validate(values)
+
+
+def test_remote_no_store_boundary_remains_strict() -> None:
+    with pytest.raises(ValueError, match="provider storage control"):
+        ModelCallRecord(
+            provider="openai",
+            model_id="gpt-test",
+            agent_version="role/v1",
+            agent_definition_digest="sha256:" + "a" * 64,
+            live_invocation=True,
+            store_false_sent=False,
+            execution_boundary="remote_no_store",
+            live_approval=LiveModelApproval(
+                allow_live_api=True,
+                allow_prompt_data_sharing=True,
+                approved_by="reviewer",
+            ),
+            system_prompt_digest="sha256:" + "b" * 64,
+            input_digest="sha256:" + "c" * 64,
+            output_digest="sha256:" + "d" * 64,
+            usage=ModelUsageEvidence(
+                latency_ms=1,
+                provider_usage_reported=False,
+            ),
         )
 
 

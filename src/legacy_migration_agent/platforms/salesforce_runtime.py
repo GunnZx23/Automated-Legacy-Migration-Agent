@@ -62,12 +62,17 @@ from legacy_migration_agent.graphs.dependency_graph import (
 )
 from legacy_migration_agent.platforms import salesforce_result_parsing as _result_parsing
 from legacy_migration_agent.platforms.local_checks import (
-    LWC_CONTROLLER_TEST_PATH,
+    CASE_AGENT_OUTPUT_PATHS,
+    CASE_IMPLEMENTATION_CONTRACT,
+    CASE_LWC_TEST_PATH,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
     LWC_JEST_TOOLCHAIN_DIGESTS,
     LWC_JEST_VERSION,
     LWC_TEST_PATH,
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
     SALESFORCE_AGENT_OUTPUT_PATHS,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
+    resolve_salesforce_controller_jest_spec,
     tree_fingerprint,
 )
 from legacy_migration_agent.platforms.platform_runtime import PlatformRuntimeConfig
@@ -158,6 +163,85 @@ SALESFORCE_PLATFORM_ADAPTER: Final = PlatformAdapter.bind(
     adapter_id="salesforce-vf-to-lwc-v11",
     policy=SALESFORCE_SCOPE_POLICY,
 )
+
+# --- Case Management Console migration unit ---------------------------------
+# A second Salesforce migration unit that reuses the shared validation command
+# catalog, forbidden paths, and approval actions but pins its own legacy source
+# inventory, writable output inventory, and implementation contract. Because the
+# scope policy encodes those unit-specific paths, this unit needs its own policy
+# and adapter (hence its own scope_policy_digest); the launch-contract preset
+# guard requires exact equality with these values.
+CASE_SOURCE_ENTRY: Final = "force-app/main/default/pages/LegacyCaseManagementConsole.page"
+CASE_TRANSFORMATION_INPUT_PATHS: Final = tuple(
+    sorted(
+        (
+            ".forceignore",
+            "force-app/main/default/classes/LegacyCaseConsoleCtrlTest.cls",
+            "force-app/main/default/classes/LegacyCaseConsoleCtrlTest.cls-meta.xml",
+            "force-app/main/default/classes/LegacyCaseManagementConsoleController.cls",
+            "force-app/main/default/classes/LegacyCaseManagementConsoleController.cls-meta.xml",
+            "force-app/main/default/classes/LegacyCaseQueryService.cls",
+            "force-app/main/default/classes/LegacyCaseQueryService.cls-meta.xml",
+            "force-app/main/default/pages/LegacyCaseManagementConsole.page",
+            "force-app/main/default/pages/LegacyCaseManagementConsole.page-meta.xml",
+            "force-app/main/default/permissionsets/CaseManagementConsoleUser.permissionset-meta.xml",
+            "sfdx-project.json",
+        )
+    )
+)
+
+CASE_SALESFORCE_SCOPE_POLICY: Final = MigrationScopePolicy(
+    policy_id="case-management-console-v1",
+    platform=Platform.SALESFORCE,
+    required_source_input_paths=CASE_TRANSFORMATION_INPUT_PATHS,
+    approved_output_paths=CASE_AGENT_OUTPUT_PATHS,
+    forbidden_paths=("jest.config.js", "package-lock.json", "package.json"),
+    allowed_validation_command_ids=SALESFORCE_VALIDATION_COMMAND_IDS,
+    required_validation_command_ids=SALESFORCE_VALIDATION_COMMAND_IDS,
+    required_implementation_contract=CASE_IMPLEMENTATION_CONTRACT,
+    max_changed_files=len(CASE_AGENT_OUTPUT_PATHS),
+    required_approval_actions=(ApprovalAction.APPROVE_MANIFEST,),
+)
+
+CASE_SALESFORCE_PLATFORM_ADAPTER: Final = PlatformAdapter.bind(
+    adapter_id="case-management-console-v1",
+    policy=CASE_SALESFORCE_SCOPE_POLICY,
+)
+
+
+@dataclass(frozen=True)
+class _SalesforceRuntimeScope:
+    """One migration unit's fixed preflight and validation-plan identity."""
+
+    unit_id: str
+    source_entry: str
+    transformation_input_paths: tuple[str, ...]
+    agent_output_paths: tuple[str, ...]
+    lwc_test_path: str
+    validation_command_ids: tuple[str, ...]
+    adapter: PlatformAdapter
+
+
+_SALESFORCE_RUNTIME_SCOPES: Final[dict[str, _SalesforceRuntimeScope]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: _SalesforceRuntimeScope(
+        unit_id=SALESFORCE_ACCOUNT_CONTACT_UNIT_ID,
+        source_entry=SALESFORCE_SOURCE_ENTRY,
+        transformation_input_paths=SALESFORCE_TRANSFORMATION_INPUT_PATHS,
+        agent_output_paths=SALESFORCE_AGENT_OUTPUT_PATHS,
+        lwc_test_path=LWC_TEST_PATH,
+        validation_command_ids=SALESFORCE_VALIDATION_COMMAND_IDS,
+        adapter=SALESFORCE_PLATFORM_ADAPTER,
+    ),
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: _SalesforceRuntimeScope(
+        unit_id=CASE_MANAGEMENT_CONSOLE_UNIT_ID,
+        source_entry=CASE_SOURCE_ENTRY,
+        transformation_input_paths=CASE_TRANSFORMATION_INPUT_PATHS,
+        agent_output_paths=CASE_AGENT_OUTPUT_PATHS,
+        lwc_test_path=CASE_LWC_TEST_PATH,
+        validation_command_ids=SALESFORCE_VALIDATION_COMMAND_IDS,
+        adapter=CASE_SALESFORCE_PLATFORM_ADAPTER,
+    ),
+}
 
 _TOOLCHAIN_RELATIVE: Final = Path("tooling/lwc-jest")
 _JEST_ENTRY_RELATIVE: Final = Path("node_modules/jest/bin/jest.js")
@@ -479,6 +563,12 @@ class SalesforceLocalValidator:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self._session = session
+        scope = _SALESFORCE_RUNTIME_SCOPES.get(session.context.slice_id)
+        if scope is None:
+            raise PolicyViolation(
+                f"unsupported Salesforce migration unit: {session.context.slice_id!r}"
+            )
+        self._scope = scope
         self._registry = registry
         self._repository_root = _safe_directory(session.project_root, "project root")
         self._scratch_root = _safe_descendant_directory(
@@ -736,12 +826,19 @@ class SalesforceLocalValidator:
                     }:
                         assert verified_sandbox is not None
                         self._verify_verified_sandbox(verified_sandbox, candidate_root)
+                controller_jest_spec = resolve_salesforce_controller_jest_spec(
+                    self._scope.unit_id
+                )
+                controller_test_path = (
+                    self._toolchain_root / controller_jest_spec.controller_test_path
+                )
                 parser = (
                     _probe_summary_parser(probe_binding)
                     if command_id == SALESFORCE_SANDBOX_PROBE_COMMAND_ID
                     else _summary_parser(
                         command_id,
-                        controller_test_path=self._toolchain_root / LWC_CONTROLLER_TEST_PATH,
+                        controller_test_path=controller_test_path,
+                        unit_id=self._scope.unit_id,
                     )
                 )
                 result = _result_from_execution(
@@ -749,7 +846,8 @@ class SalesforceLocalValidator:
                     execution,
                     candidate_root,
                     parser,
-                    controller_test_path=self._toolchain_root / LWC_CONTROLLER_TEST_PATH,
+                    controller_test_path=controller_test_path,
+                    unit_id=self._scope.unit_id,
                 )
                 if (
                     command_id == SALESFORCE_SANDBOX_PROBE_COMMAND_ID
@@ -1103,7 +1201,7 @@ class SalesforceLocalValidator:
             raise PolicyViolation("migration request revision does not match the run session")
         if request.repository != self._session.context.source_root:
             raise PolicyViolation("Salesforce request repository does not match the source root")
-        if request.target.entry_path != SALESFORCE_SOURCE_ENTRY:
+        if request.target.entry_path != self._scope.source_entry:
             raise PolicyViolation("Salesforce request must target the fixed Visualforce entry")
         if request.target.target_runtime != SALESFORCE_TARGET_RUNTIME:
             raise PolicyViolation(
@@ -1117,11 +1215,11 @@ class SalesforceLocalValidator:
                 "Salesforce request must remain on the supported API 67.0 contract"
             )
         validate_manifest_for_request(manifest, request)
-        SALESFORCE_PLATFORM_ADAPTER.validate_manifest(manifest, request)
+        self._scope.adapter.validate_manifest(manifest, request)
         validate_change_set(change_set, manifest)
-        if manifest.approved_paths != SALESFORCE_AGENT_OUTPUT_PATHS:
+        if manifest.approved_paths != self._scope.agent_output_paths:
             raise PolicyViolation("Salesforce manifest must declare the exact eleven output paths")
-        if set(workspace.approved_paths) != set(SALESFORCE_AGENT_OUTPUT_PATHS):
+        if set(workspace.approved_paths) != set(self._scope.agent_output_paths):
             raise PolicyViolation("Salesforce workspace does not have the exact manifest scope")
         if workspace.base_revision != request.base_revision:
             raise PolicyViolation("Salesforce workspace is stale for the migration request")
@@ -1140,14 +1238,14 @@ class SalesforceLocalValidator:
 
         validate_manifest_transformation_scope(
             manifest,
-            required_source_input_paths=SALESFORCE_TRANSFORMATION_INPUT_PATHS,
-            approved_output_paths=SALESFORCE_AGENT_OUTPUT_PATHS,
+            required_source_input_paths=self._scope.transformation_input_paths,
+            approved_output_paths=self._scope.agent_output_paths,
         )
 
         commands = tuple(check.command_id for check in manifest.validation_plan)
         if len(commands) != len(set(commands)):
             raise PolicyViolation("Salesforce validation command IDs must be unique")
-        if commands != SALESFORCE_VALIDATION_COMMAND_IDS:
+        if commands != self._scope.validation_command_ids:
             raise PolicyViolation("Salesforce validation plan has command drift or reordering")
         if any(not check.required for check in manifest.validation_plan):
             raise PolicyViolation("every supported Salesforce local check must be required")
@@ -1248,6 +1346,7 @@ class SalesforceLocalValidator:
                     "candidate-contract",
                     candidate_root,
                     python_environment,
+                    extra_args=("--unit", self._scope.unit_id),
                 )
             )
             specs.append(
@@ -1257,6 +1356,7 @@ class SalesforceLocalValidator:
                     "dependency-closure",
                     candidate_root,
                     python_environment,
+                    extra_args=("--unit", self._scope.unit_id),
                 )
             )
             specs.append(
@@ -1289,6 +1389,8 @@ class SalesforceLocalValidator:
                         "toolchain-contract",
                         "--toolchain-root",
                         str(self._toolchain_root),
+                        "--unit",
+                        self._scope.unit_id,
                     ),
                     allowed_working_directories=(self._repository_root,),
                     sanitized_environment=python_environment,
@@ -1313,7 +1415,7 @@ class SalesforceLocalValidator:
                         probe_binding.challenge,
                         _SANDBOX_PROBE_DIGEST,
                         probe_binding.profile_digest,
-                        str(candidate_root / LWC_TEST_PATH),
+                        str(candidate_root / self._scope.lwc_test_path),
                         str(self._toolchain_root / "package-lock.json"),
                         str(probe_binding.package_boundary.path),
                         str(probe_binding.package_boundary.device),
@@ -1361,7 +1463,7 @@ class SalesforceLocalValidator:
                         "--no-cache",
                         "--json",
                         "--runTestsByPath",
-                        str(candidate_root / LWC_TEST_PATH),
+                        str(candidate_root / self._scope.lwc_test_path),
                     ),
                     allowed_working_directories=(candidate_root,),
                     sanitized_environment=_sandbox_environment(
@@ -1398,7 +1500,12 @@ class SalesforceLocalValidator:
                         "--no-cache",
                         "--json",
                         "--runTestsByPath",
-                        str(self._toolchain_root / LWC_CONTROLLER_TEST_PATH),
+                        str(
+                            self._toolchain_root
+                            / resolve_salesforce_controller_jest_spec(
+                                self._scope.unit_id
+                            ).controller_test_path
+                        ),
                     ),
                     allowed_working_directories=(candidate_root,),
                     sanitized_environment=_sandbox_environment(
@@ -1542,6 +1649,8 @@ def _python_check_spec(
     subcommand: str,
     candidate_root: Path,
     environment: tuple[tuple[str, str], ...],
+    *,
+    extra_args: tuple[str, ...] = (),
 ) -> CommandSpec:
     return CommandSpec(
         command_id=command_id,
@@ -1552,6 +1661,7 @@ def _python_check_spec(
             "-m",
             "legacy_migration_agent.platforms.local_checks",
             subcommand,
+            *extra_args,
         ),
         allowed_working_directories=(candidate_root,),
         sanitized_environment=environment,

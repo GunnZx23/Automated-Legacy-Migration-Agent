@@ -176,6 +176,23 @@ def test_validator_model_schema_cannot_choose_runtime_unavailability() -> None:
     assert "unavailable" not in json.dumps(schema)
 
 
+def test_v2_model_call_record_exposes_provider_managed_runtime_identity_only() -> None:
+    current = json.loads(
+        (SNAPSHOT_ROOT / "ModelCallRecord.schema.json").read_text(encoding="utf-8")
+    )
+    legacy = json.loads(
+        (LEGACY_SNAPSHOT_ROOT / "ModelCallRecord.schema.json").read_text(encoding="utf-8")
+    )
+
+    current_boundaries = current["properties"]["execution_boundary"]["anyOf"][0]["enum"]
+    legacy_boundaries = legacy["properties"]["execution_boundary"]["anyOf"][0]["enum"]
+    assert "remote_provider_managed" in current_boundaries
+    assert "runtime_identity_digest" in current["properties"]
+    assert "runtime_identity_digest" not in current["required"]
+    assert "remote_provider_managed" not in legacy_boundaries
+    assert "runtime_identity_digest" not in legacy["properties"]
+
+
 def test_compatibility_check_rejects_required_fields_and_narrowed_enums() -> None:
     baseline = {
         "type": "object",

@@ -793,7 +793,7 @@ def test_low_level_start_rejects_contract_preset_drift_without_side_effects(
     model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
     run_dir = project / ".runs/preset-drift"
     before = snapshot_tree(project)
-    canonical_preset = agent_run_module._preset_for(Platform.SALESFORCE)
+    canonical_preset = agent_run_module._preset_for(contract.scenario_id)
     drifted_preset = _tampered_preset(canonical_preset, mutation)
     monkeypatch.setattr(
         agent_run_module,
@@ -1034,7 +1034,7 @@ def test_resume_rejects_stale_persisted_launch_contract_before_authorization_or_
     current_scenario = migration_scenario(Platform.SALESFORCE)
     monkeypatch.setitem(
         migration_scenarios_module._SCENARIOS,
-        Platform.SALESFORCE,
+        current_scenario.scenario_id,
         current_scenario.model_copy(update={"analyzer_version": "salesforce-apex-v999"}),
     )
     resume_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
@@ -1412,7 +1412,7 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
     assert started.status == "awaiting_approval"
     assert started.pending_nodes == ("approval_gate",)
     assert architect_model.calls == ["ArchitectManifestProposal"]
-    preset = agent_run_module._preset_for(platform)
+    preset = agent_run_module._preset_for(migration_scenario(platform).scenario_id)
     wiki_trace = RetrievalTrace.model_validate_json(
         (run_dir / f"evidence/model-runs/{request.request_id}/wiki-trace.json").read_text(
             encoding="utf-8"

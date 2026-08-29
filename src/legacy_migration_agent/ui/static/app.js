@@ -20,7 +20,15 @@ const state = {
   selectedCandidatePath: "",
   busyStartedAt: null,
   busyTimer: null,
+  progressTimer: null,
+  progressRole: null,
 };
+
+const PROGRESS_POLL_INTERVAL_MS = 2500;
+const LIVE_PROGRESS_ROLES = new Set([
+  "Engineer → Validator",
+  "Engineer correction → Validator",
+]);
 
 const RUN_HANDLE_STORAGE_KEY = "legacy-migration-agent.current-run-handle";
 const CONVERSATION_ID_STORAGE_KEY = "legacy-migration-agent.current-conversation-id";
@@ -178,6 +186,12 @@ function updateRunTimer() {
     return;
   }
   elements.runTimer.textContent = formatElapsed(Date.now() - state.busyStartedAt);
+  // Tick the currently-active harness stage in lockstep so the big "What the
+  // system is doing" panel advances every second, not just the header clock.
+  const activeStatus = elements.harnessStages.querySelector(".harness-stage.is-active em");
+  if (activeStatus) {
+    activeStatus.textContent = liveStageStatus("active");
+  }
 }
 
 function startRunTimer() {
@@ -427,21 +441,80 @@ function configuredModelId() {
   return state.model.model_id;
 }
 
+const MODEL_RUNTIME_PRESENTATIONS = Object.freeze({
+  ollama: Object.freeze({
+    executionBoundary: "local_loopback",
+    providerLabel: "Ollama",
+    inferenceLabel: "Local Ollama",
+    runtimeLabel: "local Ollama runtime",
+    boundaryTitle: "Local Ollama inference boundary",
+    remote: false,
+  }),
+  "claude-cli": Object.freeze({
+    executionBoundary: "remote_provider_managed",
+    providerLabel: "Claude CLI",
+    inferenceLabel: "Claude CLI remote",
+    runtimeLabel: "authenticated Claude CLI runtime",
+    boundaryTitle: "Remote provider-managed inference boundary",
+    remote: true,
+  }),
+});
+
+function modelRuntimePresentation(model = state.model) {
+  const providerId = model?.provider_id || model?.provider;
+  if (
+    typeof providerId !== "string" ||
+    !Object.hasOwn(MODEL_RUNTIME_PRESENTATIONS, providerId)
+  ) {
+    return null;
+  }
+  return MODEL_RUNTIME_PRESENTATIONS[providerId];
+}
+
+function validModelConfiguration(model) {
+  const presentation = modelRuntimePresentation(model);
+  return Boolean(
+    presentation &&
+      typeof model?.model_id === "string" &&
+      model.model_id.trim() !== "" &&
+      model.execution_boundary === presentation.executionBoundary,
+  );
+}
+
+function configuredProviderLabel() {
+  return modelRuntimePresentation()?.providerLabel || "Model provider";
+}
+
+function configuredInferenceLabel() {
+  return modelRuntimePresentation()?.inferenceLabel || "Configured model";
+}
+
+function providerRecoveryGuidance(modelId, boundaries = null) {
+  const runtime = modelRuntimePresentation(boundaries) || modelRuntimePresentation();
+  if (runtime?.remote) {
+    return `Confirm the Claude CLI is installed, authenticated, and authorized for ${modelId}, then send a new request.`;
+  }
+  if (runtime?.providerLabel === "Ollama") {
+    return `Confirm Ollama is running and ${modelId} is installed, then send a new request.`;
+  }
+  return `Confirm the configured provider can reach ${modelId}, then send a new request.`;
+}
+
 function modelRuntimeReady() {
   return (
     state.modelReadiness?.status === "ready" &&
     state.modelReadiness?.configured === true &&
-    state.modelReadiness?.ollama_reachable === true &&
-    state.modelReadiness?.model_installed === true
+    state.modelReadiness?.runtime_reachable === true &&
+    state.modelReadiness?.model_available === true
   );
 }
 
 function modelReadinessFromPayload(payload) {
   const allowedStatuses = new Set([
     "ready",
-    "ollama_unreachable",
+    "provider_unreachable",
     "model_unavailable",
-    "inventory_unverified",
+    "runtime_unverified",
     "readiness_unavailable",
   ]);
   if (
@@ -450,29 +523,29 @@ function modelReadinessFromPayload(payload) {
     payload.model_id !== state.model?.model_id ||
     payload.configured !== true ||
     !allowedStatuses.has(payload.status) ||
-    ![true, false, null].includes(payload.ollama_reachable) ||
-    ![true, false, null].includes(payload.model_installed)
+    ![true, false, null].includes(payload.runtime_reachable) ||
+    ![true, false, null].includes(payload.model_available)
   ) {
     throw new AgentUiApiError(
-      "The local model readiness response was invalid.",
+      "The model-provider readiness response was invalid.",
       "readiness_invalid",
       409,
     );
   }
   if (
     (payload.status === "ready" &&
-      (payload.ollama_reachable !== true || payload.model_installed !== true)) ||
-    (payload.status === "ollama_unreachable" && payload.ollama_reachable !== false) ||
-    (payload.status === "ollama_unreachable" && payload.model_installed !== null) ||
+      (payload.runtime_reachable !== true || payload.model_available !== true)) ||
+    (payload.status === "provider_unreachable" && payload.runtime_reachable !== false) ||
+    (payload.status === "provider_unreachable" && payload.model_available !== null) ||
     (payload.status === "model_unavailable" &&
-      (payload.ollama_reachable !== true || payload.model_installed !== false)) ||
-    (payload.status === "inventory_unverified" &&
-      (payload.ollama_reachable !== true || payload.model_installed !== null)) ||
+      (payload.runtime_reachable !== true || payload.model_available !== false)) ||
+    (payload.status === "runtime_unverified" &&
+      (payload.runtime_reachable !== true || payload.model_available !== null)) ||
     (payload.status === "readiness_unavailable" &&
-      (payload.ollama_reachable !== null || payload.model_installed !== null))
+      (payload.runtime_reachable !== null || payload.model_available !== null))
   ) {
     throw new AgentUiApiError(
-      "The local model readiness facts were inconsistent.",
+      "The model-provider readiness facts were inconsistent.",
       "readiness_invalid",
       409,
     );
@@ -483,39 +556,48 @@ function modelReadinessFromPayload(payload) {
 function modelReadinessPresentation() {
   const modelId = configuredModelId();
   const status = state.modelReadiness?.status;
+  const runtime = modelRuntimePresentation();
+  const providerLabel = runtime?.providerLabel || "Model provider";
+  const runtimeLabel = runtime?.runtimeLabel || "configured model runtime";
   if (status === "ready") {
+    if (runtime?.remote) {
+      return {
+        badge: "Claude CLI ready · remote inference",
+        notice: `${modelId} is available through the authenticated Claude CLI. Browser traffic stays on the loopback UI server, while prompts and bounded source context are sent to the remote provider under the approval recorded when the server started. Local Claude session persistence is disabled; this interface does not claim provider-side no-store or zero-data-retention. No Salesforce org, Mule runtime, deployment, publication, or source mutation is authorized.`,
+      };
+    }
     return {
-      badge: "Ollama reachable · model installed",
+      badge: "Ollama ready · local inference",
       notice: `${modelId} is installed in the reachable local Ollama runtime. Prompts stay inside the server-owned loopback model boundary; no Salesforce org, Mule runtime, deployment, publication, or source mutation is authorized.`,
     };
   }
-  if (status === "ollama_unreachable") {
+  if (status === "provider_unreachable") {
     return {
-      badge: "Ollama configured · runtime unreachable",
-      notice: `${modelId} is configured, but the local Ollama runtime is not reachable. Start Ollama, confirm the configured model, then reload this page. No prompt was sent.`,
+      badge: `${providerLabel} configured · runtime unreachable`,
+      notice: `${modelId} is configured, but the ${runtimeLabel} is not reachable. Correct the provider runtime or authentication, then reload this page. No prompt was sent.`,
     };
   }
   if (status === "model_unavailable") {
     return {
-      badge: "Ollama reachable · model unavailable",
-      notice: `The local Ollama runtime is reachable, but it could not prove one installed model matching ${modelId}. Install or correct that exact server-owned model identity, then reload this page.`,
+      badge: `${providerLabel} reachable · model unavailable`,
+      notice: `The ${runtimeLabel} is reachable, but it could not verify ${modelId} as the configured model identity. Correct that server-owned identity, then reload this page. No prompt was sent.`,
     };
   }
-  if (status === "inventory_unverified") {
+  if (status === "runtime_unverified") {
     return {
-      badge: "Ollama reachable · model unverified",
-      notice: `The local Ollama runtime responded, but its inventory could not safely verify ${modelId}. No prompt was sent; correct the local inventory and reload this page.`,
+      badge: `${providerLabel} reachable · identity unverified`,
+      notice: `The ${runtimeLabel} responded, but it could not safely verify the runtime identity for ${modelId}. No prompt was sent; correct the runtime state and reload this page.`,
     };
   }
   if (status === "readiness_unavailable") {
     return {
-      badge: "Ollama configured · readiness unavailable",
-      notice: `${modelId} is configured, but the server could not complete its bounded local readiness check. No prompt was sent.`,
+      badge: `${providerLabel} configured · readiness unavailable`,
+      notice: `${modelId} is configured, but the server could not complete its bounded provider readiness check. No prompt was sent.`,
     };
   }
   return {
-    badge: "Ollama configured · checking readiness",
-    notice: `${modelId} is the server-owned model. Checking the fixed local Ollama inventory before enabling model requests.`,
+    badge: `${providerLabel} configured · checking readiness`,
+    notice: `${modelId} is the server-owned model. Checking the configured provider runtime before enabling model requests.`,
   };
 }
 
@@ -527,16 +609,18 @@ function updateModelPresentation(boundaries = null, failure = null) {
     ? boundaries.structured_response_accepted ?? boundaries.provider_invoked === true
     : false;
   const modelId = boundaries?.model_id || configuredModelId();
+  const runtime = modelRuntimePresentation(boundaries) || modelRuntimePresentation();
+  const inferenceLabel = runtime?.inferenceLabel || "Configured model";
   const readinessPresentation = modelReadinessPresentation();
 
   elements.modeBadge.textContent = boundaries
     ? structuredResponseAccepted
-      ? "Local Ollama inference"
+      ? `${inferenceLabel} inference`
       : providerAttempted
         ? failure?.response_received === true
-          ? "Local Ollama · output rejected"
-          : "Local Ollama · call stopped"
-        : "Local Ollama · not invoked"
+          ? `${inferenceLabel} · output rejected`
+          : `${inferenceLabel} · call stopped`
+        : `${inferenceLabel} · not invoked`
     : readinessPresentation.badge;
   elements.runtimePulse.classList.toggle(
     "is-verified",
@@ -549,23 +633,27 @@ function updateModelPresentation(boundaries = null, failure = null) {
       : Boolean(state.modelReadiness && !modelRuntimeReady()),
   );
   elements.modelBadge.textContent = modelId;
-  const modelRevision = boundaries?.model_revision;
-  if (typeof modelRevision === "string" && modelRevision.startsWith("sha256:")) {
-    const abbreviated = `${modelRevision.slice(0, 19)}…`;
-    elements.modelRevisionBadge.textContent = `rev ${abbreviated}`;
-    elements.modelRevisionBadge.title = modelRevision;
+  const runtimeIdentity = runtime?.remote
+    ? boundaries?.runtime_identity_digest
+    : boundaries?.model_revision;
+  if (typeof runtimeIdentity === "string" && runtimeIdentity.startsWith("sha256:")) {
+    const abbreviated = `${runtimeIdentity.slice(0, 19)}…`;
+    const identityKind = runtime?.remote ? "runtime" : "rev";
+    const accessibleKind = runtime?.remote ? "runtime identity" : "observed model revision";
+    elements.modelRevisionBadge.textContent = `${identityKind} ${abbreviated}`;
+    elements.modelRevisionBadge.title = runtimeIdentity;
     elements.modelRevisionBadge.setAttribute(
       "aria-label",
-      `Full observed model revision ${modelRevision}`,
+      `Full ${accessibleKind} ${runtimeIdentity}`,
     );
     elements.modelRevisionBadge.hidden = false;
   } else {
-    elements.modelRevisionBadge.textContent = "Revision unavailable";
+    elements.modelRevisionBadge.textContent = "Runtime identity unavailable";
     elements.modelRevisionBadge.removeAttribute("title");
     elements.modelRevisionBadge.removeAttribute("aria-label");
     elements.modelRevisionBadge.hidden = true;
   }
-  elements.boundaryTitle.textContent = "Local Ollama execution boundary";
+  elements.boundaryTitle.textContent = runtime?.boundaryTitle || "Model execution boundary";
 
   if (boundaries?.notice) {
     elements.boundaryNotice.textContent = boundaries.notice;
@@ -574,12 +662,12 @@ function updateModelPresentation(boundaries = null, failure = null) {
   }
 
   elements.requestInput.placeholder = "Message the Architect about your migration";
-  elements.requestInput.setAttribute("aria-label", "Message for the local Architect model");
+  elements.requestInput.setAttribute("aria-label", "Message for the configured Architect model");
 }
 
 function updateRequestHelp() {
   if (!state.model) {
-    elements.requestHelp.textContent = "The server-owned Ollama model is unavailable.";
+    elements.requestHelp.textContent = "The server-owned model configuration is unavailable.";
     return;
   }
   if (state.run?.status === "awaiting_approval") {
@@ -595,13 +683,13 @@ function updateRequestHelp() {
   if (!modelRuntimeReady()) {
     const status = state.modelReadiness?.status;
     elements.requestHelp.textContent =
-      status === "ollama_unreachable"
-        ? "Ollama is not reachable. Start the local runtime and reload before sending."
+      status === "provider_unreachable"
+        ? `${configuredProviderLabel()} is not reachable. Correct the provider runtime or authentication and reload before sending.`
         : status === "model_unavailable"
-          ? `Ollama is reachable, but ${configuredModelId()} is not available as one exact installed model.`
-          : status === "inventory_unverified"
-            ? "Ollama is reachable, but the configured model inventory could not be verified safely."
-            : "Waiting for the server-owned local model readiness check.";
+          ? `${configuredProviderLabel()} is reachable, but ${configuredModelId()} is not available as the configured model.`
+          : status === "runtime_unverified"
+            ? `${configuredProviderLabel()} is reachable, but the configured runtime identity could not be verified safely.`
+            : "Waiting for the server-owned model-provider readiness check.";
     return;
   }
   if (state.conversation?.status === "launch_pending") {
@@ -702,8 +790,18 @@ function renderHarnessStages(stages) {
     label.textContent = current.label;
     detail.textContent = current.detail;
     detail.title = current.detail;
-    status.textContent = humanize(current.state);
+    status.textContent = liveStageStatus(current.state);
   });
+}
+
+function liveStageStatus(stateName) {
+  // The active stage carries a live elapsed clock so the harness panel visibly
+  // advances every second in every busy phase (Architect, Engineer, Validator),
+  // even before any progress artifact exists to poll.
+  if (stateName === "active" && state.busyStartedAt !== null) {
+    return `${humanize(stateName)} · ${formatElapsed(Date.now() - state.busyStartedAt)}`;
+  }
+  return humanize(stateName);
 }
 
 function renderWorkingHarness(role) {
@@ -713,7 +811,7 @@ function renderWorkingHarness(role) {
         key: "architect",
         label: "Architect intake",
         state: "active",
-        detail: "Waiting for one typed public Ollama reply; private reasoning is not requested.",
+        detail: "Waiting for one typed public model reply; private reasoning is not requested.",
       },
       {
         key: "approval",
@@ -793,6 +891,116 @@ function renderWorkingHarness(role) {
   }
 }
 
+function renderLiveProgressHarness(payload, attempt2) {
+  if (!payload || typeof payload.phase !== "string") {
+    return;
+  }
+  const phase = payload.phase;
+  if (phase !== "engineer" && phase !== "validator" && phase !== "complete") {
+    // "pending" (Engineer not dispatched yet) or "unknown" (transient read
+    // error): keep the static busy harness that setBusy already rendered.
+    return;
+  }
+  const elapsed =
+    typeof payload.elapsed_seconds === "number" && Number.isFinite(payload.elapsed_seconds)
+      ? payload.elapsed_seconds
+      : null;
+  const clock = elapsed === null ? "" : ` · ${formatElapsed(elapsed * 1000)} in this phase`;
+  const attemptSuffix = attempt2 ? " · attempt 2" : "";
+  const engineerState = phase === "engineer" ? "active" : "complete";
+  let validatorState = "pending";
+  if (phase === "validator") {
+    validatorState = "active";
+  } else if (phase === "complete") {
+    validatorState = "complete";
+  }
+  const engineerDetail =
+    phase === "engineer"
+      ? `Engineer is proposing isolated file content${clock}. Verified sub-stage results appear when the request returns.`
+      : "Engineer returned proposed file content; Controller deterministic checks are running.";
+  let validatorDetail;
+  if (phase === "validator") {
+    validatorDetail = `Controller deterministic checks and the optional Validator advisory are running${clock}.`;
+  } else if (phase === "complete") {
+    validatorDetail =
+      "Controller checks and the Validator advisory finished; finalizing the verified report.";
+  } else {
+    validatorDetail =
+      "Waits for the Engineer candidate before Controller checks and the Validator advisory run.";
+  }
+  renderHarnessStages([
+    {
+      key: "architect",
+      label: "Controller → Architect",
+      state: "complete",
+      detail: attempt2
+        ? "The original Controller-expanded manifest remains unchanged."
+        : "Architect returned the semantic recommendation; Controller expanded it into the exact manifest.",
+    },
+    {
+      key: "approval",
+      label: attempt2 ? "Correction gate" : "Approval gate",
+      state: "complete",
+      detail: attempt2
+        ? "The reviewer authorized the exact offered attempt 2."
+        : "Exact persisted manifest approved.",
+    },
+    {
+      key: "engineer",
+      label: `Engineer${attemptSuffix}`,
+      state: engineerState,
+      detail: engineerDetail,
+    },
+    {
+      key: "validator",
+      label: `Controller checks + Validator${attemptSuffix}`,
+      state: validatorState,
+      detail: validatorDetail,
+    },
+  ]);
+}
+
+async function pollProgress(handle, attempt2) {
+  if (!state.busy || state.run?.handle !== handle) {
+    return;
+  }
+  let payload = null;
+  try {
+    const response = await api(`/api/sessions/${handle}/progress`);
+    payload = await response.json();
+  } catch (_error) {
+    // A single poll failure is not fatal; keep the last rendered harness and
+    // let the next tick — or the authoritative response — recover.
+    return;
+  }
+  if (!state.busy || state.run?.handle !== handle) {
+    return;
+  }
+  renderLiveProgressHarness(payload, attempt2);
+}
+
+function startProgressPoll(role) {
+  stopProgressPoll();
+  const handle = state.run?.handle;
+  if (!validRunHandle(handle)) {
+    return;
+  }
+  const attempt2 = role === "Engineer correction → Validator";
+  state.progressRole = role;
+  state.progressTimer = window.setInterval(() => {
+    void pollProgress(handle, attempt2);
+  }, PROGRESS_POLL_INTERVAL_MS);
+  void pollProgress(handle, attempt2);
+}
+
+function stopProgressPoll() {
+  if (state.progressTimer !== null) {
+    window.clearInterval(state.progressTimer);
+    state.progressTimer = null;
+  }
+  state.progressRole = null;
+}
+
 function setBusy(busy, role = "Architect", copy = "Reviewing the migration request") {
   const wasBusy = state.busy;
   state.busy = busy;
@@ -820,7 +1028,7 @@ function setBusy(busy, role = "Architect", copy = "Reviewing the migration reque
     role === "Engineer correction → Validator";
   elements.activityDisclosure.textContent = modelOperation
     ? "Waiting for typed model output · private reasoning is not displayed"
-    : "Controller-owned local operation · no model response is being claimed";
+    : "Controller-owned non-model operation · no model response is being claimed";
   elements.typingIndicator.hidden = !busy;
   if (busy && !wasBusy) {
     startRunTimer();
@@ -831,6 +1039,13 @@ function setBusy(busy, role = "Architect", copy = "Reviewing the migration reque
     renderWorkingHarness(role);
   } else if (state.run?.stages) {
     renderHarnessStages(state.run.stages);
+  }
+  if (busy && LIVE_PROGRESS_ROLES.has(role)) {
+    // Advance the harness in real time from the run store while the gated
+    // continuation holds the per-run lock for the full multi-minute execution.
+    startProgressPoll(role);
+  } else {
+    stopProgressPoll();
   }
   updateComposerState();
   if (busy) {
@@ -922,8 +1137,8 @@ function architectMessage(run) {
       [architect?.detail || "The architecture step did not complete."],
       {
         meta: providerAttempted
-          ? `Local model attempt: ${run.boundaries.model_id} · no accepted role output is claimed`
-          : "Controller preflight · local model not invoked",
+          ? `Configured provider attempt: ${run.boundaries.model_id} · no accepted role output is claimed`
+          : "Controller preflight · model provider not invoked",
       },
     );
   }
@@ -947,7 +1162,7 @@ function architectMessage(run) {
         : "The controller has paused the workflow for your decision. Approval creates an isolated candidate only; it does not deploy anything.",
     ],
     {
-      meta: `Local Ollama model: ${run.boundaries.model_id} · public structured decisions; private reasoning is not shown`,
+      meta: `${modelRuntimePresentation(run.boundaries)?.providerLabel || "Configured provider"} model: ${run.boundaries.model_id} · public structured decisions; private reasoning is not shown`,
     },
   );
   return message;
@@ -1847,36 +2062,24 @@ function renderConversationModelActivity(conversation) {
   }
   elements.modelActivitySection.hidden = false;
   elements.modelCallCount.textContent =
-    `${calls.length} intake ${calls.length === 1 ? "call" : "calls"}`;
+    `${calls.length} intake ${calls.length === 1 ? "turn" : "turns"}`;
   clear(elements.modelCallList);
-  calls.forEach((call) => {
-    const item = document.createElement("li");
-    item.className = "model-call-item";
-    item.append(
-      textElement("span", "model-call-role", "A"),
-      textElement(
-        "strong",
-        "",
-        `architect · exchange ${call.exchange || 1} · structured reply`,
-      ),
-    );
-    const meta = document.createElement("span");
-    meta.className = "model-call-meta";
+  calls.forEach((call, index) => {
     const latency = durationLabel(call.latency_ms);
-    const inputTokens = tokenValue(call, "input");
-    const outputTokens = tokenValue(call, "output");
     const receipt = shortReceipt(call);
-    [
-      latency ? `latency ${latency}` : "",
-      inputTokens === null ? "" : `in ${inputTokens} tokens`,
-      outputTokens === null ? "" : `out ${outputTokens} tokens`,
-      receipt ? `receipt ${receipt}` : "",
-    ].filter(Boolean).forEach((value) => meta.append(textElement("span", "", value)));
-    if (!meta.hasChildNodes()) {
-      meta.append(textElement("span", "", "typed call receipt recorded"));
-    }
-    item.append(meta);
-    elements.modelCallList.append(item);
+    elements.modelCallList.append(
+      modelCallEntry({
+        role: "architect",
+        title: "Architect",
+        descriptor: roleDescriptions.Architect,
+        subline: `Turn ${index + 1} · intake exchange ${call.exchange || 1} · structured reply`,
+        metaParts: [
+          latency ? `latency ${latency}` : "",
+          tokenSummary(call),
+          receipt ? `receipt ${receipt}` : "",
+        ],
+      }),
+    );
   });
 }
 
@@ -2033,13 +2236,13 @@ function renderFailureDiagnostic(run) {
   }
 
   const failureTitles = {
-    configuration_invalid: "The local model configuration was rejected.",
-    provider_refusal: "The local model declined the structured role request.",
-    response_incomplete: "The local model response ended before it was complete.",
+    configuration_invalid: "The model-provider configuration was rejected.",
+    provider_refusal: "The model provider declined the structured role request.",
+    response_incomplete: "The model-provider response ended before it was complete.",
     structured_output_invalid: "The model response did not satisfy the typed role contract.",
     unauthorized_tool_call: "The controller blocked a native provider tool call outside the typed role response.",
-    model_inventory_invalid: "The selected local model identity could not be verified.",
-    provider_response_invalid: "The Ollama response failed provider-protocol validation.",
+    model_inventory_invalid: "The selected model or runtime identity could not be verified.",
+    provider_response_invalid: "The model-provider response failed protocol validation.",
     required_approval_missing: "The Controller-expanded manifest was missing the required human approval binding.",
     implementation_contract_invalid: "The Controller-expanded manifest failed its controller-owned implementation-contract check.",
     transformation_scope_invalid: "The Controller-expanded manifest crossed the frozen transformation boundary.",
@@ -2055,8 +2258,8 @@ function renderFailureDiagnostic(run) {
     workspace_not_clean: "The Engineer workspace was not clean before applying the plan.",
     attempt_two_scope_expansion_invalid: "Engineer attempt 2 requested an invalid scope expansion.",
     policy_rejected: "The controller rejected the structured response at its policy boundary.",
-    provider_timeout: "The local model exceeded the inference deadline.",
-    provider_unavailable: "The local Ollama request could not be completed.",
+    provider_timeout: "The model provider exceeded the inference deadline.",
+    provider_unavailable: "The model-provider request could not be completed.",
     deterministic_validation_failed: "The deterministic validation boundary could not complete.",
     internal_failure: "A sanitized internal boundary stopped the workflow.",
   };
@@ -2068,14 +2271,14 @@ function renderFailureDiagnostic(run) {
     elements.failureGuidance.textContent = failure.guidance;
   } else if (failure.response_received === false || failure.category === "provider_unavailable") {
     elements.failureGuidance.textContent =
-      `Confirm Ollama is running and ${run.boundaries.model_id} is installed, then send a new request. ` +
+      `${providerRecoveryGuidance(run.boundaries.model_id, run.boundaries)} ` +
       "This immutable run did not authorize downstream work.";
   } else if (failure.category === "invalid") {
     elements.failureGuidance.textContent =
       "Start a new run with the bounded slice prompt. The controller stopped this run before an invalid output could reach another role.";
   } else {
     elements.failureGuidance.textContent =
-      "Review the public failure facts below, correct the local model or request if needed, and start a new run. No external action was taken.";
+      "Review the public failure facts below, correct the model-provider state or request if needed, and start a new run. No external action was taken.";
   }
 
   const facts = [
@@ -2136,6 +2339,70 @@ function shortReceipt(call) {
   return digest ? `${digest.slice(0, 15)}…` : "";
 }
 
+function capitalizeRole(role) {
+  const value = typeof role === "string" ? role.trim() : "";
+  if (value === "") {
+    return "";
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function tokenSummary(call) {
+  const input = tokenValue(call, "input");
+  const output = tokenValue(call, "output");
+  const format = (value) => Number(value).toLocaleString();
+  if (input !== null && output !== null) {
+    return `${format(input)} in → ${format(output)} out`;
+  }
+  if (input !== null) {
+    return `${format(input)} in`;
+  }
+  if (output !== null) {
+    return `${format(output)} out`;
+  }
+  return "";
+}
+
+// Build one agent turn in the activity timeline: a role-colored avatar, the
+// role's human name + descriptor, a sequence sub-line, and metadata chips.
+// Shared by intake, full-run, and the empty provider-boundary state so every
+// row reads with the same conversational identity.
+function modelCallEntry({ role, title, descriptor, subline, metaParts, fallbackMeta }) {
+  const normalizedRole = typeof role === "string" ? role.trim().toLowerCase() : "";
+  const item = document.createElement("li");
+  item.className = `model-call-item${normalizedRole ? ` is-${normalizedRole}` : ""}`;
+  const badgeText =
+    roleAvatars[capitalizeRole(normalizedRole)] ||
+    (normalizedRole ? normalizedRole.charAt(0).toUpperCase() : "AI");
+  const badge = textElement(
+    "span",
+    `model-call-role${normalizedRole ? ` is-${normalizedRole}` : ""}`,
+    badgeText,
+  );
+  badge.setAttribute("aria-hidden", "true");
+  const body = document.createElement("div");
+  body.className = "model-call-body";
+  const heading = textElement("strong", "", title);
+  if (descriptor) {
+    heading.append(textElement("em", "model-call-descriptor", descriptor));
+  }
+  body.append(heading);
+  if (subline) {
+    body.append(textElement("span", "model-call-turn", subline));
+  }
+  const meta = document.createElement("span");
+  meta.className = "model-call-meta";
+  (metaParts || [])
+    .filter(Boolean)
+    .forEach((value) => meta.append(textElement("span", "", value)));
+  if (!meta.hasChildNodes()) {
+    meta.append(textElement("span", "", fallbackMeta || "typed call receipt recorded"));
+  }
+  body.append(meta);
+  item.append(badge, body);
+  return item;
+}
+
 function renderModelActivity(run) {
   const calls = Array.isArray(run.model_calls) ? run.model_calls : [];
   const providerAttempted =
@@ -2144,18 +2411,10 @@ function renderModelActivity(run) {
     run.boundaries.structured_response_accepted ?? run.boundaries.provider_invoked === true;
   elements.modelActivitySection.hidden = false;
   elements.modelCallCount.textContent =
-    `${calls.length} model ${calls.length === 1 ? "call" : "calls"}`;
+    `${calls.length} agent ${calls.length === 1 ? "turn" : "turns"}`;
   clear(elements.modelCallList);
 
   if (calls.length === 0) {
-    const item = document.createElement("li");
-    item.className = "model-call-item";
-    item.append(
-      textElement("span", "model-call-role", "AI"),
-      textElement("strong", "", "Provider boundary"),
-    );
-    const meta = document.createElement("span");
-    meta.className = "model-call-meta";
     const invocationState =
       run.boundaries.provider_invoked === true
         ? "provider invoked"
@@ -2164,51 +2423,43 @@ function renderModelActivity(run) {
           : providerAttempted
             ? "invocation not proven"
             : "not invoked";
-    meta.append(
-      textElement("span", "", invocationState),
-      textElement(
-        "span",
-        "",
-        structuredResponseAccepted ? "typed output accepted" : "no accepted typed output",
-      ),
-      textElement(
-        "span",
-        "",
-        run.boundaries.model_call_record_persisted
-          ? "model receipt persisted"
-          : "no model receipt persisted",
-      ),
+    elements.modelCallList.append(
+      modelCallEntry({
+        role: "",
+        title: "Provider boundary",
+        subline: "No accepted model turn in this run",
+        metaParts: [
+          invocationState,
+          structuredResponseAccepted ? "typed output accepted" : "no accepted typed output",
+          run.boundaries.model_call_record_persisted
+            ? "model receipt persisted"
+            : "no model receipt persisted",
+        ],
+      }),
     );
-    item.append(meta);
-    elements.modelCallList.append(item);
     return;
   }
 
-  calls.forEach((call) => {
+  calls.forEach((call, index) => {
     const role = typeof call.role === "string" && call.role.trim() !== "" ? call.role : "model";
-    const item = document.createElement("li");
-    item.className = "model-call-item";
-    item.append(
-      textElement("span", "model-call-role", role.slice(0, 1).toUpperCase()),
-      textElement("strong", "", `${role} · attempt ${call.attempt || 1} · structured response`),
-    );
-    const meta = document.createElement("span");
-    meta.className = "model-call-meta";
+    const attempt = call.attempt || 1;
     const latency = durationLabel(call.latency_ms);
-    const inputTokens = tokenValue(call, "input");
-    const outputTokens = tokenValue(call, "output");
     const receipt = shortReceipt(call);
-    [
-      latency ? `latency ${latency}` : "",
-      inputTokens === null ? "" : `in ${inputTokens} tokens`,
-      outputTokens === null ? "" : `out ${outputTokens} tokens`,
-      receipt ? `receipt ${receipt}` : "",
-    ].filter(Boolean).forEach((value) => meta.append(textElement("span", "", value)));
-    if (!meta.hasChildNodes()) {
-      meta.append(textElement("span", "", "typed call receipt recorded"));
-    }
-    item.append(meta);
-    elements.modelCallList.append(item);
+    const subline =
+      `Turn ${index + 1} · ${attempt > 1 ? `correction attempt ${attempt}` : "structured reply"}`;
+    elements.modelCallList.append(
+      modelCallEntry({
+        role,
+        title: capitalizeRole(role),
+        descriptor: roleDescriptions[capitalizeRole(role)],
+        subline,
+        metaParts: [
+          latency ? `latency ${latency}` : "",
+          tokenSummary(call),
+          receipt ? `receipt ${receipt}` : "",
+        ],
+      }),
+    );
   });
 }
 
@@ -2599,11 +2850,11 @@ async function sendConversationMessage(event) {
   }
   const message = elements.requestInput.value.trim();
   if (!state.model) {
-    showAlert("The server-owned local Ollama model is unavailable.");
+    showAlert("The server-owned model configuration is unavailable.");
     return;
   }
   if (!modelRuntimeReady()) {
-    showAlert("The configured local Ollama model is not ready. Correct the runtime state and reload.");
+    showAlert("The configured model provider is not ready. Correct the runtime state and reload.");
     return;
   }
   if (message.length < 1 || message.length > 2000) {
@@ -2617,7 +2868,7 @@ async function sendConversationMessage(event) {
   let messageRequestStarted = false;
   resetEvidence();
   updateModelPresentation();
-  elements.modeBadge.textContent = "Local Ollama · awaiting Architect reply";
+  elements.modeBadge.textContent = `${configuredInferenceLabel()} · awaiting Architect reply`;
   setRunStatus("architect responding");
   setBusy(true, "Architect intake", "Responding to your migration message");
   try {
@@ -2692,7 +2943,7 @@ async function launchMigration() {
     return;
   }
   if (!modelRuntimeReady()) {
-    showAlert("The configured local Ollama model is not ready. Correct the runtime state and reload.");
+    showAlert("The configured model provider is not ready. Correct the runtime state and reload.");
     return;
   }
   const readiness = conversationReadiness(state.conversation);
@@ -2711,7 +2962,7 @@ async function launchMigration() {
   const launchConversationId = state.conversation.conversation_id;
   clearAlert();
   updateModelPresentation();
-  elements.modeBadge.textContent = "Local Ollama · awaiting Architect plan";
+  elements.modeBadge.textContent = `${configuredInferenceLabel()} · awaiting Architect plan`;
   setRunStatus("architect planning");
   setBusy(
     true,
@@ -3089,14 +3340,8 @@ async function initialize() {
     const configResponse = await api("/api/config");
     const config = await configResponse.json();
     state.csrfToken = config.csrf_token;
-    if (
-      !config.model ||
-      config.model.provider !== "ollama" ||
-      typeof config.model.model_id !== "string" ||
-      config.model.model_id.trim() === "" ||
-      config.model.execution_boundary !== "local_loopback"
-    ) {
-      throw new Error("The server-owned Ollama model configuration is invalid.");
+    if (!validModelConfiguration(config.model)) {
+      throw new Error("The server-owned model-provider configuration is invalid.");
     }
     state.model = config.model;
     updateModelPresentation();

@@ -76,11 +76,13 @@ from legacy_migration_agent.platforms.local_checks import (
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID,
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     CONTROLLER_PATH,
+    CONTROLLER_TEST_PATH,
     JEST_GLOBALS_IMPORT_ORDER_DIAGNOSTIC_ID,
     LWC_CSS_PATH,
     LWC_HTML_PATH,
     LWC_JAVASCRIPT_PATH,
     LWC_TEST_PATH,
+    MANIFEST_PATH,
     SALESFORCE_CANDIDATE_JEST_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
 )
@@ -2773,6 +2775,10 @@ def correction_delta_case(
         LWC_HTML_PATH: "<template>one</template>\n",
         CONTROLLER_PATH: "public with sharing class AccountContactExplorerController {}\n",
         LWC_TEST_PATH: "import { jest } from '@jest/globals';\n",
+        MANIFEST_PATH: '<?xml version="1.0" encoding="UTF-8"?>\n<Package/>\n',
+        CONTROLLER_TEST_PATH: (
+            "@IsTest\nprivate class AccountContactExplorerControllerTest {}\n"
+        ),
     }
     prior_plan = EngineerFilePlan(
         updates=tuple(
@@ -2892,6 +2898,52 @@ def test_jest_import_order_correction_is_explicit_and_test_file_bounded(
     assert directive.allowed_paths == (LWC_TEST_PATH,)
     assert "@jest/globals" in directive.instruction
     assert "first static import" in directive.instruction
+
+
+def test_manifest_contract_correction_is_explicit_and_manifest_bounded(
+    tmp_path: Path,
+) -> None:
+    # Regression: this signal used to fall back to generic boilerplate, so a
+    # weak model had no actionable diagnostic and left the manifest untouched.
+    signal_id = "salesforce_manifest_contract"
+    *_, authority = correction_delta_case(
+        tmp_path,
+        target_paths=(MANIFEST_PATH,),
+        diagnostic_ids=(signal_id,),
+    )
+    context = authority.model_context
+    directive = context.repair_directives[0]
+
+    assert context.repair_signal_ids == (signal_id,)
+    assert context.allowed_correction_paths == (MANIFEST_PATH,)
+    assert directive.allowed_paths == (MANIFEST_PATH,)
+    assert "exactly one <types> block" in directive.instruction
+    assert "do not repeat a type name" in directive.instruction
+    assert "candidate-owned" in directive.instruction
+    assert "golden" not in directive.instruction.casefold()
+
+
+def test_apex_test_contract_correction_is_explicit_and_test_bounded(
+    tmp_path: Path,
+) -> None:
+    # Regression: this signal used to fall back to generic boilerplate, so the
+    # model never learned it must insert real records for the no-contacts path.
+    signal_id = "salesforce_apex_test_contract"
+    *_, authority = correction_delta_case(
+        tmp_path,
+        target_paths=(CONTROLLER_TEST_PATH,),
+        diagnostic_ids=(signal_id,),
+    )
+    context = authority.model_context
+    directive = context.repair_directives[0]
+
+    assert context.repair_signal_ids == (signal_id,)
+    assert context.allowed_correction_paths == (CONTROLLER_TEST_PATH,)
+    assert directive.allowed_paths == (CONTROLLER_TEST_PATH,)
+    assert "without contacts" in directive.instruction
+    assert "fabricated Id" in directive.instruction
+    assert "candidate-owned" in directive.instruction
+    assert "golden" not in directive.instruction.casefold()
 
 
 @pytest.mark.parametrize("changed_files", (1, 2))

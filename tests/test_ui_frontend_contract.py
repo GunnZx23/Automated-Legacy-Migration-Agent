@@ -107,20 +107,58 @@ def test_runtime_readiness_is_server_owned_and_gates_model_requests() -> None:
     page, script, _stylesheet = _frontend()
 
     assert 'role="status" aria-live="polite"' in page
+    assert 'aria-label="Model-provider runtime readiness"' in page
     assert 'const readinessResponse = await api("/api/readiness");' in script
     assert "state.modelReadiness = modelReadinessFromPayload" in script
     assert "payload.provider !== state.model?.provider" in script
     assert "payload.model_id !== state.model?.model_id" in script
     assert "payload.configured !== true" in script
-    assert "state.modelReadiness?.ollama_reachable === true" in script
-    assert "state.modelReadiness?.model_installed === true" in script
+    assert "state.modelReadiness?.runtime_reachable === true" in script
+    assert "state.modelReadiness?.model_available === true" in script
     assert "!modelRuntimeReady()" in script
-    assert "Ollama reachable · model installed" in script
-    assert "Ollama configured · runtime unreachable" in script
-    assert "Ollama reachable · model unavailable" in script
-    assert "Ollama reachable · model unverified" in script
+    assert '"provider_unreachable"' in script
+    assert '"model_unavailable"' in script
+    assert '"runtime_unverified"' in script
+    assert '"readiness_unavailable"' in script
+    assert "model-provider readiness check" in script
     assert "provider-select" not in page
     assert "selectedProviderId" not in script
+
+
+def test_frontend_accepts_only_the_two_server_selected_provider_boundaries() -> None:
+    page, script, _stylesheet = _frontend()
+
+    assert 'ollama: Object.freeze({' in script
+    assert '"claude-cli": Object.freeze({' in script
+    assert 'executionBoundary: "local_loopback"' in script
+    assert 'executionBoundary: "remote_provider_managed"' in script
+    assert "Object.hasOwn(MODEL_RUNTIME_PRESENTATIONS, providerId)" in script
+    assert "model.execution_boundary === presentation.executionBoundary" in script
+    assert "if (!validModelConfiguration(config.model))" in script
+    assert "provider-select" not in page
+    assert "provider-select" not in script
+
+
+def test_claude_presentation_separates_loopback_transport_from_remote_inference() -> None:
+    page, script, _stylesheet = _frontend()
+
+    assert "Claude CLI ready · remote inference" in script
+    assert "Remote provider-managed inference boundary" in script
+    assert "Browser traffic stays on the loopback UI server" in script
+    assert "prompts and bounded source context are sent to the remote provider" in script
+    assert "does not claim provider-side no-store or zero-data-retention" in script
+    assert "Browser transport remains on" in page
+    assert "no-session-persistence" not in page
+
+
+def test_claude_uses_runtime_identity_instead_of_model_revision() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    assert "runtime?.remote" in script
+    assert "boundaries?.runtime_identity_digest" in script
+    assert "boundaries?.model_revision" in script
+    assert 'const identityKind = runtime?.remote ? "runtime" : "rev";' in script
+    assert 'runtime?.remote ? "runtime identity" : "observed model revision"' in script
 
 
 def test_composer_sends_chat_and_inline_gate_launches_migration_separately() -> None:

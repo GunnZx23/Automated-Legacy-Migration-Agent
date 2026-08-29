@@ -19,7 +19,11 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+)
 from legacy_migration_agent.agent_runtime.ollama_model import DEFAULT_OLLAMA_TIMEOUT_SECONDS
+from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
 from legacy_migration_agent.core.observability import (
     lifecycle_event,
     terminal_lifecycle_logging,
@@ -82,11 +86,19 @@ class _AgentUiThreadingHTTPServer(ThreadingHTTPServer):
         project_root: Path,
         port: int,
         *,
-        ollama_model_id: str,
+        model_provider: str = "ollama",
+        model_id: str | None = None,
+        model_timeout_seconds: float | None = None,
+        live_model_approval: LiveModelApproval | None = None,
+        ollama_model_id: str | None = None,
         ollama_timeout_seconds: float,
     ) -> None:
         self.ui_service = AgentUiService(
             project_root,
+            model_provider=model_provider,
+            model_id=model_id,
+            model_timeout_seconds=model_timeout_seconds,
+            live_model_approval=live_model_approval,
             ollama_model_id=ollama_model_id,
             ollama_timeout_seconds=ollama_timeout_seconds,
         )
@@ -262,6 +274,14 @@ class _AgentUiRequestHandler(BaseHTTPRequestHandler):
         if suffix == "":
             run_view = self._ui_server.ui_service.get(handle)
             self._respond_json(HTTPStatus.OK, _json_value(run_view))
+            return
+        if suffix == "/progress":
+            # Lock-free, read-only live-phase projection so the browser can poll
+            # while the gated continuation holds the per-run lock for minutes.
+            self._respond_json(
+                HTTPStatus.OK,
+                self._ui_server.ui_service.progress(handle),
+            )
             return
         if suffix == "/candidate.zip":
             self._require_csrf()
@@ -550,7 +570,11 @@ def build_ui_server(
     project_root: Path,
     *,
     port: int = 0,
-    ollama_model_id: str,
+    model_provider: str = "ollama",
+    model_id: str | None = None,
+    model_timeout_seconds: float | None = None,
+    live_model_approval: LiveModelApproval | None = None,
+    ollama_model_id: str | None = None,
     ollama_timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
 ) -> ThreadingHTTPServer:
     """Build a loopback-only server; a zero port asks the OS for a free port."""
@@ -560,6 +584,10 @@ def build_ui_server(
     return _AgentUiThreadingHTTPServer(
         project_root.resolve(),
         port,
+        model_provider=model_provider,
+        model_id=model_id,
+        model_timeout_seconds=model_timeout_seconds,
+        live_model_approval=live_model_approval,
         ollama_model_id=ollama_model_id,
         ollama_timeout_seconds=ollama_timeout_seconds,
     )
@@ -570,24 +598,43 @@ def serve_ui(
     *,
     port: int = 8765,
     open_browser: bool = False,
-    ollama_model_id: str,
+    model_provider: str = "ollama",
+    model_id: str | None = None,
+    model_timeout_seconds: float | None = None,
+    live_model_approval: LiveModelApproval | None = None,
+    ollama_model_id: str | None = None,
     ollama_timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS,
 ) -> None:
     """Serve the agent UI until interrupted, optionally opening its local URL."""
 
+    configured_provider = model_provider if model_id is not None else "ollama"
+    configured_model_id = model_id if model_id is not None else ollama_model_id
+    configured_timeout = _configured_model_timeout(
+        configured_provider,
+        model_timeout_seconds=model_timeout_seconds,
+        ollama_timeout_seconds=ollama_timeout_seconds,
+    )
+    configured_boundary = {
+        "ollama": "local_loopback",
+        "claude-cli": "remote_provider_managed",
+    }.get(configured_provider, "invalid")
     with terminal_lifecycle_logging():
         lifecycle_event(
             "ui.provider.configured",
-            provider="ollama",
-            model_id=ollama_model_id,
-            execution_boundary="local_loopback",
-            timeout_seconds=ollama_timeout_seconds,
+            provider=configured_provider,
+            model_id=configured_model_id,
+            execution_boundary=configured_boundary,
+            timeout_seconds=configured_timeout,
         )
         lifecycle_event("ui.server.starting", requested_port=port)
         try:
             server = build_ui_server(
                 project_root,
                 port=port,
+                model_provider=model_provider,
+                model_id=model_id,
+                model_timeout_seconds=model_timeout_seconds,
+                live_model_approval=live_model_approval,
                 ollama_model_id=ollama_model_id,
                 ollama_timeout_seconds=ollama_timeout_seconds,
             )
@@ -622,6 +669,19 @@ def serve_ui(
             lifecycle_event("ui.server.stopped")
 
 
+def _configured_model_timeout(
+    provider: str,
+    *,
+    model_timeout_seconds: float | None,
+    ollama_timeout_seconds: float,
+) -> float:
+    if model_timeout_seconds is not None:
+        return model_timeout_seconds
+    if provider == "claude-cli":
+        return DEFAULT_CLAUDE_TIMEOUT_SECONDS
+    return ollama_timeout_seconds
+
+
 def _json_value(value: object) -> object:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -649,6 +709,8 @@ def _normalized_http_action(method: str, raw_path: str) -> str:
             return exact_get[path]
         if path.startswith(_SESSION_PREFIX) and path.endswith("/candidate.zip"):
             return "candidate.download"
+        if path.startswith(_SESSION_PREFIX) and path.endswith("/progress"):
+            return "session.progress"
         if path.startswith(_SESSION_PREFIX):
             return "session.read"
         if path.startswith(_CONVERSATION_PREFIX):

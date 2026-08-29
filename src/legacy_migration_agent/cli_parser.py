@@ -8,6 +8,10 @@ from datetime import date, datetime
 from pathlib import Path
 
 from legacy_migration_agent import cli_commands as commands
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    MAX_CLAUDE_TIMEOUT_SECONDS,
+    MIN_CLAUDE_TIMEOUT_SECONDS,
+)
 from legacy_migration_agent.agent_runtime.ollama_model import (
     DEFAULT_OLLAMA_TIMEOUT_SECONDS,
     MAX_OLLAMA_TIMEOUT_SECONDS,
@@ -232,24 +236,53 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="open the local agent UI in the system default browser after startup",
     )
-    ui.add_argument(
+    ui_models = ui.add_mutually_exclusive_group(required=True)
+    ui_models.add_argument(
         "--ollama-model",
         type=_ui_ollama_model,
-        required=True,
         help=(
             "use the allowlisted local-Ollama provider with this model ID "
             "(for example, qwen3.8:latest)"
         ),
     )
+    ui_models.add_argument(
+        "--claude-model",
+        type=_ui_claude_model,
+        help=(
+            "use the explicitly approved remote Claude CLI provider with this "
+            "model alias (for example, claude-sonnet-5)"
+        ),
+    )
     ui.add_argument(
         "--ollama-timeout-seconds",
         type=_ui_ollama_timeout_seconds,
-        default=DEFAULT_OLLAMA_TIMEOUT_SECONDS,
         help=(
             "wall-clock deadline for each local model role call "
             f"({MIN_OLLAMA_TIMEOUT_SECONDS:g}-{MAX_OLLAMA_TIMEOUT_SECONDS:g}; "
             f"default: {DEFAULT_OLLAMA_TIMEOUT_SECONDS:g})"
         ),
+    )
+    ui.add_argument(
+        "--claude-timeout-seconds",
+        type=_ui_claude_timeout_seconds,
+        help=(
+            "required wall-clock deadline for each remote Claude CLI role call "
+            f"({MIN_CLAUDE_TIMEOUT_SECONDS:g}-{MAX_CLAUDE_TIMEOUT_SECONDS:g})"
+        ),
+    )
+    ui.add_argument(
+        "--approved-by",
+        help="named operator approving this Claude CLI session",
+    )
+    ui.add_argument(
+        "--allow-live-api",
+        action="store_true",
+        help="explicitly approve live remote Claude inference",
+    )
+    ui.add_argument(
+        "--allow-prompt-data-sharing",
+        action="store_true",
+        help="explicitly approve sending bounded prompt and source context remotely",
     )
 
     return parser
@@ -274,6 +307,15 @@ def _ui_ollama_model(value: str) -> str:
     return model_id
 
 
+def _ui_claude_model(value: str) -> str:
+    model_id = value.strip()
+    if not model_id or len(model_id) > 300:
+        raise argparse.ArgumentTypeError("Claude model ID must contain 1 to 300 characters")
+    if any(character in model_id for character in ("\x00", "\r", "\n")):
+        raise argparse.ArgumentTypeError("Claude model ID contains a forbidden control character")
+    return model_id
+
+
 def _ui_ollama_timeout_seconds(value: str) -> float:
     try:
         timeout = float(value)
@@ -286,6 +328,22 @@ def _ui_ollama_timeout_seconds(value: str) -> float:
         raise argparse.ArgumentTypeError(
             "Ollama timeout must be between "
             f"{MIN_OLLAMA_TIMEOUT_SECONDS:g} and {MAX_OLLAMA_TIMEOUT_SECONDS:g} seconds"
+        )
+    return timeout
+
+
+def _ui_claude_timeout_seconds(value: str) -> float:
+    try:
+        timeout = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Claude timeout must be a number") from exc
+    if (
+        not math.isfinite(timeout)
+        or not MIN_CLAUDE_TIMEOUT_SECONDS <= timeout <= MAX_CLAUDE_TIMEOUT_SECONDS
+    ):
+        raise argparse.ArgumentTypeError(
+            "Claude timeout must be between "
+            f"{MIN_CLAUDE_TIMEOUT_SECONDS:g} and {MAX_CLAUDE_TIMEOUT_SECONDS:g} seconds"
         )
     return timeout
 
