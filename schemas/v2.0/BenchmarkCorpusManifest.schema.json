@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "BenchmarkCorpusRunReference": {
+      "additionalProperties": false,
+      "description": "Routing-only reference; it cannot supply a case, arm, or result.",
+      "properties": {
+        "rubric_path": {
+          "title": "Rubric Path",
+          "type": "string"
+        },
+        "run_dir": {
+          "title": "Run Dir",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "thread_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Thread Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_dir",
+        "rubric_path",
+        "run_id",
+        "thread_id"
+      ],
+      "title": "BenchmarkCorpusRunReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Exact 18-run inventory used by the official receipt extractor.",
+  "properties": {
+    "execution_anchor_path": {
+      "title": "Execution Anchor Path",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "runs": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkCorpusRunReference"
+      },
+      "maxItems": 18,
+      "minItems": 18,
+      "title": "Runs",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "registry_id",
+    "execution_anchor_path",
+    "runs"
+  ],
+  "title": "BenchmarkCorpusManifest",
+  "type": "object"
+}

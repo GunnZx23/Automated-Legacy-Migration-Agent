@@ -501,11 +501,14 @@ function providerRecoveryGuidance(modelId, boundaries = null) {
 }
 
 function modelRuntimeReady() {
+  const remoteRuntime = modelRuntimePresentation()?.remote === true;
   return (
     state.modelReadiness?.status === "ready" &&
     state.modelReadiness?.configured === true &&
     state.modelReadiness?.runtime_reachable === true &&
-    state.modelReadiness?.model_available === true
+    (remoteRuntime
+      ? state.modelReadiness?.model_available === null
+      : state.modelReadiness?.model_available === true)
   );
 }
 
@@ -534,7 +537,10 @@ function modelReadinessFromPayload(payload) {
   }
   if (
     (payload.status === "ready" &&
-      (payload.runtime_reachable !== true || payload.model_available !== true)) ||
+      (payload.runtime_reachable !== true ||
+        (state.model?.execution_boundary === "remote_provider_managed"
+          ? payload.model_available !== null
+          : payload.model_available !== true))) ||
     (payload.status === "provider_unreachable" && payload.runtime_reachable !== false) ||
     (payload.status === "provider_unreachable" && payload.model_available !== null) ||
     (payload.status === "model_unavailable" &&
@@ -563,7 +569,7 @@ function modelReadinessPresentation() {
     if (runtime?.remote) {
       return {
         badge: "Claude CLI ready · remote inference",
-        notice: `${modelId} is available through the authenticated Claude CLI. Browser traffic stays on the loopback UI server, while prompts and bounded source context are sent to the remote provider under the approval recorded when the server started. Local Claude session persistence is disabled; this interface does not claim provider-side no-store or zero-data-retention. No Salesforce org, Mule runtime, deployment, publication, or source mutation is authorized.`,
+        notice: `${modelId} is configured through the authenticated Claude CLI. This readiness check verifies the CLI, authentication, and runtime identity without invoking the remote model; the first successful role call verifies that the configured alias can complete a request. Browser traffic stays on the loopback UI server, while prompts and bounded source context are sent to the remote provider under the approval recorded when the server started. Local Claude session persistence is disabled; this interface does not claim provider-side no-store or zero-data-retention. No Salesforce org, Mule runtime, deployment, publication, or source mutation is authorized.`,
       };
     }
     return {
@@ -769,7 +775,10 @@ function updateComposerState() {
     : "Start a fresh conversation.";
   elements.scenarioList.querySelectorAll("button").forEach((button) => {
     button.disabled = state.busy || runDisplayed || conversationFrozen;
-    button.setAttribute("aria-pressed", String(button.dataset.platform === state.selectedPlatform));
+    button.setAttribute(
+      "aria-pressed",
+      String(button.dataset.scenarioId === state.selectedScenarioId),
+    );
   });
   updateRequestHelp();
 }
@@ -1826,12 +1835,15 @@ function completionMessage(run) {
   }
   const terminalCorrection =
     run.correction?.completed_attempt === 1 ? run.correction : null;
+  const replanInstruction = terminalCorrection?.requires_graph_regeneration
+    ? "No retry gate was opened. Regenerate the dependency graph and its controller-owned assurance report, then create and approve a new manifest before another implementation can begin."
+    : "No retry gate was opened. You may save the candidate to output/ with its non-ready validation receipt, then resolve the environment or planning decision before starting a new run.";
   return messageArticle(
     "Controller",
     [
       terminalCorrection?.reason ||
         "The current result does not authorize a same-manifest corrective attempt.",
-      "No retry gate was opened. You may save the candidate to output/ with its non-ready validation receipt, then resolve the environment or planning decision before starting a new run.",
+      replanInstruction,
     ],
     {
       meta: `Attempt 1 · controller action: ${humanize(terminalCorrection?.action || run.validation.disposition)}`,
@@ -2257,6 +2269,7 @@ function renderFailureDiagnostic(run) {
     workspace_scope_mismatch: "The Engineer workspace did not match the manifest scope.",
     workspace_not_clean: "The Engineer workspace was not clean before applying the plan.",
     attempt_two_scope_expansion_invalid: "Engineer attempt 2 requested an invalid scope expansion.",
+    output_evidence_local_path: "The role output contained non-portable local filesystem notation.",
     policy_rejected: "The controller rejected the structured response at its policy boundary.",
     provider_timeout: "The model provider exceeded the inference deadline.",
     provider_unavailable: "The model-provider request could not be completed.",
@@ -2549,16 +2562,22 @@ function renderCandidate(candidate) {
   elements.candidateSection.hidden = !available;
   elements.downloadButton.hidden = !downloadable;
   elements.exportButton.hidden = !downloadable;
-  const readyForReview = state.run?.validation?.disposition === "ready_for_human_review";
+  const disposition = state.run?.validation?.disposition;
+  const readyForReview = disposition === "ready_for_human_review";
+  const environmentUnavailable = disposition === "environment_unavailable";
   elements.downloadButton.textContent = readyForReview
     ? "↓ Download review candidate"
-    : "↓ Download failed candidate for debugging";
+    : environmentUnavailable
+      ? "↓ Download candidate with environment receipt"
+      : "↓ Download failed candidate for debugging";
   elements.exportButton.disabled = state.busy || exported;
   elements.exportButton.textContent = exported
     ? "Saved to output/"
     : readyForReview
       ? "↳ Save review candidate"
-      : "↳ Save debugging evidence";
+      : environmentUnavailable
+        ? "↳ Save candidate with environment receipt"
+        : "↳ Save debugging evidence";
   elements.exportStatus.hidden = !exported;
   elements.exportStatus.textContent = exported
     ? `${state.exportResult.file_count} files saved to ${state.exportResult.candidate_path}. ` +
@@ -2570,7 +2589,9 @@ function renderCandidate(candidate) {
   elements.candidateReviewStatus.textContent = !candidate
     ? ""
     : !readyForReview
-      ? `Validation disposition: ${humanize(state.run?.validation?.disposition)}. Debugging evidence only.`
+      ? environmentUnavailable
+        ? "Runtime-dependent validation is unavailable. The candidate and passing static checks are preserved with a non-ready receipt."
+        : `Validation disposition: ${humanize(disposition)}. Debugging evidence only.`
       : finalReview?.status === "accepted"
         ? "Final human review: accepted. External actions remain unauthorized."
         : finalReview?.status === "rejected"
@@ -2591,7 +2612,9 @@ function renderCandidate(candidate) {
       ? `Prior attempt ${candidate.attempt} candidate · read-only debugging evidence`
       : readyForReview
         ? `Attempt ${candidate.attempt} review candidate · ready for independent human review`
-        : `Attempt ${candidate.attempt} failed candidate · debugging evidence only`
+        : environmentUnavailable
+          ? `Attempt ${candidate.attempt} candidate · runtime validation unavailable`
+          : `Attempt ${candidate.attempt} failed candidate · debugging evidence only`
     : "Isolated candidate";
   elements.fileCountBadge.textContent = String(count);
   elements.fileCount.textContent = `${count} file${count === 1 ? "" : "s"}`;

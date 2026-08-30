@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import io
 from types import SimpleNamespace
+from typing import Literal
 
 import pytest
 
-from legacy_migration_agent.agent_runtime.model_workflow import _sanitized_role_policy_error
+from legacy_migration_agent.agent_runtime.model_workflow import (
+    _safe_role_artifact_persistence_code,
+    _sanitized_role_policy_error,
+)
 from legacy_migration_agent.application.agent_run_contracts import (
     AgentRunFailure,
     agent_run_failure_explanation,
@@ -138,3 +142,63 @@ def test_unmapped_engineer_rejection_uses_generic_sanitized_fallback() -> None:
     assert str(sanitized) == "model_role_policy_failure:engineer:policy_rejected"
     assert "/Users/" not in str(sanitized)
     assert "secret.js" not in str(sanitized)
+
+
+@pytest.mark.parametrize("role", ("architect", "engineer", "validator"))
+def test_role_output_local_path_failure_projects_the_persistence_phase(
+    role: Literal["architect", "engineer", "validator"],
+) -> None:
+    reason_code = "output_evidence_local_path"
+    summary, guidance = agent_run_failure_explanation(reason_code, role)
+    failure = AgentRunFailure(
+        failure_id="failure-output-evidence-local-path",
+        run_id="run-safe-persistence-report",
+        thread_id="thread-safe-persistence-report",
+        request_id="request-safe-persistence-report",
+        operation="resume",
+        seam=role,
+        category="invalid",
+        reason_code=reason_code,
+        summary=summary,
+        guidance=guidance,
+        attempt=1,
+        request_digest=_DIGEST,
+        operation_input_digest=_DIGEST,
+        session_context_digest=_DIGEST,
+        source_revision=_DIGEST,
+        agent_definition_digests=_DEFINITION_DIGESTS,
+    )
+
+    projected = _failure_view(SimpleNamespace(failure=failure))  # type: ignore[arg-type]
+
+    assert projected is not None
+    assert projected.reason_code == reason_code
+    assert projected.phase == "role_artifact_persistence"
+    assert projected.response_received is True
+    assert projected.schema_valid is True
+    assert projected.policy_valid is False
+    assert "role output" in projected.summary
+    assert "local filesystem notation" in projected.summary
+    assert "/Users/" not in projected.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "portable evidence contains a local absolute path",
+        "portable evidence contains an absolute project or source path",
+    ),
+)
+def test_role_artifact_persistence_classifies_only_local_path_rejections(
+    message: str,
+) -> None:
+    assert (
+        _safe_role_artifact_persistence_code(PolicyViolation(message))
+        == "output_evidence_local_path"
+    )
+    assert (
+        _safe_role_artifact_persistence_code(
+            PolicyViolation("portable evidence contains an unredacted credential")
+        )
+        == "policy_rejected"
+    )

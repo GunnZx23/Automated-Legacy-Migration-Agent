@@ -16,6 +16,7 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     OpenAIResponsesModelClient,
     model_call_record,
     verify_model_call_record,
+    verify_model_call_record_input,
 )
 from legacy_migration_agent.contracts import StrictModel
 
@@ -199,6 +200,53 @@ def test_model_call_record_binds_agent_prompt_input_and_output() -> None:
             system_prompt="changed role",
             input_value=input_value,
             output_value=Output(answer="changed"),
+        )
+
+
+def test_input_side_model_call_verifier_does_not_claim_output_acceptance() -> None:
+    client = client_for(
+        CapturingResponses(
+            SimpleNamespace(status="completed", output=(), output_parsed=Output(answer="rejected"))
+        )
+    )
+    input_value = Input(value="frozen")
+    provider_output = client.parse(
+        system_prompt="bounded role",
+        input_value=input_value,
+        output_type=Output,
+    )
+    record = model_call_record(
+        client,
+        agent_version="role/v1",
+        agent_definition_digest="sha256:" + "a" * 64,
+        system_prompt="bounded role",
+        input_value=input_value,
+        output_value=provider_output,
+    )
+
+    verify_model_call_record_input(
+        record,
+        agent_version="role/v1",
+        agent_definition_digest="sha256:" + "a" * 64,
+        system_prompt="bounded role",
+        input_value=input_value,
+    )
+    with pytest.raises(ModelEvidenceError, match="output"):
+        verify_model_call_record(
+            record,
+            agent_version="role/v1",
+            agent_definition_digest="sha256:" + "a" * 64,
+            system_prompt="bounded role",
+            input_value=input_value,
+            output_value=Output(answer="accepted"),
+        )
+    with pytest.raises(ModelEvidenceError, match="input"):
+        verify_model_call_record_input(
+            record,
+            agent_version="role/v1",
+            agent_definition_digest="sha256:" + "a" * 64,
+            system_prompt="bounded role",
+            input_value=Input(value="drifted"),
         )
 
 

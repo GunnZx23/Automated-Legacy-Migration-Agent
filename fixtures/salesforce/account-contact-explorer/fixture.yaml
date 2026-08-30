@@ -42,6 +42,7 @@ behavior:
     loading_state: true
     controlled_error_state: true
     stale_response_ignored_after_selection_change: true
+    nonblank_selection_change_clears_completed_empty_loading_and_error_state: true
 
 security:
   sharing_model: with_sharing
@@ -63,7 +64,7 @@ validation:
     - id: controller-lwc-jest
       assertions:
         - Candidate-authored Jest tests execute as required evidence.
-        - The independent controller suite verifies rendered behavior and stale-response handling.
+        - The independent controller suite verifies rendered behavior, immediate state reset, and stale-response handling after account changes.
       working_directory: isolated generated candidate
       command: controller-owned pinned Jest validation
   org_required_for_deployment_claim:

@@ -34,6 +34,7 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     SourceFileEvidence,
 )
 from legacy_migration_agent.agent_runtime.model_workflow import ModelAgentWorkflowRoles
+from legacy_migration_agent.agent_runtime.run_artifact_paths import RunArtifactPaths
 from legacy_migration_agent.contracts import (
     ApprovalAction,
     Identifier,
@@ -51,14 +52,25 @@ from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.run_session import AgentDefinitionDigests, AgentRunSession
 from legacy_migration_agent.core.scope_policy import PlatformAdapter
-from legacy_migration_agent.core.workspace import TreeSnapshot, snapshot_tree
+from legacy_migration_agent.core.workspace import TreeSnapshot, content_revision, snapshot_tree
+from legacy_migration_agent.graphs.graph_assurance import (
+    GraphAssuranceReport,
+    GraphAssuranceStatus,
+    build_graph_assurance_report,
+)
 from legacy_migration_agent.graphs.graph_contracts import DependencyGraph
 from legacy_migration_agent.graphs.graph_store import (
     GraphSnapshotKey,
     GraphSnapshotStore,
     StoredGraphSnapshot,
 )
-from legacy_migration_agent.knowledge.wiki import MAX_RETRIEVAL_PAGES, LlmWiki, RetrievalTrace
+from legacy_migration_agent.knowledge.wiki import (
+    MAX_RETRIEVAL_PAGES,
+    BenchmarkKnowledgeBinding,
+    LlmWiki,
+    RetrievalTrace,
+    benchmark_no_wiki_control_trace,
+)
 from legacy_migration_agent.workflow import Architect, Engineer, ManifestApproval, Validator
 
 _ANALYZER_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,159}$")
@@ -113,6 +125,54 @@ class _SessionGraphRuntimeAnchor(StrictModel):
     graph_artifact_digest: Sha256Digest
     binding_artifact_digest: Sha256Digest
     lifecycle_index_digest: Sha256Digest
+
+
+class _SessionGraphAssuranceBinding(StrictModel):
+    """Portable binding from a deterministic assurance report to graph evidence."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: Identifier
+    thread_id: Identifier
+    request_digest: Sha256Digest
+    source_revision: Sha256Digest
+    graph_key_digest: Sha256Digest
+    graph_artifact_path: str
+    graph_artifact_digest: Sha256Digest
+    graph_binding_path: str
+    graph_binding_digest: Sha256Digest
+    graph_lifecycle_index_path: str
+    graph_lifecycle_index_digest: Sha256Digest
+    assurance_report_path: str
+    assurance_report_digest: Sha256Digest
+    assurance_status: GraphAssuranceStatus
+
+    @field_validator(
+        "graph_artifact_path",
+        "graph_binding_path",
+        "graph_lifecycle_index_path",
+        "assurance_report_path",
+    )
+    @classmethod
+    def validate_artifact_paths(cls, value: str) -> str:
+        return validate_relative_path(value)
+
+
+class _SessionGraphAssuranceRuntimeAnchor(StrictModel):
+    """State-only anchor for the graph plus its independent assurance chain."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: Identifier
+    thread_id: Identifier
+    request_digest: Sha256Digest
+    source_revision: Sha256Digest
+    graph_key_digest: Sha256Digest
+    graph_artifact_digest: Sha256Digest
+    graph_binding_digest: Sha256Digest
+    graph_lifecycle_index_digest: Sha256Digest
+    assurance_report_digest: Sha256Digest
+    assurance_status: GraphAssuranceStatus
+    assurance_binding_digest: Sha256Digest
+    assurance_lifecycle_index_digest: Sha256Digest
 
 
 @dataclass(frozen=True)
@@ -175,17 +235,33 @@ class RevisionBoundArchitectContextFactory:
         wiki_query: str,
         wiki_as_of: date,
         platform_adapter: PlatformAdapter,
+        benchmark_knowledge_binding: BenchmarkKnowledgeBinding | None = None,
         wiki_max_age_days: int = 365,
         wiki_max_primary_hits: int = 3,
         wiki_expand_links: bool = True,
     ) -> None:
         self.source_root = _safe_directory(source_root, "source root")
-        self.wiki_root = _safe_directory(wiki_root, "Wiki root")
+        self.benchmark_knowledge_binding = (
+            None
+            if benchmark_knowledge_binding is None
+            else BenchmarkKnowledgeBinding.model_validate(
+                benchmark_knowledge_binding.model_dump(mode="python")
+            )
+        )
+        no_wiki_control = (
+            self.benchmark_knowledge_binding is not None
+            and self.benchmark_knowledge_binding.knowledge_arm == "full_agent_no_wiki"
+        )
+        self.wiki_root = (
+            Path(wiki_root) if no_wiki_control else _safe_directory(wiki_root, "Wiki root")
+        )
         _reject_filesystem_oracle_path(self.source_root, role="source root")
-        _reject_filesystem_oracle_path(self.wiki_root, role="Wiki root")
         _reject_filesystem_oracle_path(graph_store.root, role="graph store")
         _reject_writable_cache_overlap(graph_store.root, self.source_root, role="source root")
-        _reject_writable_cache_overlap(graph_store.root, self.wiki_root, role="Wiki root")
+        if not no_wiki_control:
+            _reject_filesystem_oracle_path(self.wiki_root, role="Wiki root")
+            _reject_writable_cache_overlap(graph_store.root, self.wiki_root, role="Wiki root")
+            self._verify_benchmark_wiki_revision()
 
         normalized_entries = tuple(sorted({validate_relative_path(path) for path in entry_paths}))
         if not normalized_entries:
@@ -239,6 +315,7 @@ class RevisionBoundArchitectContextFactory:
         wiki_query: str,
         wiki_as_of: date,
         platform_adapter: PlatformAdapter,
+        benchmark_knowledge_binding: BenchmarkKnowledgeBinding | None = None,
         wiki_max_age_days: int = 365,
         wiki_max_primary_hits: int = 3,
         wiki_expand_links: bool = True,
@@ -266,11 +343,17 @@ class RevisionBoundArchitectContextFactory:
             wiki_query=wiki_query,
             wiki_as_of=wiki_as_of,
             platform_adapter=platform_adapter,
+            benchmark_knowledge_binding=benchmark_knowledge_binding,
             wiki_max_age_days=wiki_max_age_days,
             wiki_max_primary_hits=wiki_max_primary_hits,
             wiki_expand_links=wiki_expand_links,
         )
         factory._validate_request(request)
+        if factory.benchmark_knowledge_binding is not None:
+            factory.benchmark_knowledge_binding.require_request(
+                request,
+                scenario_id=session.context.slice_id,
+            )
         factory._session_binding = _SessionArchitectBinding(
             session=session,
             request_digest=request_digest,
@@ -336,25 +419,49 @@ class RevisionBoundArchitectContextFactory:
             self._validate_graph(graph, key)
 
         self._bind_session_graph_evidence(graph, key)
-
-        if graph.has_unresolved:
-            return _unresolved_graph_intervention(request, graph)
+        assurance_report = build_graph_assurance_report(
+            source_snapshot,
+            graph,
+            analyzer_version=self.runtime.analyzer_version,
+            required_source_paths=(self.platform_adapter.scope_policy.required_source_input_paths),
+        )
+        self._bind_session_graph_assurance(
+            request,
+            graph,
+            key,
+            assurance_report,
+        )
+        if assurance_report.status is not GraphAssuranceStatus.ASSURED:
+            self._persist_non_assured_run_report(request, assurance_report)
+            return _graph_assurance_intervention(request, assurance_report)
 
         source_files = _architect_source_file_evidence(
             source_snapshot,
             self.platform_adapter.scope_policy.required_source_input_paths,
         )
         wiki_trace = self._retrieve_wiki(request)
+        benchmark_risk_binding = (
+            None
+            if self.benchmark_knowledge_binding is None
+            else self.benchmark_knowledge_binding.risk_seed_binding
+        )
         return ArchitectContext(
             model_context=ArchitectModelContext(
                 request=request,
                 dependency_graph=graph,
                 dependency_graph_digest=artifact_digest(graph),
+                graph_assurance_report_digest=artifact_digest(assurance_report),
+                graph_assurance_status=assurance_report.status,
                 source_files=source_files,
                 wiki_trace=wiki_trace,
                 wiki_trace_digest=artifact_digest(wiki_trace),
+                supplemental_request_evidence=(
+                    None if benchmark_risk_binding is None else benchmark_risk_binding.stimulus
+                ),
             ),
             platform_adapter=self.platform_adapter,
+            graph_assurance_report=assurance_report,
+            benchmark_risk_seed_binding=benchmark_risk_binding,
         )
 
     def _validate_request(self, request: MigrationRequest) -> None:
@@ -584,6 +691,346 @@ class RevisionBoundArchitectContextFactory:
         index_kind = f"graph-{digest[:32]}"
         return graph_path, binding_path, index_kind
 
+    def _bind_session_graph_assurance(
+        self,
+        request: MigrationRequest,
+        graph: DependencyGraph,
+        key: GraphSnapshotKey,
+        report: GraphAssuranceReport,
+    ) -> None:
+        """Persist and independently anchor graph assurance before model access."""
+
+        session_binding = self._session_binding
+        if session_binding is None:
+            return
+        session = session_binding.session
+        session.validate_portable_evidence(report)
+        graph_path, graph_binding_path, graph_index_kind = self._session_graph_paths(key)
+        report_path, assurance_binding_path, assurance_index_kind = (
+            self._session_graph_assurance_paths(key)
+        )
+        graph_index_path = f"indexes/{graph_index_kind}.json"
+        assurance_index_path = f"indexes/{assurance_index_kind}.json"
+
+        report_payload = _read_optional_session_json(session, report_path)
+        assurance_binding_payload = _read_optional_session_json(
+            session,
+            assurance_binding_path,
+        )
+        assurance_index_payload = _read_optional_session_json(session, assurance_index_path)
+        anchor_present = session.has_runtime_anchor(assurance_index_kind)
+        present = (
+            report_payload is not None,
+            assurance_binding_payload is not None,
+            assurance_index_payload is not None,
+            anchor_present,
+        )
+        if any(present):
+            if not all(present):
+                raise PolicyViolation("session graph assurance has incomplete lifecycle evidence")
+            self._verify_session_graph_assurance_artifacts(
+                request,
+                graph,
+                key,
+                report,
+                graph_path=graph_path,
+                graph_binding_path=graph_binding_path,
+                graph_index_path=graph_index_path,
+                report_path=report_path,
+                report_payload=report_payload,
+                assurance_binding_path=assurance_binding_path,
+                assurance_binding_payload=assurance_binding_payload,
+                assurance_index_kind=assurance_index_kind,
+                assurance_index_payload=assurance_index_payload,
+            )
+            return
+
+        try:
+            graph_payload = session.store.read_json(graph_path)
+            graph_binding_payload = session.store.read_json(graph_binding_path)
+            graph_index_payload = session.store.read_json(graph_index_path)
+        except FileNotFoundError as exc:  # pragma: no cover - graph chain verified first
+            raise PolicyViolation(
+                "graph assurance requires complete graph lifecycle evidence"
+            ) from exc
+
+        session.store.write_json(report_path, report)
+        report_payload = session.store.read_json(report_path)
+        evidence_binding = self._session_graph_assurance_binding(
+            request,
+            key,
+            report,
+            graph_path=graph_path,
+            graph_payload=graph_payload,
+            graph_binding_path=graph_binding_path,
+            graph_binding_payload=graph_binding_payload,
+            graph_index_path=graph_index_path,
+            graph_index_payload=graph_index_payload,
+            report_path=report_path,
+            report_payload=report_payload,
+        )
+        session.store.write_json(assurance_binding_path, evidence_binding)
+        expected_paths = self._session_graph_assurance_index_paths(
+            graph_path=graph_path,
+            graph_binding_path=graph_binding_path,
+            graph_index_path=graph_index_path,
+            report_path=report_path,
+            assurance_binding_path=assurance_binding_path,
+        )
+        session.write_index(assurance_index_kind, expected_paths)
+        assurance_binding_payload = session.store.read_json(assurance_binding_path)
+        assurance_index_payload = session.store.read_json(assurance_index_path)
+        session.bind_runtime_anchor(
+            assurance_index_kind,
+            self._session_graph_assurance_runtime_anchor(
+                request,
+                key,
+                report,
+                graph_payload=graph_payload,
+                graph_binding_payload=graph_binding_payload,
+                graph_index_payload=graph_index_payload,
+                report_payload=report_payload,
+                assurance_binding_payload=assurance_binding_payload,
+                assurance_index_payload=assurance_index_payload,
+            ),
+        )
+        self._verify_session_graph_assurance_artifacts(
+            request,
+            graph,
+            key,
+            report,
+            graph_path=graph_path,
+            graph_binding_path=graph_binding_path,
+            graph_index_path=graph_index_path,
+            report_path=report_path,
+            report_payload=report_payload,
+            assurance_binding_path=assurance_binding_path,
+            assurance_binding_payload=assurance_binding_payload,
+            assurance_index_kind=assurance_index_kind,
+            assurance_index_payload=assurance_index_payload,
+        )
+
+    def _verify_session_graph_assurance_artifacts(
+        self,
+        request: MigrationRequest,
+        graph: DependencyGraph,
+        key: GraphSnapshotKey,
+        expected_report: GraphAssuranceReport,
+        *,
+        graph_path: str,
+        graph_binding_path: str,
+        graph_index_path: str,
+        report_path: str,
+        report_payload: object,
+        assurance_binding_path: str,
+        assurance_binding_payload: object,
+        assurance_index_kind: str,
+        assurance_index_payload: object,
+    ) -> None:
+        session_binding = self._session_binding
+        if session_binding is None:  # pragma: no cover - private call invariant
+            raise PolicyViolation("session graph assurance requires a session binding")
+        session = session_binding.session
+        try:
+            report = GraphAssuranceReport.model_validate(report_payload)
+            evidence_binding = _SessionGraphAssuranceBinding.model_validate(
+                assurance_binding_payload
+            )
+            graph_payload = session.store.read_json(graph_path)
+            graph_binding_payload = session.store.read_json(graph_binding_path)
+            graph_index_payload = session.store.read_json(graph_index_path)
+        except (FileNotFoundError, TypeError, ValueError) as exc:
+            raise PolicyViolation(
+                "session graph assurance lifecycle evidence is malformed"
+            ) from exc
+        if report != expected_report:
+            raise PolicyViolation("persisted graph assurance differs from current reconciliation")
+        if report.platform is not key.platform:
+            raise PolicyViolation("graph assurance platform differs from its graph key")
+        if report.source_revision != key.source_revision:
+            raise PolicyViolation("graph assurance report is stale for current source")
+        if report.dependency_graph_digest != artifact_digest(graph):
+            raise PolicyViolation("graph assurance report binds a different dependency graph")
+        if report.analyzer_version != key.analyzer_version:
+            raise PolicyViolation("graph assurance analyzer differs from its graph key")
+        if report.entry_paths != key.entry_paths:
+            raise PolicyViolation("graph assurance entries differ from its graph key")
+
+        expected_binding = self._session_graph_assurance_binding(
+            request,
+            key,
+            report,
+            graph_path=graph_path,
+            graph_payload=graph_payload,
+            graph_binding_path=graph_binding_path,
+            graph_binding_payload=graph_binding_payload,
+            graph_index_path=graph_index_path,
+            graph_index_payload=graph_index_payload,
+            report_path=report_path,
+            report_payload=report_payload,
+        )
+        if evidence_binding != expected_binding:
+            raise PolicyViolation("session graph assurance binding does not match its evidence")
+        session.verify_index(assurance_index_kind, exact=False)
+        if not isinstance(assurance_index_payload, dict):
+            raise PolicyViolation("session graph assurance lifecycle index is malformed")
+        assurance_artifacts = assurance_index_payload.get("artifacts")
+        if not isinstance(assurance_artifacts, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("path"), str)
+            for item in assurance_artifacts
+        ):
+            raise PolicyViolation("session graph assurance lifecycle index is malformed")
+        indexed_paths = tuple(item["path"] for item in assurance_artifacts)
+        expected_paths = self._session_graph_assurance_index_paths(
+            graph_path=graph_path,
+            graph_binding_path=graph_binding_path,
+            graph_index_path=graph_index_path,
+            report_path=report_path,
+            assurance_binding_path=assurance_binding_path,
+        )
+        if indexed_paths != expected_paths:
+            raise PolicyViolation("session graph assurance index has the wrong artifact set")
+        session.verify_runtime_anchor(
+            assurance_index_kind,
+            self._session_graph_assurance_runtime_anchor(
+                request,
+                key,
+                report,
+                graph_payload=graph_payload,
+                graph_binding_payload=graph_binding_payload,
+                graph_index_payload=graph_index_payload,
+                report_payload=report_payload,
+                assurance_binding_payload=assurance_binding_payload,
+                assurance_index_payload=assurance_index_payload,
+            ),
+        )
+
+    def _session_graph_assurance_binding(
+        self,
+        request: MigrationRequest,
+        key: GraphSnapshotKey,
+        report: GraphAssuranceReport,
+        *,
+        graph_path: str,
+        graph_payload: object,
+        graph_binding_path: str,
+        graph_binding_payload: object,
+        graph_index_path: str,
+        graph_index_payload: object,
+        report_path: str,
+        report_payload: object,
+    ) -> _SessionGraphAssuranceBinding:
+        session_binding = self._session_binding
+        if session_binding is None:  # pragma: no cover - private call invariant
+            raise PolicyViolation("session graph assurance requires a session binding")
+        session = session_binding.session
+        return _SessionGraphAssuranceBinding(
+            run_id=session.context.run_id,
+            thread_id=session.context.thread_id,
+            request_digest=artifact_digest(request),
+            source_revision=session.context.source_revision,
+            graph_key_digest=key.cache_digest,
+            graph_artifact_path=graph_path,
+            graph_artifact_digest=artifact_digest(graph_payload),
+            graph_binding_path=graph_binding_path,
+            graph_binding_digest=artifact_digest(graph_binding_payload),
+            graph_lifecycle_index_path=graph_index_path,
+            graph_lifecycle_index_digest=artifact_digest(graph_index_payload),
+            assurance_report_path=report_path,
+            assurance_report_digest=artifact_digest(report_payload),
+            assurance_status=report.status,
+        )
+
+    def _session_graph_assurance_runtime_anchor(
+        self,
+        request: MigrationRequest,
+        key: GraphSnapshotKey,
+        report: GraphAssuranceReport,
+        *,
+        graph_payload: object,
+        graph_binding_payload: object,
+        graph_index_payload: object,
+        report_payload: object,
+        assurance_binding_payload: object,
+        assurance_index_payload: object,
+    ) -> _SessionGraphAssuranceRuntimeAnchor:
+        session_binding = self._session_binding
+        if session_binding is None:  # pragma: no cover - private call invariant
+            raise PolicyViolation("session graph assurance requires a session binding")
+        session = session_binding.session
+        return _SessionGraphAssuranceRuntimeAnchor(
+            run_id=session.context.run_id,
+            thread_id=session.context.thread_id,
+            request_digest=artifact_digest(request),
+            source_revision=session.context.source_revision,
+            graph_key_digest=key.cache_digest,
+            graph_artifact_digest=artifact_digest(graph_payload),
+            graph_binding_digest=artifact_digest(graph_binding_payload),
+            graph_lifecycle_index_digest=artifact_digest(graph_index_payload),
+            assurance_report_digest=artifact_digest(report_payload),
+            assurance_status=report.status,
+            assurance_binding_digest=artifact_digest(assurance_binding_payload),
+            assurance_lifecycle_index_digest=artifact_digest(assurance_index_payload),
+        )
+
+    def _session_graph_assurance_paths(
+        self,
+        key: GraphSnapshotKey,
+    ) -> tuple[str, str, str]:
+        digest = key.cache_digest.removeprefix("sha256:")
+        return (
+            f"graphs/graph-assurance-{digest}.json",
+            f"bindings/graph-assurance-{digest}.json",
+            f"graph-assurance-{digest[:32]}",
+        )
+
+    def _persist_non_assured_run_report(
+        self,
+        request: MigrationRequest,
+        report: GraphAssuranceReport,
+    ) -> None:
+        """Expose a pre-model stop through the canonical run-evidence projection."""
+
+        session_binding = self._session_binding
+        if session_binding is None:
+            return
+        session = session_binding.session
+        path = RunArtifactPaths(request.request_id).graph_assurance_report
+        existing = _read_optional_session_json(session, path)
+        if existing is None:
+            session.store.write_json(path, report)
+            existing = session.store.read_json(path)
+        try:
+            persisted = GraphAssuranceReport.model_validate(existing)
+        except (TypeError, ValueError) as exc:
+            raise PolicyViolation("run graph assurance report is malformed") from exc
+        if persisted != report:
+            raise PolicyViolation(
+                "run graph assurance report differs from the current reconciliation"
+            )
+
+    @staticmethod
+    def _session_graph_assurance_index_paths(
+        *,
+        graph_path: str,
+        graph_binding_path: str,
+        graph_index_path: str,
+        report_path: str,
+        assurance_binding_path: str,
+    ) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                (
+                    "run-context.json",
+                    graph_path,
+                    graph_binding_path,
+                    graph_index_path,
+                    report_path,
+                    assurance_binding_path,
+                )
+            )
+        )
+
     def _load_cached_graph(self, key: GraphSnapshotKey) -> DependencyGraph | None:
         try:
             return self.graph_store.load(key)
@@ -602,6 +1049,15 @@ class RevisionBoundArchitectContextFactory:
         _reject_graph_oracle_paths(graph)
 
     def _retrieve_wiki(self, request: MigrationRequest) -> RetrievalTrace:
+        if self._uses_no_wiki_control:
+            return benchmark_no_wiki_control_trace(
+                cast(BenchmarkKnowledgeBinding, self.benchmark_knowledge_binding),
+                request,
+                scenario_id=self._benchmark_scenario_id,
+                query=self.wiki_query,
+                as_of=self.wiki_as_of,
+                include_controller_diagnostic_ids=False,
+            )
         return self._retrieve_wiki_query(
             request,
             self.wiki_query,
@@ -626,6 +1082,15 @@ class RevisionBoundArchitectContextFactory:
             raise PolicyViolation(
                 "correction Wiki query must contain at least one exact diagnostic ID"
             )
+        if self._uses_no_wiki_control:
+            return benchmark_no_wiki_control_trace(
+                cast(BenchmarkKnowledgeBinding, self.benchmark_knowledge_binding),
+                request,
+                scenario_id=self._benchmark_scenario_id,
+                query=normalized_query,
+                as_of=self.wiki_as_of,
+                include_controller_diagnostic_ids=True,
+            )
         return self._retrieve_wiki_query(
             request,
             normalized_query,
@@ -640,6 +1105,7 @@ class RevisionBoundArchitectContextFactory:
         no_evidence_message: str = "version-filtered Wiki retrieval returned no relevant evidence",
         required_exact_ids: tuple[str, ...] = (),
     ) -> RetrievalTrace:
+        self._verify_benchmark_wiki_revision()
         wiki = LlmWiki.load(self.wiki_root)
         for page in wiki.catalog.pages:
             _reject_relative_oracle_path(page.path, role="Wiki page")
@@ -663,6 +1129,27 @@ class RevisionBoundArchitectContextFactory:
             if hit.target_version != request.target.target_version:
                 raise PolicyViolation("selected Wiki evidence has the wrong target version")
         return trace
+
+    def _verify_benchmark_wiki_revision(self) -> None:
+        """Reject mutable Wiki evidence before every benchmark retrieval."""
+
+        binding = self.benchmark_knowledge_binding
+        if binding is None or binding.knowledge_arm == "full_agent_no_wiki":
+            return
+        if content_revision(self.wiki_root) != binding.wiki_tree_revision:
+            raise PolicyViolation("benchmark Wiki tree drifted from the predeclared runtime")
+
+    @property
+    def _uses_no_wiki_control(self) -> bool:
+        binding = self.benchmark_knowledge_binding
+        return binding is not None and binding.knowledge_arm == "full_agent_no_wiki"
+
+    @property
+    def _benchmark_scenario_id(self) -> str:
+        session_binding = self._session_binding
+        if session_binding is None:
+            raise PolicyViolation("benchmark knowledge controls require a session-bound factory")
+        return session_binding.session.context.slice_id
 
 
 def _architect_source_file_evidence(
@@ -884,69 +1371,69 @@ def _exact_model_role_callbacks(
     return (architect, engineer, validator)
 
 
-def _unresolved_graph_intervention(
+def _graph_assurance_intervention(
     request: MigrationRequest,
-    graph: DependencyGraph,
+    report: GraphAssuranceReport,
 ) -> PlanningIntervention:
-    graph_digest = artifact_digest(graph)
+    """Return a non-authorizing, report-digest-bound pre-model stop."""
+
+    report_digest = artifact_digest(report)
     affected_candidates = {
         request.target.entry_path,
-        *(
-            provenance.path
-            for edge in graph.edges
-            if not edge.resolved
-            for provenance in edge.provenance
-        ),
-        *(warning.provenance.path for warning in graph.warnings if warning.unresolved),
-        *(path for node in graph.nodes if not node.resolved for path in node.metadata_paths),
+        *(item.path for item in report.source_digests),
     }
     affected_paths = tuple(
         [request.target.entry_path] + sorted(affected_candidates - {request.target.entry_path})[:63]
     )
 
     unresolved_items = {
-        *(f"node:{node.node_id}" for node in graph.nodes if not node.resolved),
         *(
-            "edge:" + edge.kind.value + ":" + (edge.symbol or edge.target_id)
-            for edge in graph.edges
-            if not edge.resolved
+            "discrepancy:" + artifact_digest(item).removeprefix("sha256:")[:32]
+            for item in report.detected_discrepancies
         ),
         *(
-            f"warning:{warning.code.value}:{warning.provenance.path}:{warning.provenance.line}"
-            for warning in graph.warnings
-            if warning.unresolved
+            "unsupported:" + artifact_digest(item).removeprefix("sha256:")[:32]
+            for item in report.unsupported_or_ambiguous_constructs
         ),
     }
     if not unresolved_items:
-        unresolved_items.add("graph:unresolved-evidence")
+        unresolved_items.add(f"graph-assurance:{report.status.value}")
     bounded_items = tuple(sorted(unresolved_items)[:64])
     intervention_identity = artifact_digest(
         {
             "request_digest": artifact_digest(request),
-            "graph_digest": graph_digest,
-            "kind": "unresolved-dependency-graph",
+            "graph_assurance_report_digest": report_digest,
+            "status": report.status,
+            "kind": "graph-assurance-stop",
         }
     ).removeprefix("sha256:")[:32]
     return PlanningIntervention(
-        intervention_id=f"graph-preflight-{intervention_identity}",
+        intervention_id=f"graph-assurance-{intervention_identity}",
         request_id=request.request_id,
         request_digest=artifact_digest(request),
         platform=request.platform,
         base_revision=request.base_revision,
         reason=(
-            "Dependency analysis contains unresolved evidence. The Architect model "
-            "was not called because planning would risk omitting impacted artifacts."
+            "Deterministic graph assurance returned "
+            f"{report.status.value}. The Architect model was not called because the "
+            "revision-bound dependency evidence cannot safely support a migration plan."
         ),
         requested_action=ApprovalAction.EXPAND_SCOPE,
         affected_paths=affected_paths,
         evidence=(
             PlanningInterventionEvidence(
-                category=RiskCategory.DYNAMIC_DEPENDENCY,
-                source="dependency_graph",
-                source_digest=graph_digest,
+                category=(
+                    RiskCategory.DYNAMIC_DEPENDENCY
+                    if report.status is GraphAssuranceStatus.REVIEW_REQUIRED
+                    else RiskCategory.INCOMPLETE_EVIDENCE
+                ),
+                source="graph_assurance",
+                source_digest=report_digest,
                 summary=(
-                    "Revision-bound dependency analysis reported "
-                    f"{len(bounded_items)} unresolved item(s)."
+                    "Controller-owned graph reconciliation reported "
+                    f"{len(report.detected_discrepancies)} discrepancy item(s) and "
+                    f"{len(report.unsupported_or_ambiguous_constructs)} unsupported or "
+                    "ambiguous construct item(s)."
                 ),
                 affected_paths=affected_paths,
                 unresolved_items=bounded_items,
@@ -958,8 +1445,8 @@ def _unresolved_graph_intervention(
             PlanningInterventionOption.STOP_REQUEST,
         ),
         recommendation=(
-            "Resolve dynamic or missing dependencies, refresh the exact source revision, "
-            "and begin a new planning run."
+            "Resolve or explicitly review the reported source evidence, regenerate the "
+            "dependency graph and assurance report, and begin a new planning run."
         ),
     )
 

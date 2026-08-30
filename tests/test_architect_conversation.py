@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import threading
@@ -7,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from ui_test_doubles import (
     LOCAL_MODEL_REVISION,
     make_ollama_client_test_double,
@@ -15,21 +16,24 @@ from ui_test_doubles import (
 
 from legacy_migration_agent.agent_runtime.agent_definitions import load_agent_registry
 from legacy_migration_agent.agent_runtime.model_agents import (
-    AgentRuntimeError,
     ArchitectAgent,
     ArchitectConversationContext,
     ArchitectConversationMessage,
     ArchitectConversationReply,
     ArchitectManifestProposal,
+    _ArchitectConversationClarificationOutput,
 )
 from legacy_migration_agent.application import agent_run as agent_run_module
 from legacy_migration_agent.application.architect_conversation import (
+    MAX_CONVERSATIONS,
+    ArchitectConversationExchange,
     ArchitectConversationStore,
+    architect_conversation_launch_token,
 )
 from legacy_migration_agent.application.migration_scenarios import (
     migration_launch_contract,
 )
-from legacy_migration_agent.core.integrity import artifact_digest
+from legacy_migration_agent.core.integrity import ArtifactStore, artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.ui.service import AgentUiError, AgentUiService
 
@@ -52,7 +56,7 @@ class _ConversationModel:
         assert system_prompt
         assert isinstance(input_value, ArchitectConversationContext)
         self.output_types.append(output_type)
-        return self.reply
+        return output_type.model_validate(self.reply.model_dump(mode="python"))
 
 
 def _project(tmp_path: Path) -> Path:
@@ -86,6 +90,34 @@ def _stub_ollama(
     )
 
 
+def _persist_launched_conversation_copy(
+    store: ArchitectConversationStore,
+    conversation_id: str,
+    exchange: ArchitectConversationExchange,
+) -> None:
+    store.create(
+        conversation_id,
+        initial_platform=exchange.selected_platform,
+        initial_scenario_id=exchange.scenario_id,
+    )
+    ready = store.append_exchange(
+        conversation_id,
+        selected_platform=exchange.selected_platform,
+        scenario_id=exchange.scenario_id,
+        launch_contract_digest=exchange.launch_contract_digest,
+        user_message=exchange.user_message,
+        architect_run=exchange.architect_run,
+    )
+    launch_token = architect_conversation_launch_token(ready)
+    assert launch_token is not None
+    store.begin_launch(
+        conversation_id,
+        handle=conversation_id,
+        expected_launch_token=launch_token,
+    )
+    store.record_launch(conversation_id, handle=conversation_id)
+
+
 def test_architect_conversation_mode_is_typed_and_non_authorizing() -> None:
     context = ArchitectConversationContext(
         selected_platform=None,
@@ -100,14 +132,16 @@ def test_architect_conversation_mode_is_typed_and_non_authorizing() -> None:
 
     run = ArchitectAgent(load_agent_registry(PROJECT_ROOT / "agents"), model).converse(context)
 
+    assert type(run.reply) is ArchitectConversationReply
     assert run.reply == reply
-    assert model.output_types == [ArchitectConversationReply]
+    assert model.output_types == [_ArchitectConversationClarificationOutput]
     assert run.model_call.agent_version == ARCHITECT_VERSION
+    assert run.model_call.output_digest == artifact_digest(run.reply)
     assert not hasattr(run.reply, "approved")
     assert not hasattr(run.reply, "run_id")
 
 
-def test_architect_cannot_claim_ready_without_controller_selected_platform() -> None:
+def test_architect_provider_branch_rejects_ready_without_controller_selected_platform() -> None:
     context = ArchitectConversationContext(
         selected_platform=None,
         history=(ArchitectConversationMessage(role="user", content="Migrate this legacy app."),),
@@ -118,7 +152,7 @@ def test_architect_cannot_claim_ready_without_controller_selected_platform() -> 
         advisory_summary="The bounded controller scenario is ready for review.",
     )
 
-    with pytest.raises(AgentRuntimeError, match="complete controller launch contract"):
+    with pytest.raises(ValidationError, match="clarification_needed"):
         ArchitectAgent(
             load_agent_registry(PROJECT_ROOT / "agents"),
             _ConversationModel(reply),
@@ -264,6 +298,121 @@ def test_conversation_store_rejects_secret_in_loaded_exchange(tmp_path: Path) ->
         store.load(conversation_id)
 
 
+def test_launched_history_above_capacity_does_not_block_new_intake(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = _service(project)
+    seed = service.create_conversation(scenario_id="salesforce-vf-to-lwc")
+    service.send_conversation_message(
+        seed.conversation_id,
+        message="Review the bounded Visualforce migration before launch.",
+        scenario_id="salesforce-vf-to-lwc",
+    )
+    store = ArchitectConversationStore(project / ".runs/agent-ui/conversations")
+    exchange = store.load(seed.conversation_id).exchanges[-1]
+    for index in range(1, MAX_CONVERSATIONS + 2):
+        _persist_launched_conversation_copy(store, f"{index:024x}", exchange)
+
+    assert store.conversation_count() == MAX_CONVERSATIONS + 2
+    assert store.unlaunched_conversation_count() == 1
+
+    created = service.create_conversation(scenario_id=None)
+
+    assert created.status == "open"
+    assert store.conversation_count() == MAX_CONVERSATIONS + 3
+    assert store.unlaunched_conversation_count() == 2
+
+
+def test_max_unlaunched_conversations_blocks_new_intake(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    service = _service(project)
+    for _ in range(MAX_CONVERSATIONS):
+        service.create_conversation(scenario_id=None)
+
+    store = ArchitectConversationStore(project / ".runs/agent-ui/conversations")
+    assert store.conversation_count() == MAX_CONVERSATIONS
+    assert store.unlaunched_conversation_count() == MAX_CONVERSATIONS
+
+    with pytest.raises(AgentUiError) as capacity:
+        service.create_conversation(scenario_id=None)
+
+    assert capacity.value.code == "conversation_capacity_reached"
+
+
+def test_malformed_owned_conversation_counts_toward_unlaunched_capacity(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+    service = _service(project)
+    for _ in range(MAX_CONVERSATIONS - 1):
+        service.create_conversation(scenario_id=None)
+    store = ArchitectConversationStore(project / ".runs/agent-ui/conversations")
+    ArtifactStore(store.root).write_json(
+        f"{'f' * 24}/header.json",
+        {"schema_version": "1.0", "conversation_id": "not-a-valid-id"},
+    )
+
+    assert store.unlaunched_conversation_count() == MAX_CONVERSATIONS
+    with pytest.raises(AgentUiError) as capacity:
+        service.create_conversation(scenario_id=None)
+
+    assert capacity.value.code == "conversation_capacity_reached"
+
+
+def test_retired_pre_scenario_launch_receipt_releases_intake_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = _service(project)
+    seed = service.create_conversation(scenario_id="salesforce-vf-to-lwc")
+    service.send_conversation_message(
+        seed.conversation_id,
+        message="Review the bounded Visualforce migration before launch.",
+        scenario_id="salesforce-vf-to-lwc",
+    )
+    store = ArchitectConversationStore(project / ".runs/agent-ui/conversations")
+    exchange = store.load(seed.conversation_id).exchanges[-1]
+    raw_exchange = exchange.model_dump(mode="json")
+    raw_exchange.pop("scenario_id")
+    raw_exchange.pop("launch_contract_digest")
+    raw_reply = raw_exchange["architect_run"]["reply"]
+    refined_request = raw_reply.pop("advisory_summary")
+    raw_reply["refined_request"] = refined_request
+    model_revision = exchange.architect_run.model_call.model_revision
+    assert model_revision is not None
+    legacy_id = "e" * 24
+    legacy_record = {
+        "schema_version": "1.0",
+        "handle": "d" * 24,
+        "selected_platform": "salesforce",
+        "refined_request_digest": (
+            "sha256:" + hashlib.sha256(refined_request.encode("utf-8")).hexdigest()
+        ),
+        "model_revision": model_revision,
+        "launch_token": "sha256:" + "c" * 64,
+    }
+    artifacts = ArtifactStore(store.root)
+    artifacts.write_json(
+        f"{legacy_id}/header.json",
+        {
+            "schema_version": "1.0",
+            "conversation_id": legacy_id,
+            "initial_platform": None,
+        },
+    )
+    artifacts.write_json(f"{legacy_id}/exchange-0001.json", raw_exchange)
+    artifacts.write_json(f"{legacy_id}/launch-intent.json", legacy_record)
+    artifacts.write_json(f"{legacy_id}/launch.json", legacy_record)
+
+    assert store.conversation_count() == 2
+    assert store.unlaunched_conversation_count() == 1
+
+
 def test_service_persists_public_turns_and_binds_one_model_revision(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -309,7 +458,10 @@ def test_service_persists_public_turns_and_binds_one_model_revision(
         created.conversation_id
     )
     assert persisted.exchanges[-1].launch_contract_digest == expected_contract_digest
-    assert role_calls == ["ArchitectConversationReply", "ArchitectConversationReply"]
+    assert role_calls == [
+        "_ArchitectConversationClarificationOutput",
+        "_ArchitectConversationReadyOutput",
+    ]
     assert bound_revisions == [LOCAL_MODEL_REVISION]
     run_entries = tuple(
         path.name for path in (project / ".runs" / "agent-ui").iterdir() if len(path.name) == 24
@@ -371,7 +523,7 @@ def test_launch_contract_drift_after_intake_fails_before_run_or_manifest_model_c
     pre_drift_digest = ready.readiness.launch_contract_digest
     assert pre_drift_token is not None
     assert pre_drift_digest is not None
-    assert role_calls == ["ArchitectConversationReply"]
+    assert role_calls == ["_ArchitectConversationReadyOutput"]
 
     canonical = migration_launch_contract("salesforce-vf-to-lwc")
     drifted = canonical.model_copy(
@@ -687,7 +839,7 @@ def test_concurrent_exact_token_launches_converge_on_one_run_and_one_manifest_ca
 
     class BlockingManifestClient(base_client):
         def parse(self, *, system_prompt, input_value, output_type):
-            if output_type is ArchitectManifestProposal:
+            if issubclass(output_type, ArchitectManifestProposal):
                 manifest_started.set()
                 assert release_manifest.wait(timeout=10)
             return super().parse(
@@ -730,14 +882,14 @@ def test_concurrent_exact_token_launches_converge_on_one_run_and_one_manifest_ca
     assert first_conversation.status == "launched"
     assert second_conversation == first_conversation
     assert second_run == first_run
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
     repeated_conversation, repeated_run = service_b.launch_conversation(
         conversation.conversation_id,
         launch_token=launch_token,
     )
     assert repeated_conversation == first_conversation
     assert repeated_run == first_run
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
     run_entries = tuple(
         path.name for path in (project / ".runs" / "agent-ui").iterdir() if len(path.name) == 24
     )
@@ -767,7 +919,7 @@ def test_controlled_manifest_architect_failure_records_and_recovers_one_terminal
 
     class FailingManifestClient(working_client):
         def parse(self, *, system_prompt, input_value, output_type):
-            if output_type is ArchitectManifestProposal:
+            if issubclass(output_type, ArchitectManifestProposal):
                 role_calls.append(output_type.__name__)
                 raise RuntimeError("simulated manifest Architect failure")
             return super().parse(
@@ -800,7 +952,7 @@ def test_controlled_manifest_architect_failure_records_and_recovers_one_terminal
     assert persisted.launch_intent is not None
     assert persisted.launch is not None
     assert persisted.launch.handle == failed_run.handle
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
 
     repeated_conversation, repeated_run = service.launch_conversation(
         conversation.conversation_id,
@@ -809,7 +961,7 @@ def test_controlled_manifest_architect_failure_records_and_recovers_one_terminal
     assert repeated_conversation == launched
     assert repeated_run == failed_run
     assert service.latest() == failed_run
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
     run_entries = tuple(
         path.name for path in (project / ".runs" / "agent-ui").iterdir() if len(path.name) == 24
     )
@@ -854,7 +1006,7 @@ def test_incomplete_reserved_bootstrap_recovers_the_exact_conversation_run_once(
     assert pending.launch is None
     reserved_handle = pending.launch_intent.handle
     assert (project / ".runs" / "agent-ui" / reserved_handle).is_dir()
-    assert role_calls == ["ArchitectConversationReply"]
+    assert role_calls == ["_ArchitectConversationReadyOutput"]
 
     monkeypatch.setattr(agent_run_module, "_write_run_evidence", original_write)
     launched, recovered = service.launch_conversation(
@@ -865,14 +1017,14 @@ def test_incomplete_reserved_bootstrap_recovers_the_exact_conversation_run_once(
     assert launched.status == "launched"
     assert recovered.handle == reserved_handle
     assert recovered.status == "awaiting_approval"
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
     repeated_conversation, repeated_run = service.launch_conversation(
         conversation.conversation_id,
         launch_token=launch_token,
     )
     assert repeated_conversation == launched
     assert repeated_run == recovered
-    assert role_calls == ["ArchitectConversationReply", "ArchitectManifestProposal"]
+    assert role_calls == ["_ArchitectConversationReadyOutput", "ArchitectManifestProposal"]
     run_entries = tuple(
         path.name for path in (project / ".runs" / "agent-ui").iterdir() if len(path.name) == 24
     )
@@ -895,7 +1047,7 @@ def test_pending_launch_rejects_messages_before_invoking_the_model(
     )
     launch_token = ready.readiness.launch_token
     assert launch_token is not None
-    assert role_calls == ["ArchitectConversationReply"]
+    assert role_calls == ["_ArchitectConversationReadyOutput"]
 
     store = ArchitectConversationStore(project / ".runs" / "agent-ui" / "conversations")
     reserved_handle = "c" * 24
@@ -918,7 +1070,7 @@ def test_pending_launch_rejects_messages_before_invoking_the_model(
             scenario_id="salesforce-vf-to-lwc",
         )
     assert raised.value.code == "conversation_launch_pending"
-    assert role_calls == ["ArchitectConversationReply"]
+    assert role_calls == ["_ArchitectConversationReadyOutput"]
     assert len(store.load(conversation.conversation_id).exchanges) == 1
 
     launched_conversation, launched_run = service.launch_conversation(

@@ -31,6 +31,8 @@ from legacy_migration_agent.application.final_review import (
     FinalReviewRequest,
     FinalReviewStatus,
 )
+from legacy_migration_agent.benchmark_corpus import BenchmarkCorpusManifest
+from legacy_migration_agent.benchmark_execution import BenchmarkExecutionAnchor
 from legacy_migration_agent.contracts import (
     ChangeSet,
     DecisionRequest,
@@ -50,10 +52,23 @@ from legacy_migration_agent.evaluation import (
     PilotEvaluationVerification,
     PilotEvidenceReceipt,
 )
+from legacy_migration_agent.graphs.graph_assurance import GraphAssuranceReport
 from legacy_migration_agent.graphs.graph_contracts import DependencyGraph
-from legacy_migration_agent.graphs.graph_evaluation import GraphEvaluationReport, GraphLabelSet
+from legacy_migration_agent.graphs.graph_evaluation import (
+    GraphEvaluationReport,
+    GraphLabelReviewEvidence,
+    GraphLabelSet,
+)
 from legacy_migration_agent.graphs.graph_store import StoredGraphSnapshot
 from legacy_migration_agent.knowledge.wiki import RetrievalTrace, WikiCatalog
+from legacy_migration_agent.measured_evaluation import (
+    BenchmarkLabelReviewEvidence,
+    EvaluationCellReceipt,
+    HumanReviewRubric,
+    MeasuredEvaluationRegistry,
+    MeasuredEvaluationVerification,
+    MetricSummary,
+)
 from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MuleSoftCandidateValidationSummary,
 )
@@ -61,9 +76,11 @@ from legacy_migration_agent.platforms.mulesoft_validation import (
     MuleSoftValidationContext,
     MuleSoftValidationEvidence,
 )
+from legacy_migration_agent.submission_review import ExternalCandidateReviewAttestation
 from legacy_migration_agent.workflow import ManifestApproval
 
 PUBLIC_SCHEMA_RELEASE = "v2.0"
+_MISSING = object()
 
 PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     # Human-gated workflow artifacts.
@@ -91,13 +108,16 @@ PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     # Dependency graph inputs, storage, labels, and evaluation evidence.
     DependencyGraph,
     StoredGraphSnapshot,
+    GraphAssuranceReport,
     GraphLabelSet,
+    GraphLabelReviewEvidence,
     GraphEvaluationReport,
     # Exact final-human-review lifecycle.
     FinalReviewRequest,
     FinalReviewDecision,
     FinalReviewRecord,
     FinalReviewStatus,
+    ExternalCandidateReviewAttestation,
     # LLM Wiki catalog and retrieval evidence.
     WikiCatalog,
     RetrievalTrace,
@@ -113,6 +133,15 @@ PUBLIC_SCHEMA_MODELS: tuple[type[BaseModel], ...] = (
     PilotEvaluationResults,
     PilotEvidenceReceipt,
     PilotEvaluationVerification,
+    # Active benchmark-v2 execution authority, evidence, and result boundary.
+    BenchmarkExecutionAnchor,
+    BenchmarkCorpusManifest,
+    BenchmarkLabelReviewEvidence,
+    MeasuredEvaluationRegistry,
+    HumanReviewRubric,
+    EvaluationCellReceipt,
+    MetricSummary,
+    MeasuredEvaluationVerification,
 )
 
 
@@ -297,9 +326,19 @@ def _compare_schema(
     baseline_enum = _as_value_sequence(baseline.get("enum"))
     current_enum = _as_value_sequence(current.get("enum"))
     if baseline_enum is None and current_enum is not None:
-        issues.append(
-            CompatibilityIssue(path, "enum-constraint-added", f"current={current_enum!r}")
-        )
+        baseline_const = baseline.get("const", _MISSING)
+        if baseline_const is _MISSING:
+            issues.append(
+                CompatibilityIssue(path, "enum-constraint-added", f"current={current_enum!r}")
+            )
+        elif baseline_const not in current_enum:
+            issues.append(
+                CompatibilityIssue(
+                    path,
+                    "enum-narrowed",
+                    f"removed baseline constant={baseline_const!r}",
+                )
+            )
     elif baseline_enum is not None and current_enum is not None:
         removed = [value for value in baseline_enum if value not in current_enum]
         if removed:

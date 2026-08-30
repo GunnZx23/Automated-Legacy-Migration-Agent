@@ -12,8 +12,11 @@
       "additionalProperties": false,
       "properties": {
         "content_kind": {
-          "const": "curated_wiki_evidence",
           "default": "curated_wiki_evidence",
+          "enum": [
+            "curated_wiki_evidence",
+            "benchmark_no_wiki_control"
+          ],
           "title": "Content Kind",
           "type": "string"
         },
@@ -227,8 +230,11 @@
       "type": "string"
     },
     "retrieval_strategy": {
-      "const": "deterministic_lexical",
       "default": "deterministic_lexical",
+      "enum": [
+        "deterministic_lexical",
+        "benchmark_no_wiki_control"
+      ],
       "title": "Retrieval Strategy",
       "type": "string"
     },

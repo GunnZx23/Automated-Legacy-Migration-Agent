@@ -57,7 +57,7 @@ def test_snapshot_cache_misses_when_any_analysis_input_changes(tmp_path: Path) -
     changed_entries = key.model_copy(
         update={"entry_paths": ("force-app/main/default/classes/Other.cls",)}
     )
-    changed_analyzer = key.model_copy(update={"analyzer_version": "salesforce-static-v2"})
+    changed_analyzer = key.model_copy(update={"analyzer_version": "salesforce-static-v3"})
 
     assert store.load(changed_revision) is None
     assert store.load(changed_entries) is None

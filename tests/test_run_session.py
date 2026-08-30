@@ -523,6 +523,219 @@ def test_portable_store_allows_repository_paths_with_underscored_segments(
         )
 
 
+def test_portable_store_persists_historical_engineer_source_syntax(tmp_path: Path) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    engineer_like_artifact = {
+        "model_outcome": {
+            "result": {
+                "kind": "file_plan",
+                "file_plan": {
+                    "updates": [
+                        {
+                            "path": "force-app/main/default/classes/ExampleController.cls",
+                            "content": (
+                                "/** Bounded additive controller. */\n"
+                                "public with sharing class ExampleController {\n"
+                                "    // Return a safe, stable response.\n"
+                                "    public static String value() { return 'ok'; }\n"
+                                "}\n"
+                            ),
+                        },
+                        {
+                            "path": "force-app/main/default/lwc/example/example.js",
+                            "content": (
+                                "import { LightningElement } from 'lwc';\n"
+                                "// Keep validation local to the component.\n"
+                                "const STATUS = /^(?:OPEN|CLOSED|ALL)$/i;\n"
+                                "const WORDS = /[A-Za-z]+(?:-[A-Za-z]+)*/g;\n"
+                                "export default class Example extends LightningElement {\n"
+                                "    isStatus(value) { return STATUS.test(value); }\n"
+                                "    words(value) { return value.match(WORDS); }\n"
+                                "}\n"
+                            ),
+                        },
+                        {
+                            "path": "force-app/main/default/lwc/example/example.css",
+                            "content": (
+                                "/* Keep the generated component readable. */\n"
+                                ".container { inline-size: 100%; }\n"
+                            ),
+                        },
+                    ],
+                    "assumptions": ["All output paths are repository-relative."],
+                },
+            }
+        }
+    }
+
+    session.store.write_json("engineer-source-syntax.json", engineer_like_artifact)
+
+    assert session.store.read_json("engineer-source-syntax.json") == engineer_like_artifact
+
+
+@pytest.mark.parametrize("field_name", ("content", "selected_content", "unified_diff"))
+def test_all_source_bearing_fields_allow_language_slash_syntax(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    source_text = (
+        "/** Explain the bounded implementation. */\n"
+        "// Preserve the request-generation guard.\n"
+        "const SAFE_STATUS = /^(?:OPEN|CLOSED|ALL)$/i;\n"
+        "const ratio = numerator / denominator;\n"
+        "</template>\n"
+    )
+    stored_text = source_text
+    if field_name == "unified_diff":
+        stored_text = (
+            "--- a/force-app/main/default/lwc/example/example.js\n"
+            "+++ b/force-app/main/default/lwc/example/example.js\n"
+            + "".join(f"+{line}\n" for line in source_text.rstrip("\n").split("\n"))
+        )
+
+    session.store.write_json(
+        f"source-bearing-{field_name}.json",
+        {field_name: stored_text},
+    )
+
+    assert session.store.read_json(f"source-bearing-{field_name}.json") == {field_name: stored_text}
+
+
+@pytest.mark.parametrize("field_name", ("content", "selected_content", "unified_diff"))
+@pytest.mark.parametrize(
+    "source_text",
+    (
+        '<a href="/data-role">role</a>\n',
+        '<a href="/data-state">state</a>\n',
+        "</data>\n",
+        r"const complete = /^[\s\S]*$/;" + "\n",
+        r"const newline = '\n'; const tab = '\t';" + "\n",
+        "//setup/mocks\n",
+        "const ratio = total /data.length;\n",
+        'const socket = "wss://example.test/events";\n',
+        'const resource = "salesforce+asset://resource/banner";\n',
+        '<flow name="get:/users/{userId}:api-config"/>\n',
+        "const routes = ['/data/accounts', '/run/{jobId}', '/media/banner.svg', '/home'];\n",
+    ),
+)
+def test_source_bearing_fields_allow_non_path_slash_syntax_and_public_routes(
+    tmp_path: Path,
+    field_name: str,
+    source_text: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    stored_text = source_text
+    if field_name == "unified_diff":
+        stored_text = (
+            "--- a/generated/source.txt\n"
+            "+++ b/generated/source.txt\n"
+            f"+{source_text.rstrip(chr(10))}"
+        )
+
+    session.store.write_json(
+        f"portable-source-{field_name}.json",
+        {field_name: stored_text},
+    )
+
+    assert session.store.read_json(f"portable-source-{field_name}.json") == {
+        field_name: stored_text
+    }
+
+
+def test_portable_store_allows_non_file_uri_schemes_in_structured_fields(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    value = {
+        "event_endpoint": "wss://example.test/events",
+        "resource_locator": "salesforce+asset://resource/banner",
+        "local_looking_uri": "custom://host/tmp/candidate",
+        "repository_assignment": "value=force-app/main/default/classes/Example.cls",
+    }
+
+    session.store.write_json("portable-uri-schemes.json", value)
+
+    assert session.store.read_json("portable-uri-schemes.json") == value
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    (
+        "// Read /private/tmp/candidate.txt before continuing.\n",
+        "/* Never copy /etc/passwd into generated output. */\n",
+        'const localHome = "/home/alice/candidate.js";\n',
+        'const localSecret = "/secrets/candidate.txt";\n',
+        'const localSystem = "/System/Library/private.bundle";\n',
+        'const localPath = "/workspace/private/candidate.js";\n',
+        "Read /tmp.\n",
+        "Read /tmp!\n",
+        "Read `/tmp`.\n",
+        'const mixedCaseTmp = "/TMP/private/file";\n',
+        'const mixedCaseUsers = "/users/alice/file";\n',
+        'const mixedCaseEtc = "/ETC/passwd";\n',
+        'const mixedCasePrivate = "/pRiVaTe/tmp/x";\n',
+        'const mixedCaseHome = "/HOME/alice/x";\n',
+        'const singleSlashFileUri = "file:/tmp/candidate.js";\n',
+        'const localUri = "file:///tmp/candidate.js";\n',
+        'const forwardUncPath = "//server/share/candidate.js";\n',
+        r'const windowsPath = "C:\Users\alice\candidate.js";' + "\n",
+        r'const uncPath = "\\server\share\candidate.js";' + "\n",
+        r'const rootRelativePath = "\Users\alice\candidate.js";' + "\n",
+        "const assignedPath=/private/tmp/candidate.js;\n",
+    ),
+)
+@pytest.mark.parametrize("field_name", ("content", "selected_content", "unified_diff"))
+def test_portable_store_rejects_local_paths_embedded_in_source_syntax(
+    tmp_path: Path,
+    source_text: str,
+    field_name: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            "unsafe-engineer-source.json",
+            {field_name: source_text},
+        )
+
+
+@pytest.mark.parametrize("field_name", ("content", "selected_content", "unified_diff"))
+def test_portable_store_rejects_exact_project_path_inside_source_comment(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="absolute project or source path"):
+        session.store.write_json(
+            "unsafe-project-path-source.json",
+            {field_name: f"// Inspect generated evidence under {project}.\n"},
+        )
+
+
+def test_portable_path_rejection_exposes_only_fixed_diagnostic_metadata(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(run_session_module.PortableEvidencePolicyViolation) as captured:
+        session.store.write_json(
+            "unsafe-diagnostic-source.json",
+            {"content": "read /etc/passwd"},
+        )
+
+    assert captured.value.evidence_category == "local_absolute_path"
+    assert captured.value.field_class == "source_bearing"
+
+
 def test_portable_store_allows_only_exact_dev_null_unified_diff_headers(
     tmp_path: Path,
 ) -> None:
@@ -560,10 +773,19 @@ def test_portable_store_allows_only_exact_dev_null_unified_diff_headers(
 @pytest.mark.parametrize(
     "field_name",
     (
+        "assumptions",
+        "canonical_description",
+        "concerns",
         "content",
+        "description",
         "implementation_contract",
+        "public_concerns",
+        "reason",
+        "recommendation",
         "required_implementation_contract",
         "selected_content",
+        "summary",
+        "unresolved_questions",
     ),
 )
 def test_opaque_portable_text_allows_routes_but_rejects_local_filesystem_paths(
@@ -573,6 +795,7 @@ def test_opaque_portable_text_allows_routes_but_rejects_local_filesystem_paths(
     project, _ = _project(tmp_path)
     session = _initialize(project)
     route_text = (
+        "Repository target /force-app/main/default/lwc/caseConsole is additive.\n"
         '<http:listener-config basePath="/api"/>\n'
         '<http:listener path="/customers/{customerId}/status"/>\n'
     )
@@ -580,6 +803,9 @@ def test_opaque_portable_text_allows_routes_but_rejects_local_filesystem_paths(
 
     unsafe_values = (
         "read /etc/passwd",
+        "read **/tmp/capstone.txt**",
+        "read _/tmp/capstone.txt_",
+        "read ___/tmp/capstone.txt___",
         "write /private/tmp/capstone.txt",
         r"read C:\Users\alice\secret.txt",
         "read file:///etc/passwd",
@@ -592,6 +818,243 @@ def test_opaque_portable_text_allows_routes_but_rejects_local_filesystem_paths(
             )
 
 
+@pytest.mark.parametrize(
+    "filesystem_root",
+    (
+        "Applications",
+        "bin",
+        "media",
+        "mnt",
+        "nix",
+        "proc",
+        "run",
+        "sbin",
+        "snap",
+        "srv",
+        "sys",
+    ),
+)
+def test_opaque_portable_text_rejects_additional_local_filesystem_roots(
+    tmp_path: Path,
+    filesystem_root: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            f"unsafe-root-{filesystem_root.casefold()}.json",
+            {"summary": f"Read /{filesystem_root}/private/evidence.txt"},
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_value",
+    (
+        "read /workspace/private/evidence.txt",
+        "path=/workspace/private/evidence.txt",
+        "read /data/private/evidence.txt",
+        "value=/data/private/evidence.txt",
+        "read /local/private/evidence.txt",
+        "read /api/../etc/passwd",
+        "read /api/%2e%2e/etc/passwd",
+        "read /force-app/../../Users/private/evidence.txt",
+        "read /api//status",
+        r"read /api\..\etc\passwd",
+        "read /apiary/status",
+        "read /force-appx/main/default",
+        r"read \\server\share\evidence.txt",
+        r"read \Users\alice\evidence.txt",
+        "read //server/share/evidence.txt",
+        "read file:///api",
+        "read file:/tmp/private",
+        'use basePath="/"',
+        "use basePath=/",
+        "use basePath = /",
+    ),
+)
+def test_opaque_portable_text_rejects_non_allowlisted_and_unsafe_paths(
+    tmp_path: Path,
+    unsafe_value: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json("unsafe-opaque-path.json", {"summary": unsafe_value})
+
+
+def test_structured_path_fields_remain_strict_when_narrative_fields_allow_routes(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    session.store.write_json("safe-route-summary.json", {"summary": "Call GET /api/status."})
+    session.store.write_json(
+        "safe-relative-glob-summary.json",
+        {"summary": "Run Jest for **/__tests__/** files."},
+    )
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json("unsafe-structured-path.json", {"path": "/api/status"})
+
+
+def test_narrative_markdown_inline_code_alternatives_are_not_paths(tmp_path: Path) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    summaries = [
+        "Preserve `OPEN`/`CLOSED`/`ALL` behavior.",
+        "Call `getAccounts()`/`getCases(accountId, statusFilter)` explicitly.",
+        "Enforce `with sharing`/`WITH USER_MODE`.",
+    ]
+
+    session.store.write_json("safe-inline-code-alternatives.json", {"summary": summaries})
+
+    assert session.store.read_json("safe-inline-code-alternatives.json") == {"summary": summaries}
+
+
+@pytest.mark.parametrize(
+    "unsafe_value",
+    (
+        "Do not reinterpret `safe`/`/tmp/private.txt` as prose.",
+        "Do not reinterpret `safe`/`/api/../etc/passwd` as prose.",
+        "Do not reinterpret `safe`/`file:///tmp/private.txt` as prose.",
+        r"Do not reinterpret `safe`/`C:\Users\alice\private.txt` as prose.",
+        "Do not reinterpret `C:`/`Users`/`alice`/`private.txt` as prose.",
+        r"Do not reinterpret `C:`\`Users`\`alice`\`private.txt` as prose.",
+        r"Do not reinterpret `\\server`/`share`/`private.txt` as prose.",
+        r"Do not reinterpret `\Users`/`alice`/`private.txt` as prose.",
+        r"Do not reinterpret `safe`/`\\server\share\private.txt` as prose.",
+    ),
+)
+def test_narrative_markdown_inline_code_near_misses_remain_rejected(
+    tmp_path: Path,
+    unsafe_value: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json("unsafe-inline-code-alternative.json", {"summary": unsafe_value})
+
+
+@pytest.mark.parametrize("field_name", ("command", "locator", "path"))
+@pytest.mark.parametrize("unsafe_value", ("value=/tmp/x", "value:/tmp/x"))
+def test_structured_fields_reject_embedded_absolute_path_assignments(
+    tmp_path: Path,
+    field_name: str,
+    unsafe_value: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            "unsafe-structured-assignment.json",
+            {field_name: unsafe_value},
+        )
+
+
+def test_assumptions_allow_bounded_salesforce_public_route_families(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+    assumptions = [
+        "Retain the Visualforce route root /apex.",
+        "Preserve the legacy Visualforce route /apex/LegacyCaseManagementConsole.",
+        "Preserve `/apex/LegacyCaseManagementConsole`!",
+        "Preserve /apex/LegacyCaseManagementConsole?",
+        "Query /services/data/v67.0/query through the authorized Salesforce session.",
+        "Navigate to /lightning/n/AccountContactExplorer.",
+        "Load the static asset at /resource/accountContactExplorerStyles.",
+    ]
+
+    session.store.write_json("salesforce-route-assumptions.json", {"assumptions": assumptions})
+
+    assert session.store.read_json("salesforce-route-assumptions.json") == {
+        "assumptions": assumptions
+    }
+
+
+@pytest.mark.parametrize(
+    "unsafe_route",
+    (
+        "/apex/../private",
+        "/apex/%2e%2e/private",
+        "/apex//LegacyCaseManagementConsole",
+        "/apex/LegacyCaseManagementConsole/Nested",
+        "/apex/LegacyCaseManagementConsole?redirect=/tmp/private",
+        "/apexx/LegacyCaseManagementConsole",
+        r"/apex\..\private",
+        "/services/data/../private",
+        "/services/data/%2e%2e/private",
+        "/lightning//Account",
+        r"/resource\..\private",
+    ),
+)
+def test_salesforce_public_route_families_reject_unsafe_segments(
+    tmp_path: Path,
+    unsafe_route: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            "unsafe-salesforce-route-assumption.json",
+            {"assumptions": [f"Use {unsafe_route}."]},
+        )
+
+
+def test_salesforce_public_route_is_still_rejected_in_structured_path_field(
+    tmp_path: Path,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            "unsafe-structured-salesforce-route.json",
+            {"path": "/services/data/v67.0/query"},
+        )
+
+    with pytest.raises(PolicyViolation, match="local absolute path"):
+        session.store.write_json(
+            "unsafe-structured-visualforce-route.json",
+            {"path": "/apex/LegacyCaseManagementConsole"},
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("concerns", "public_concerns", "reason", "recommendation", "summary", "unresolved_questions"),
+)
+def test_role_narrative_fields_still_reject_secrets(
+    tmp_path: Path,
+    field_name: str,
+) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="unredacted credential"):
+        session.store.write_json(
+            f"unsafe-secret-{field_name}.json",
+            {field_name: "api_key=do-not-store-this"},
+        )
+
+
+def test_role_narrative_fields_reject_the_exact_project_path(tmp_path: Path) -> None:
+    project, _ = _project(tmp_path)
+    session = _initialize(project)
+
+    with pytest.raises(PolicyViolation, match="absolute project or source path"):
+        session.store.write_json(
+            "unsafe-project-path-summary.json",
+            {"summary": f"Read evidence from {project}."},
+        )
+
+
 def test_unified_diff_allows_routes_but_rejects_local_filesystem_paths(
     tmp_path: Path,
 ) -> None:
@@ -600,6 +1063,7 @@ def test_unified_diff_allows_routes_but_rejects_local_filesystem_paths(
     route_diff = (
         "--- a/app.xml\n"
         "+++ b/app.xml\n"
+        "+Repository target /force-app/main/default/lwc/caseConsole is additive.\n"
         '+<http:listener-config basePath="/api"/>\n'
         '+<http:listener path="/customers/{customerId}/status"/>'
     )

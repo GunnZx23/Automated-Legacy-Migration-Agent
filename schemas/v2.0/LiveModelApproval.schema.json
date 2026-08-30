@@ -17,6 +17,22 @@
       "minLength": 1,
       "title": "Approved By",
       "type": "string"
+    },
+    "approved_remote_provider_id": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[^\\x00\\r\\n]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Authenticated remote provider explicitly approved by the operator. Required by provider-managed CLI adapters before source is sent.",
+      "title": "Approved Remote Provider Id"
     }
   },
   "required": [

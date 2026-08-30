@@ -3,6 +3,155 @@
     "ArchitectRiskObservation": {
       "additionalProperties": false,
       "description": "One public semantic risk authored by the Architect model.",
+      "oneOf": [
+        {
+          "properties": {
+            "hazard_reason": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "category"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "destructive_change",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "destructive_legacy_deletion",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "security",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "sharing_boundary_weakening",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "security",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "object_field_security_weakening",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "security",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "permission_scope_expansion",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "public_contract",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "public_contract_change",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "cross_application",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "cross_application_effect",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "dynamic_dependency",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "unresolved_dynamic_dependency",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "category": {
+              "const": "incomplete_evidence",
+              "type": "string"
+            },
+            "hazard_reason": {
+              "const": "incomplete_evidence",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "hazard_reason"
+          ],
+          "type": "object"
+        }
+      ],
       "properties": {
         "category": {
           "$ref": "#/$defs/RiskCategory"
@@ -15,6 +164,17 @@
           "minItems": 1,
           "title": "Evidence Ids",
           "type": "array"
+        },
+        "hazard_reason": {
+          "default": null,
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RiskReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "requires_human_decision": {
           "default": false,
@@ -92,6 +252,21 @@
         "dynamic_dependency"
       ],
       "title": "RiskCategory",
+      "type": "string"
+    },
+    "RiskReason": {
+      "description": "Generic, model-facing reason classification for public risk observations.",
+      "enum": [
+        "destructive_legacy_deletion",
+        "sharing_boundary_weakening",
+        "object_field_security_weakening",
+        "permission_scope_expansion",
+        "public_contract_change",
+        "cross_application_effect",
+        "unresolved_dynamic_dependency",
+        "incomplete_evidence"
+      ],
+      "title": "RiskReason",
       "type": "string"
     }
   },

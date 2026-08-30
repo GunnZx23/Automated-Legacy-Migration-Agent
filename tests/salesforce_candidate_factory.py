@@ -105,7 +105,7 @@ def salesforce_candidate_outputs() -> dict[str, bytes]:
                     }
                 }
 
-                @AuraEnabled(cacheable=true)
+                @AuraEnabled
                 public static List<Contact> getContacts(Id accountId) {
                     if (accountId == null) {
                         return new List<Contact>();
@@ -765,7 +765,7 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                     }
                 }
 
-                @AuraEnabled(cacheable=true)
+                @AuraEnabled
                 public static List<Case> getCases(Id accountId, String statusFilter) {
                     if (accountId == null) {
                         return new List<Case>();
@@ -824,16 +824,14 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                             ContactId = skynetContact.Id,
                             Subject = 'Cooling fan malfunction',
                             Status = 'New',
-                            Priority = 'High',
-                            IsClosed = false
+                            Priority = 'High'
                         ),
                         new Case(
                             AccountId = skynetAccount.Id,
                             ContactId = skynetContact.Id,
                             Subject = 'Firmware update request',
                             Status = 'Closed',
-                            Priority = 'Low',
-                            IsClosed = true
+                            Priority = 'Low'
                         )
                     };
                 }
@@ -877,7 +875,7 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                 static void returnsEmptyCasesForBlankSelection() {
                     Test.startTest();
                     List<Case> visibleCases =
-                        CaseManagementConsoleController.getCases(null);
+                        CaseManagementConsoleController.getCases(null, 'OPEN');
                     Test.stopTest();
 
                     Assert.areEqual(0, visibleCases.size());
@@ -924,7 +922,7 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                     </div>
 
                     <template lwc:if={showGuidance}>
-                        <p data-state="guidance" class="guidance">
+                        <p role="alert" class="guidance">
                             Select an account, choose a status, and load cases to view them.
                         </p>
                     </template>
@@ -1018,7 +1016,13 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                         ];
                         this.errorMessage = undefined;
                     } else if (error) {
+                        this.loadRequestGeneration += 1;
                         this.accountOptions = [BLANK_ACCOUNT_OPTION];
+                        this.selectedAccountId = '';
+                        this.cases = [];
+                        this.isLoading = false;
+                        this.hasLoaded = false;
+                        this.warningMessage = undefined;
                         this.errorMessage = 'Accounts could not be loaded.';
                     }
                 }
@@ -1036,7 +1040,13 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                 }
 
                 handleStatusChange(event) {
+                    this.loadRequestGeneration += 1;
                     this.statusFilter = event.detail.value;
+                    this.cases = [];
+                    this.isLoading = false;
+                    this.hasLoaded = false;
+                    this.errorMessage = undefined;
+                    this.warningMessage = undefined;
                 }
 
                 async handleLoad() {
@@ -1410,6 +1420,11 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                 <description>Read-only access to both synthetic Case console implementations.</description>
                 <fieldPermissions>
                     <editable>false</editable>
+                    <field>Case.AccountId</field>
+                    <readable>true</readable>
+                </fieldPermissions>
+                <fieldPermissions>
+                    <editable>false</editable>
                     <field>Case.ContactId</field>
                     <readable>true</readable>
                 </fieldPermissions>
@@ -1420,17 +1435,7 @@ def case_management_candidate_outputs() -> dict[str, bytes]:
                 </fieldPermissions>
                 <fieldPermissions>
                     <editable>false</editable>
-                    <field>Case.IsClosed</field>
-                    <readable>true</readable>
-                </fieldPermissions>
-                <fieldPermissions>
-                    <editable>false</editable>
                     <field>Case.Priority</field>
-                    <readable>true</readable>
-                </fieldPermissions>
-                <fieldPermissions>
-                    <editable>false</editable>
-                    <field>Case.Status</field>
                     <readable>true</readable>
                 </fieldPermissions>
                 <fieldPermissions>

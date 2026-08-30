@@ -263,6 +263,7 @@ def test_contract_declares_a_source_only_public_migration_fixture() -> None:
     assert "status is ACTIVE" in implementation_contract
     assert "source is synthetic-fixture" in implementation_contract
     assert "topology and expression spelling are implementation choices" in implementation_contract
+    assert "<runtimeVersion>${app.runtime}</runtimeVersion>" in implementation_contract
 
 
 def test_static_candidate_contract_accepts_a_test_built_candidate_without_runtime_claim(
@@ -870,6 +871,23 @@ def test_pom_supply_chain_allowlists_reject_unapproved_inputs(
         )
 
     expect_failure(candidate, source, MuleSoftLocalCheckCode.POM_CONTRACT)
+
+
+def test_pom_contract_requires_the_active_runtime_binding(tmp_path: Path) -> None:
+    source, candidate = isolated_roots(tmp_path)
+    pom = candidate / MULE4_POM
+    replace(
+        pom,
+        """                <configuration>
+                    <runtimeVersion>${app.runtime}</runtimeVersion>
+                </configuration>
+""",
+        "",
+    )
+
+    failure = expect_failure(candidate, source, MuleSoftLocalCheckCode.POM_CONTRACT)
+
+    assert failure.artifact == MULE4_POM
 
 
 def test_secret_and_outbound_connector_failures_are_sanitized(tmp_path: Path) -> None:

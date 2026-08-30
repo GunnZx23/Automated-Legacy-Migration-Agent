@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Final, Literal, cast
 
 from legacy_migration_agent.agent_runtime.agent_definitions import load_agent_registry
+from legacy_migration_agent.agent_runtime.claude_cli_model import (
+    DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+)
 from legacy_migration_agent.agent_runtime.correction import (
     CorrectionApproval,
     CorrectionController,
@@ -50,6 +53,7 @@ from legacy_migration_agent.application.agent_run import (
     build_claude_cli_model_clients,
     build_local_ollama_model_clients,
     get_agent_run_status,
+    get_historical_terminal_agent_run_status,
     has_verified_terminal_agent_run_history,
     prepare_agent_run_request,
     recover_incomplete_agent_run_start,
@@ -174,16 +178,20 @@ class AgentUiService:
             selected_model_id = model_id
             model_argument = "model_id"
         self._model_id = _normalize_model_id(selected_model_id, argument=model_argument)
-        selected_timeout: object = (
-            ollama_timeout_seconds
-            if model_timeout_seconds is None
-            else model_timeout_seconds
-        )
-        timeout_argument = (
-            "ollama_timeout_seconds"
-            if model_timeout_seconds is None
-            else "model_timeout_seconds"
-        )
+        if model_timeout_seconds is None:
+            selected_timeout: object = (
+                DEFAULT_CLAUDE_TIMEOUT_SECONDS
+                if self._model_provider == _CLAUDE_RUNTIME_PROVIDER
+                else ollama_timeout_seconds
+            )
+            timeout_argument = (
+                "claude_timeout_seconds"
+                if self._model_provider == _CLAUDE_RUNTIME_PROVIDER
+                else "ollama_timeout_seconds"
+            )
+        else:
+            selected_timeout = model_timeout_seconds
+            timeout_argument = "model_timeout_seconds"
         self._model_timeout_seconds = _normalize_model_timeout_seconds(
             selected_timeout,
             argument=timeout_argument,
@@ -280,7 +288,12 @@ class AgentUiService:
             )
         else:
             reachable = True
-            installed = True
+            # The local Ollama probe inventories the exact model revision. The
+            # Claude CLI probe verifies the executable, authentication seam,
+            # model alias binding, and runtime identity without invoking the
+            # remote model, so remote model availability remains unmeasured
+            # until the first successful role call.
+            installed = None if self._model_provider == _CLAUDE_RUNTIME_PROVIDER else True
             status = "ready"
         lifecycle_event(
             "ui.provider.readiness.completed",
@@ -307,7 +320,7 @@ class AgentUiService:
             with self._registry_lock:
                 self._prepare_run_root()
                 store = self._conversation_store()
-                if store.conversation_count() >= MAX_CONVERSATIONS:
+                if store.unlaunched_conversation_count() >= MAX_CONVERSATIONS:
                     raise AgentUiError("conversation_capacity_reached")
                 conversation_id = self._new_conversation_id(store)
                 snapshot = store.create(
@@ -491,9 +504,7 @@ class AgentUiService:
                     raise AgentUiError("stale_conversation")
                 if snapshot.launch is not None:
                     run_view = self.get(snapshot.launch.handle)
-                    expected_runtime_identity = (
-                        snapshot.launch.resolved_runtime_identity_digest
-                    )
+                    expected_runtime_identity = snapshot.launch.resolved_runtime_identity_digest
                     if expected_runtime_identity is None:
                         raise AgentUiError("conversation_unavailable")
                     self._verify_conversation_launch_binding(
@@ -534,9 +545,7 @@ class AgentUiService:
                     reserved_handle = snapshot.launch_intent.handle
                 if snapshot.launch_intent is None:
                     raise AgentUiError("conversation_unavailable")
-                expected_runtime_identity = (
-                    snapshot.launch_intent.resolved_runtime_identity_digest
-                )
+                expected_runtime_identity = snapshot.launch_intent.resolved_runtime_identity_digest
                 if expected_runtime_identity is None:
                     raise AgentUiError("conversation_unavailable")
                 requested_at = snapshot.launch_intent.requested_at
@@ -681,11 +690,8 @@ class AgentUiService:
                     raise AgentUiError("run_unavailable")
                 if snapshot_tree(source) != source_before:
                     raise AgentUiError("run_unavailable")
-                reloaded = self._load_status(handle)
-                if reloaded != status:
-                    raise AgentUiError("run_unavailable")
-                view = self._projector.project(handle, reloaded)
-                _log_ui_run_status(handle, reloaded)
+                view = self._projector.project(handle, status)
+                _log_ui_run_status(handle, status)
                 return view
         except AgentUiError:
             raise
@@ -739,11 +745,8 @@ class AgentUiService:
                 raise AgentUiError("run_unavailable")
             if snapshot_tree(source) != source_before:
                 raise AgentUiError("run_unavailable")
-            reloaded = self._load_status(handle)
-            if reloaded != status:
-                raise AgentUiError("run_unavailable")
-            view = self._projector.project(handle, reloaded)
-            _log_ui_run_status(handle, reloaded)
+            view = self._projector.project(handle, status)
+            _log_ui_run_status(handle, status)
             return view
 
     def get(self, handle: str) -> AgentRunView:
@@ -806,9 +809,7 @@ class AgentUiService:
         # A live poll therefore has to read the in-flight root to see progress
         # while the run is still executing, and falls back to the promoted
         # evidence copy for finished (or already-promoted) attempts.
-        inflight_dir = (
-            run_dir / "state" / "inflight-model-runs" / "model-runs" / request_id
-        )
+        inflight_dir = run_dir / "state" / "inflight-model-runs" / "model-runs" / request_id
         evidence_dir = run_dir / "evidence" / "model-runs" / request_id
         return _project_live_progress(handle, inflight_dir, evidence_dir)
 
@@ -1094,13 +1095,10 @@ class AgentUiService:
                     raise AgentUiError("run_unavailable")
                 if snapshot_tree(source) != source_before:
                     raise AgentUiError("run_unavailable")
-                reloaded = self._load_status(handle)
-                if reloaded != resumed:
+                if selection == "reject" and self._projector.engineer_artifact_exists(resumed):
                     raise AgentUiError("run_unavailable")
-                if selection == "reject" and self._projector.engineer_artifact_exists(reloaded):
-                    raise AgentUiError("run_unavailable")
-                view = self._projector.project(handle, reloaded)
-                _log_ui_run_status(handle, reloaded)
+                view = self._projector.project(handle, resumed)
+                _log_ui_run_status(handle, resumed)
                 return view
         except AgentUiError:
             raise
@@ -1228,16 +1226,13 @@ class AgentUiService:
                         raise AgentUiError("run_unavailable")
                 else:
                     raise AgentUiError("run_unavailable")
-                reloaded = self._load_status(handle)
-                if reloaded != retried:
-                    raise AgentUiError("run_unavailable")
                 persisted_approval = CorrectionApproval.model_validate(
                     store.read_json(_CORRECTION_APPROVAL_ATTEMPT_TWO_PATH)
                 )
                 if persisted_approval != approval:
                     raise AgentUiError("run_unavailable")
-                view = self._projector.project(handle, reloaded)
-                _log_ui_run_status(handle, reloaded)
+                view = self._projector.project(handle, retried)
+                _log_ui_run_status(handle, retried)
                 return view
         except AgentUiError:
             raise
@@ -1258,7 +1253,7 @@ class AgentUiService:
         self._require_known_handle(handle)
         try:
             with self._lock_for(handle):
-                status = self._load_status(handle)
+                status = self._load_read_status(handle)
                 view = self._projector.project(handle, status)
                 candidate = view.candidate
                 validation = view.validation
@@ -1311,7 +1306,7 @@ class AgentUiService:
         self._require_known_handle(handle)
         try:
             with self._lock_for(handle):
-                status = self._load_status(handle)
+                status = self._load_read_status(handle)
                 view = self._projector.project(handle, status)
                 if view.candidate is None or not view.candidate.download_available:
                     raise AgentUiError("candidate_unavailable")
@@ -1413,8 +1408,7 @@ class AgentUiService:
             if (
                 call.provider != self._model_provider
                 or call.model_id != self._model_id
-                or call.resolved_execution_boundary
-                != _PROVIDER_BOUNDARIES[self._model_provider]
+                or call.resolved_execution_boundary != _PROVIDER_BOUNDARIES[self._model_provider]
                 or call.resolved_runtime_identity_digest is None
             ):
                 raise AgentUiError("conversation_unavailable")
@@ -1434,9 +1428,7 @@ class AgentUiService:
     ) -> None:
         """Require exact scenario-contract and model-revision launch provenance."""
 
-        revision_bound = (
-            run.boundaries.runtime_identity_digest == expected_runtime_identity
-        )
+        revision_bound = run.boundaries.runtime_identity_digest == expected_runtime_identity
         if (
             conversation.readiness.platform is None
             or conversation.readiness.scenario_id is None
@@ -1494,10 +1486,7 @@ class AgentUiService:
         self,
         status: AgentRunStatus,
     ) -> AgentRunModelClients:
-        if (
-            status.provider_id == self._model_provider
-            and self._model_id == status.model_id
-        ):
+        if status.provider_id == self._model_provider and self._model_id == status.model_id:
             return self._runtime_models(status.model_id)
         raise AgentUiError("run_unavailable")
 
@@ -1529,12 +1518,31 @@ class AgentUiService:
             thread_id=thread_id,
         )
 
+    def _load_read_status(self, handle: str) -> AgentRunStatus:
+        """Read current state, or a terminal prompt-compatible frozen projection."""
+
+        try:
+            return self._load_status(handle)
+        except PolicyViolation as error:
+            if str(error) not in {
+                "current agent definitions differ from the run session",
+                "migration launch contract is not canonical",
+            }:
+                raise
+            run_id, thread_id = self._run_thread_ids(handle)
+            return get_historical_terminal_agent_run_status(
+                self._project_root,
+                self._run_dir(handle),
+                run_id=run_id,
+                thread_id=thread_id,
+            )
+
     def _get_verified_view(self, handle: str) -> AgentRunView:
         """Project one exact run without choosing a public logging policy."""
 
         self._require_known_handle(handle)
         with self._lock_for(handle):
-            return self._projector.project(handle, self._load_status(handle))
+            return self._projector.project(handle, self._load_read_status(handle))
 
     def _prepare_run_root(self) -> None:
         parent = self._project_root / ".runs"

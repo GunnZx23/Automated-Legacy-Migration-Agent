@@ -33,6 +33,7 @@ AgentFailureReasonCode = Literal[
     "workspace_scope_mismatch",
     "workspace_not_clean",
     "attempt_two_scope_expansion_invalid",
+    "output_evidence_local_path",
     "policy_rejected",
     "provider_timeout",
     "provider_unavailable",
@@ -45,6 +46,7 @@ AgentFailurePhase = Literal[
     "structured_output",
     "provider_response",
     "policy_validation",
+    "role_artifact_persistence",
     "deterministic_validation",
     "internal",
 ]
@@ -312,6 +314,7 @@ class AgentCorrectionView(StrictModel):
     completed_attempt: int = Field(ge=1, le=2)
     authorized_attempt: int | None = Field(default=None, ge=2, le=2)
     action: CorrectionAction
+    requires_graph_regeneration: bool = False
     failed_check_ids: tuple[str, ...]
     reason: str = Field(min_length=1, max_length=2000)
     retry_available: bool

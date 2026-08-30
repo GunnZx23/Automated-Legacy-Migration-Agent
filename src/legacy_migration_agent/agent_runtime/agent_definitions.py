@@ -162,7 +162,10 @@ _PERMISSIONS: Mapping[AgentRole, AgentPermissions] = MappingProxyType(
 _INPUT_CONTRACTS: Mapping[AgentRole, tuple[str, ...]] = MappingProxyType(
     {
         AgentRole.ARCHITECT: ("ArchitectModelContext", "ArchitectConversationContext"),
-        AgentRole.ENGINEER: ("EngineerWorkspaceContext",),
+        AgentRole.ENGINEER: (
+            "EngineerWorkspaceContext",
+            "EngineerCorrectionProviderContext",
+        ),
         AgentRole.VALIDATOR: ("ValidatorEvidenceContext",),
     }
 )
@@ -177,8 +180,8 @@ _OUTPUT_CONTRACTS: Mapping[AgentRole, str] = MappingProxyType(
 
 _VERSIONS: Mapping[AgentRole, str] = MappingProxyType(
     {
-        AgentRole.ARCHITECT: "architect/v8",
-        AgentRole.ENGINEER: "engineer/v23",
+        AgentRole.ARCHITECT: "architect/v17",
+        AgentRole.ENGINEER: "engineer/v30",
         AgentRole.VALIDATOR: "validator/v5",
     }
 )

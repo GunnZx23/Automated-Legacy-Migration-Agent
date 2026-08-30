@@ -1,0 +1,45 @@
+{
+  "schema_version": "2.0",
+  "snapshot_method": "legacy_migration_agent.core.workspace.content_revision",
+  "cases": [
+    {
+      "case_id": "mulesoft-customer-status-simple",
+      "scenario_id": "mulesoft-mule3-to-mule4",
+      "source_root": "fixtures/mulesoft/customer-status-api/input",
+      "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+      "fixture_contract_path": "fixtures/mulesoft/customer-status-api/fixture.yaml",
+      "fixture_contract_file_digest": "sha256:8ad97d01f5100db4cdd6a26780882d874ceda114ef635f596018c94694e91363",
+      "scenario_definition_digest": "sha256:97e1a041470b4e0e04c6fa35462c6e2fa2b89705afe78e934e351abe0252302c",
+      "scope_policy_digest": "sha256:e9e361498109797c655aad121a2f8e663bd03956908930013338d1b4096f4793",
+      "implementation_contract_digest": "sha256:b4e9203e4e342cd33a49a16561fccf227714848bd4d09728040c771d889f37d4",
+      "source_edge_labels_path": "evaluation/mulesoft-customer-status-api-source-edges.json",
+      "source_edge_labels_file_digest": "sha256:8baad5b11c4b6f080f66e7ad4ad4fe2d76416fd1aa877691871755553e181fbf"
+    },
+    {
+      "case_id": "salesforce-account-contact-medium",
+      "scenario_id": "salesforce-vf-to-lwc",
+      "source_root": "fixtures/salesforce/account-contact-explorer/input",
+      "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+      "fixture_contract_path": "fixtures/salesforce/account-contact-explorer/fixture.yaml",
+      "fixture_contract_file_digest": "sha256:44a60a9b6bcc259ca7a2af73769bd7ca4dfd23396161f38799c38b2e106c455f",
+      "scenario_definition_digest": "sha256:82651fe4c8cd75ccd4a35302135840861f6caffac33a384e62aea2b913545889",
+      "scope_policy_digest": "sha256:2fa243e6d70ac7a3574efcec42cb29f3c610f160aec357a2382198a322c7bc28",
+      "implementation_contract_digest": "sha256:8c3325339962336ce5d4a12d728b9a294ffc69a84a4c8f7cec3fb12aae82387b",
+      "source_edge_labels_path": "evaluation/salesforce-account-contact-explorer-source-edges.json",
+      "source_edge_labels_file_digest": "sha256:ed87af61592562817916418c782874c9f84659042f0ace7638b7a0f59637cb43"
+    },
+    {
+      "case_id": "salesforce-case-management-complex-risk",
+      "scenario_id": "case-management-console",
+      "source_root": "fixtures/salesforce/case-management-console/input",
+      "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+      "fixture_contract_path": "fixtures/salesforce/case-management-console/fixture.yaml",
+      "fixture_contract_file_digest": "sha256:af312385fd0b01fb9a84a8b2fd76a74f91c80ad4876407e399b8846df8c3c323",
+      "scenario_definition_digest": "sha256:3fcca20a77bdfdeb48528190b781f1d7295b81d5ab574370dbfad0dbd20855d2",
+      "scope_policy_digest": "sha256:c03ed7fd80f0649da70b9bbd3a5557fbd95d48d2289ee14bf7b7838dbf79a378",
+      "implementation_contract_digest": "sha256:85837f44b643796519ad6f74caf020ee2eb8f1460a749dda338f3c63c91d00c6",
+      "source_edge_labels_path": "evaluation/benchmark-v2/salesforce-case-management-console-source-edges.json",
+      "source_edge_labels_file_digest": "sha256:b571ae50bb1eecfdb797c1104463babca6587d0e0fd77b26b74aa47fa43f4735"
+    }
+  ]
+}

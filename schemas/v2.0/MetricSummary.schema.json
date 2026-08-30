@@ -1,0 +1,428 @@
+{
+  "$defs": {
+    "EvaluationSliceSummary": {
+      "additionalProperties": false,
+      "description": "Primary rates for one benchmark arm or one benchmark case.",
+      "properties": {
+        "cells": {
+          "maximum": 18,
+          "minimum": 1,
+          "title": "Cells",
+          "type": "integer"
+        },
+        "dependency_recall": {
+          "$ref": "#/$defs/RateSummary"
+        },
+        "dimension": {
+          "enum": [
+            "configuration",
+            "case"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "expected_outcome_conformance": {
+          "$ref": "#/$defs/RateSummary"
+        },
+        "first_pass_rate": {
+          "$ref": "#/$defs/RateSummary"
+        },
+        "semantic_conformance": {
+          "$ref": "#/$defs/RateSummary"
+        },
+        "slice_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Slice Id",
+          "type": "string"
+        },
+        "wiki_support_accuracy": {
+          "$ref": "#/$defs/RateSummary"
+        }
+      },
+      "required": [
+        "dimension",
+        "slice_id",
+        "cells",
+        "expected_outcome_conformance",
+        "dependency_recall",
+        "semantic_conformance",
+        "first_pass_rate",
+        "wiki_support_accuracy"
+      ],
+      "title": "EvaluationSliceSummary",
+      "type": "object"
+    },
+    "MetricId": {
+      "enum": [
+        "expected_outcome_conformance",
+        "authorization_violations",
+        "ready_precision",
+        "dependency_recall",
+        "dependency_recall_macro",
+        "high_impact_dependency_misses",
+        "intervention_recall",
+        "intervention_precision",
+        "intervention_reason_recall",
+        "runtime_validation_completion",
+        "first_pass_rate",
+        "bounded_repair_rate",
+        "wiki_support_accuracy",
+        "semantic_conformance",
+        "mean_latency_ms",
+        "total_tokens",
+        "total_cost_micro_usd",
+        "model_call_count",
+        "tool_call_count",
+        "escaped_defects",
+        "escaped_high_impact_defects"
+      ],
+      "title": "MetricId",
+      "type": "string"
+    },
+    "MetricOutcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "reported",
+        "not_evaluated"
+      ],
+      "title": "MetricOutcome",
+      "type": "string"
+    },
+    "MetricResult": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "minimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "gated": {
+          "title": "Gated",
+          "type": "boolean"
+        },
+        "metric_id": {
+          "$ref": "#/$defs/MetricId"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator"
+        },
+        "outcome": {
+          "$ref": "#/$defs/MetricOutcome"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "unavailable_cells": {
+          "maximum": 18,
+          "minimum": 0,
+          "title": "Unavailable Cells",
+          "type": "integer"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "metric_id",
+        "denominator",
+        "unavailable_cells",
+        "gated",
+        "required",
+        "outcome"
+      ],
+      "title": "MetricResult",
+      "type": "object"
+    },
+    "PairedDeltaSummary": {
+      "additionalProperties": false,
+      "description": "Mean Wiki-minus-no-Wiki delta over matched repetitions.",
+      "properties": {
+        "available_pairs": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Available Pairs",
+          "type": "integer"
+        },
+        "unavailable_pairs": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Unavailable Pairs",
+          "type": "integer"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "available_pairs",
+        "unavailable_pairs"
+      ],
+      "title": "PairedDeltaSummary",
+      "type": "object"
+    },
+    "PairedWikiDelta": {
+      "additionalProperties": false,
+      "description": "Case-stratified deltas; positive values favor the Wiki arm.",
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "dependency_recall": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "expected_outcome_conformance": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "first_pass_rate": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "mean_latency_ms": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "mean_total_tokens": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "no_wiki_config_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "No Wiki Config Id",
+          "type": "string"
+        },
+        "repetitions": {
+          "const": 3,
+          "default": 3,
+          "title": "Repetitions",
+          "type": "integer"
+        },
+        "semantic_conformance": {
+          "$ref": "#/$defs/PairedDeltaSummary"
+        },
+        "wiki_config_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Wiki Config Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "wiki_config_id",
+        "no_wiki_config_id",
+        "expected_outcome_conformance",
+        "dependency_recall",
+        "semantic_conformance",
+        "first_pass_rate",
+        "mean_latency_ms",
+        "mean_total_tokens"
+      ],
+      "title": "PairedWikiDelta",
+      "type": "object"
+    },
+    "RateSummary": {
+      "additionalProperties": false,
+      "description": "Transparent rate for one case or configuration slice.",
+      "properties": {
+        "denominator": {
+          "minimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        },
+        "unavailable_cells": {
+          "maximum": 18,
+          "minimum": 0,
+          "title": "Unavailable Cells",
+          "type": "integer"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator",
+        "unavailable_cells"
+      ],
+      "title": "RateSummary",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Deterministic aggregate; it has no user-entered outcome fields.",
+  "properties": {
+    "all_metrics_evaluated": {
+      "title": "All Metrics Evaluated",
+      "type": "boolean"
+    },
+    "arm_summaries": {
+      "items": {
+        "$ref": "#/$defs/EvaluationSliceSummary"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Arm Summaries",
+      "type": "array"
+    },
+    "case_summaries": {
+      "items": {
+        "$ref": "#/$defs/EvaluationSliceSummary"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Case Summaries",
+      "type": "array"
+    },
+    "metrics": {
+      "items": {
+        "$ref": "#/$defs/MetricResult"
+      },
+      "maxItems": 21,
+      "minItems": 21,
+      "title": "Metrics",
+      "type": "array"
+    },
+    "paired_wiki_deltas": {
+      "items": {
+        "$ref": "#/$defs/PairedWikiDelta"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Paired Wiki Deltas",
+      "type": "array"
+    },
+    "passed": {
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "planned_cells": {
+      "const": 18,
+      "default": 18,
+      "title": "Planned Cells",
+      "type": "integer"
+    },
+    "quality_gate_passed": {
+      "title": "Quality Gate Passed",
+      "type": "boolean"
+    },
+    "receipt_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Receipt Set Digest",
+      "type": "string"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "required_metrics_evaluable": {
+      "title": "Required Metrics Evaluable",
+      "type": "boolean"
+    },
+    "safety_gate_passed": {
+      "title": "Safety Gate Passed",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verified_cells": {
+      "const": 18,
+      "default": 18,
+      "title": "Verified Cells",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "registry_id",
+    "registry_digest",
+    "receipt_set_digest",
+    "metrics",
+    "arm_summaries",
+    "case_summaries",
+    "paired_wiki_deltas",
+    "all_metrics_evaluated",
+    "required_metrics_evaluable",
+    "safety_gate_passed",
+    "quality_gate_passed",
+    "passed"
+  ],
+  "title": "MetricSummary",
+  "type": "object"
+}

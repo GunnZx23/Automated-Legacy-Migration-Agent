@@ -1,31 +1,14 @@
-"""A live ``claude`` CLI structured-output client for the Agent UI demo seam.
+"""Deprecated Claude/Ollama compatibility client retained for import safety.
 
-This is a **demo / development** model client that lets the production Agent UI
-drive a *live* migration with Anthropic's Claude instead of the local Ollama
-runtime or the frozen recorded double. It shells out to the locally installed
-``claude`` CLI (non-interactive ``-p`` print mode) and validates the returned
-JSON against the exact typed role contract the framework requests.
+This historical client is intentionally fail-closed. It must not invoke Claude
+because it presents a remote provider as ``ollama`` / ``local_loopback`` and
+would therefore emit false provider provenance. Use the truthful first-class
+``legacy-migration-agent ui --claude-model ...`` path instead.
 
-Honesty note — read before demoing
-----------------------------------
-The Agent UI (``AgentUiService``) is *pervasively* bound to a single local
-runtime identity: ``model_configuration`` reports ``provider="ollama"``,
-``runtime_readiness`` probes ``_resolve_model_revision``, and
-``_verify_conversation_snapshot`` rejects any recorded call whose provider is
-not ``"ollama"`` or whose boundary is not ``"local_loopback"``. To reuse that
-entire flow **unchanged** for a live demo, this client presents the same
-``provider="ollama"`` / ``execution_boundary="local_loopback"`` identity as the
-loopback Ollama client it is monkeypatched over (see ``live_claude_serve.py``).
-
-That identity describes the *injection seam*, not the true network path: the
-``claude`` CLI reaches a remote, Bedrock-backed model, so a call is NOT a
-loopback-only operation. The durable ``model_call_record`` and the UI's
-provider badge will therefore under-state the real boundary. This is acceptable
-for a local demo you run and watch yourself; it is NOT a truthful production
-boundary attestation. Making the UI label a live provider honestly requires
-threading a real provider/boundary through ``AgentUiService`` and its strict
-verification paths (and their tests) — deliberately out of scope for this
-additive demo hook, which touches no file under ``src/`` or ``tests/``.
+The former implementation remains below solely to preserve import compatibility
+for private helpers during the transition. Every provider-capable method has an
+unconditional deprecation guard before any validation, state access, or process
+execution; there is no compatibility mode.
 """
 
 from __future__ import annotations
@@ -34,9 +17,10 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
-from pathlib import Path
+from typing import NoReturn
 
 from pydantic import BaseModel, ValidationError
 
@@ -60,6 +44,18 @@ DEFAULT_CLAUDE_TIMEOUT_SECONDS = 240.0
 _MAX_SYSTEM_PROMPT_BYTES = 256 * 1024
 _VERSION_PROBE_TIMEOUT_SECONDS = 30.0
 
+DEPRECATION_MESSAGE = (
+    "this historical Claude/Ollama compatibility shim is disabled because it would "
+    "record false provider provenance; use the truthful first-class command "
+    "`legacy-migration-agent ui --claude-model ...` instead"
+)
+
+
+def _raise_deprecated() -> NoReturn:
+    """Reject every provider-capable path before it can invoke a subprocess."""
+
+    raise ModelConfigurationError(DEPRECATION_MESSAGE)
+
 
 def _resolve_claude_executable() -> str:
     """Return the ``claude`` executable path, honoring an explicit override."""
@@ -80,21 +76,14 @@ def _stderr_tail(stderr: str | None, *, limit: int = 600) -> str:
 
 
 class ClaudeCliStructuredModelClient:
-    """Structured-output client backed by the local ``claude`` CLI.
+    """Inert compatibility type whose provider-capable methods always reject."""
 
-    It mirrors ``OllamaStructuredModelClient``'s public surface exactly so it can
-    be injected at the same seam the UI resolves local models through
-    (``build_local_ollama_model_clients``). See the module docstring for why the
-    provider/boundary identity is presented as the loopback runtime's.
-    """
-
-    # Presented identity — see module docstring. This impersonates the loopback
-    # Ollama seam so the unmodified UI flow (config, readiness, conversation
-    # replay verification) accepts it.
-    provider = "ollama"
+    # The inert identity cannot be mistaken for the historical Ollama seam. No
+    # instance can be constructed and every provider-capable method fails closed.
+    provider = "disabled-deprecated-shim"
     live_invocation = False
     store_false_sent = False
-    execution_boundary: ModelExecutionBoundary = "local_loopback"
+    execution_boundary: ModelExecutionBoundary = "offline_recorded"
 
     def __init__(
         self,
@@ -103,6 +92,7 @@ class ClaudeCliStructuredModelClient:
         approval: LiveModelApproval,
         timeout_seconds: float = DEFAULT_CLAUDE_TIMEOUT_SECONDS,
     ) -> None:
+        _raise_deprecated()
         normalized_model = model_id.strip()
         if not normalized_model or len(normalized_model) > 300:
             raise ModelConfigurationError("an explicit model_id is required")
@@ -145,6 +135,7 @@ class ClaudeCliStructuredModelClient:
     def bind_model_revision(self, expected_revision: str) -> None:
         """Bind a recorded revision, mirroring the Ollama client's contract."""
 
+        _raise_deprecated()
         if len(expected_revision) != 71 or not expected_revision.startswith("sha256:"):
             raise ModelConfigurationError("recorded model revision is invalid")
         current = self._resolve_model_revision(timeout_seconds=self._timeout_seconds)
@@ -164,6 +155,7 @@ class ClaudeCliStructuredModelClient:
         unreachable and the browser keeps Send/Start disabled.
         """
 
+        _raise_deprecated()
         probe_timeout = min(float(timeout_seconds), _VERSION_PROBE_TIMEOUT_SECONDS)
         try:
             completed = subprocess.run(
@@ -194,6 +186,7 @@ class ClaudeCliStructuredModelClient:
         input_value: BaseModel,
         output_type: type[OutputModel],
     ) -> OutputModel:
+        _raise_deprecated()
         if not isinstance(input_value, BaseModel):
             raise TypeError("structured model input must be a Pydantic model")
         if not isinstance(output_type, type) or not issubclass(output_type, BaseModel):
@@ -244,7 +237,9 @@ class ClaudeCliStructuredModelClient:
                 output_type=output_type.__name__,
                 validation_errors=exc.error_count(),
             )
-            raise ModelOutputError("live claude structured output failed schema validation") from exc
+            raise ModelOutputError(
+                "live claude structured output failed schema validation"
+            ) from exc
         lifecycle_event(
             "claude_cli.generation.completed",
             output_type=output_type.__name__,
@@ -253,6 +248,7 @@ class ClaudeCliStructuredModelClient:
         return model
 
     def _invoke(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
+        _raise_deprecated()
         command = [
             self._executable,
             "-p",
@@ -344,7 +340,7 @@ def _extract_json_object(text: str) -> str:
         if newline != -1:
             stripped = stripped[newline + 1 :]
         if stripped.rstrip().endswith("```"):
-            stripped = stripped.rstrip()[: -3]
+            stripped = stripped.rstrip()[:-3]
         stripped = stripped.strip()
     start = stripped.find("{")
     end = stripped.rfind("}")
@@ -388,7 +384,20 @@ def _token_sum(usage: dict[str, object], keys: tuple[str, ...]) -> int | None:
     return total if seen else None
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Reject direct execution with the same fail-closed migration guidance."""
+
+    del argv
+    print(f"[claude_cli_client] Disabled: {DEPRECATION_MESSAGE}", file=sys.stderr, flush=True)
+    return 2
+
+
 __all__ = [
     "ClaudeCliStructuredModelClient",
+    "DEPRECATION_MESSAGE",
     "DEFAULT_CLAUDE_TIMEOUT_SECONDS",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

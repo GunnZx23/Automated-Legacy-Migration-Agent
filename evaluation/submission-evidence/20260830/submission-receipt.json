@@ -1,0 +1,355 @@
+{
+  "schema_version": "1.0",
+  "receipt_id": "capstone-submission-evidence-20260830",
+  "generated_at": "2026-08-30T18:38:32Z",
+  "claim_boundary": "Bounded synthetic Salesforce and Mule fixtures only. Product-path runs are not benchmark-v2 cells and do not prove production readiness, Salesforce deployment, Mule runtime execution, or population-level accuracy.",
+  "raw_evidence_boundary": {
+    "raw_run_directories_tracked": false,
+    "raw_output_directories_tracked": false,
+    "reason": "The repository intentionally ignores .runs/ and output/. This receipt preserves sanitized identities, outcomes, and SHA-256 bindings without publishing provider transcripts or disposable runtime state."
+  },
+  "agent_contracts": {
+    "count": 3,
+    "architect": {
+      "version": "architect/v17",
+      "definition_digest": "sha256:581db7f4caf415204c464b647a3f6636f104f5ae261caee5dde7d56385d932a5"
+    },
+    "engineer": {
+      "version": "engineer/v30",
+      "definition_digest": "sha256:38fed22ed93704f208a4813c1954d0d4872de4c8de252b29057e66dffd2beeb0"
+    },
+    "validator": {
+      "version": "validator/v5",
+      "definition_digest": "sha256:e2600215c92fd5bc34768c447788fcf5a20ef6470e85115835afc59f380f39f9"
+    },
+    "controller_is_a_fourth_llm_agent": false
+  },
+  "quality_gates": {
+    "uv_lock_check": {
+      "status": "passed",
+      "resolved_packages": 60
+    },
+    "pytest": {
+      "status": "passed",
+      "collected": 2111,
+      "passed": 2111,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 604.41,
+      "loopback_authority": "Ephemeral loopback binding was enabled so all 45 UI-server tests executed."
+    },
+    "ruff_format": {
+      "status": "passed",
+      "files_checked": 126
+    },
+    "ruff_check": {
+      "status": "passed"
+    },
+    "mypy": {
+      "status": "passed",
+      "source_files_checked": 70
+    },
+    "agent_registry": {
+      "status": "passed",
+      "agent_count": 3
+    },
+    "package_build": {
+      "status": "passed",
+      "source_distribution_sha256": null,
+      "source_distribution_hash_status": "not_embedded_to_avoid_self_referential_receipt",
+      "source_distribution_hash_boundary": "The tracked receipt is itself included in the source distribution, so embedding that archive's digest here would change the archive. Successful build and forbidden-path inspection are recorded without a circular hash claim.",
+      "wheel_sha256": "0827a8d518462b921f3f0c5d167ba8439e1cbbbefbdc11722782a439ff13de50"
+    },
+    "git_diff_check": {
+      "status": "passed"
+    },
+    "lwc_jest_install": {
+      "status": "passed",
+      "packages_added": 512,
+      "packages_audited": 513
+    },
+    "lwc_jest_npm_audit": {
+      "status": "known_low_severity_test_tooling_findings",
+      "info": 0,
+      "low": 61,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "direct_package": "@salesforce/sfdx-lwc-jest@7.9.0",
+      "direct_fix_available": false,
+      "scope": "Pinned local developer and test toolchain; no generated candidate or deployed runtime dependency is claimed."
+    }
+  },
+  "course_report": {
+    "template": "Self-study Capstone Checkpoint Activity 7.1_Final Capstone Report Planning Template.pdf",
+    "answer_source": "evaluation/submission-evidence/20260830/final-report-answers-interactive.json",
+    "answer_source_sha256": "b3e4df8d4ed9b6c7a43b51b9951f2199fd1effa08d75caee55966ccb73b80a18",
+    "output_path": "output/pdf/Final Capstone Report Planning - Automated Legacy Migration Agent - 2026-08-30 interactive-final.pdf",
+    "output_sha256": "9d2bafed494d11c2b2a65a63ab54c7d4d4be354373e3cc0883f62bd384a10e72",
+    "page_count": 6,
+    "page_size": "A4",
+    "form_field_count": 10,
+    "populated_form_field_count": 10,
+    "form_readback": "passed",
+    "widget_value_readback": "passed",
+    "widget_appearance_streams": "passed",
+    "rendered_page_visual_qa": "passed_complete_multiline_answers",
+    "superseded_preserved_artifact": "output/pdf/Final Capstone Report Planning - Automated Legacy Migration Agent - 2026-08-30 final.pdf",
+    "superseded_reason": "Canonical values read back, but several rendered widget appearances showed only the first line; the file is preserved but must not be submitted.",
+    "claim_boundary": "The PDF reports bounded current-tree, product-path, and independently reviewed historical benchmark evidence. It does not claim Salesforce org validation, Mule runtime/MUnit execution, production readiness, or that the historical benchmark used GraphAssuranceReport."
+  },
+  "final_handoff": {
+    "path": "evaluation/submission-evidence/20260830/FINAL_HANDOFF.md",
+    "sha256": "028ae44a83b47c4d782480fd0dd73971c181d9b60f32ddd8f0b1273a5b5517f9",
+    "final_interactive_run_receipt": {
+      "path": "evaluation/submission-evidence/20260830/FINAL_INTERACTIVE_RUN.md",
+      "sha256": "e84e304a8311030f33fa3f6e74d3699455aa205958aada02ef58bfa38ce0f06c"
+    },
+    "covers": [
+      "final user-operated interactive run",
+      "independent Salesforce candidate review",
+      "independent benchmark label review",
+      "course PDF identity"
+    ],
+    "independent_review_completed": true
+  },
+  "publication_hygiene": {
+    "status": "passed",
+    "ignored_private_state_not_tracked": true,
+    "ignored_private_state_checked": [
+      ".runs/",
+      "output/",
+      ".env",
+      ".env.*",
+      ".venv/",
+      "node_modules/",
+      ".playwright-cli/"
+    ],
+    "source_distribution_forbidden_path_count": 0,
+    "wheel_forbidden_path_count": 0,
+    "provider_like_credential_matches_outside_synthetic_security_tests": 0,
+    "host_absolute_path_matches_outside_synthetic_security_tests": 0,
+    "synthetic_security_test_markers": "Deliberately fake credential- and local-path-shaped values remain in redaction/fail-closed tests so the security boundary is behaviorally exercised; they are not runtime configuration or evidence values.",
+    "relative_markdown_links_checked": 22,
+    "broken_relative_markdown_links": 0,
+    "deleted_worktree_paths": 0,
+    "publication_action_performed": false
+  },
+  "product_path_runs": [
+    {
+      "scenario_id": "salesforce-visualforce-to-lwc",
+      "handle": "216841a73201436ba836f5b1",
+      "provider_id": "claude-cli",
+      "model_id": "claude-sonnet-5",
+      "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+      "attempt": 1,
+      "report_id": "report-salesforce-aed8dc8e0c00fd2a9e3234b8",
+      "completed_at": "2026-08-30T05:24:22.145869Z",
+      "disposition": "ready_for_human_review",
+      "checks_passed": 7,
+      "checks_failed": 0,
+      "checks_unavailable": 0,
+      "candidate_authored_jest_tests_passed": 9,
+      "controller_owned_jest_tests_passed": 10,
+      "generated_file_count": 11,
+      "manifest_digest": "sha256:912da580fae1bcd4df59d3f25072c906c91689a551da40a609a71ef13e555bab",
+      "candidate_digest": "sha256:d673560f234420f214fdc3a60035c9bd302144841889d9542548df428c9e3ae1",
+      "change_set_digest": "sha256:8909fd662d1d307d2da4196f43fcd3fd5ceb9e6960405bf087550d87dcd29515",
+      "candidate_archive_sha256": "sha256:296be5df5de759c7059ace67fbeb00f942384c689087f1de82c2844ed6c3406f",
+      "raw_artifact_sha256": {
+        "export_json": "77e75627a44cf8a24c2d4aaa9943384ea974ca233735e7612943c66c693697c6",
+        "validation_report_json": "ea0ecbd661cac9f92c06c5d0f38d18d672ebdf7f81537fef3b385b3116e50943",
+        "browser_screenshot_png": "3bbd1c216165e912ac16590399d0b1383af797bfadfc65b733d3e3e095a7d9d0"
+      },
+      "final_review": {
+        "review_id": "final-review-d0a31d979153a79e8349388fcc641175",
+        "status": "awaiting_final_review",
+        "designated_reviewer": "course-reviewer",
+        "identity_assurance": "declarative_unverified",
+        "authority_granted": false
+      },
+      "external_validation": "No fresh Claude Salesforce org compile, test, deploy, or publication receipt is claimed."
+    },
+    {
+      "scenario_id": "salesforce-case-management-console",
+      "handle": "7e3bc811e390bedd4119898c",
+      "provider_id": "claude-cli",
+      "model_id": "claude-sonnet-5",
+      "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+      "attempt": 2,
+      "report_id": "report-salesforce-4ae117d9c5744daba74688a5",
+      "completed_at": "2026-08-30T05:13:08.453438Z",
+      "disposition": "ready_for_human_review",
+      "checks_passed": 7,
+      "checks_failed": 0,
+      "checks_unavailable": 0,
+      "candidate_authored_jest_tests_passed": 11,
+      "controller_owned_jest_tests_passed": 19,
+      "generated_file_count": 11,
+      "manifest_digest": "sha256:651dc1ac07cdabc72eddaf9f4c6cfa30a4d4fad3b95dd25307cb2f7de95977a5",
+      "candidate_digest": "sha256:694d28de9eef2cf75272a325a6d99a51a8dea3d5ec311732c040d2d9786edd4e",
+      "change_set_digest": "sha256:cd04abe7dd27627b310de430f69cb0758f9e78c475fd1ab6cbe6f36bead7d75a",
+      "candidate_archive_sha256": "sha256:cf509dd9b2815d2e90ebd85ae31dc3c1c4d396222962931e9c46bc74cdc0143a",
+      "correction": {
+        "attempt_1_disposition": "recoverable_failure",
+        "attempt_1_candidate_authored_jest_tests_passed": 11,
+        "attempt_1_controller_owned_jest_tests_passed": 17,
+        "attempt_1_controller_owned_jest_tests_total": 19,
+        "repair_signal_ids": [
+          "controller_jest_initial_guidance",
+          "controller_jest_blank_selection"
+        ],
+        "allowed_correction_paths": [
+          "force-app/main/default/lwc/caseManagementConsole/caseManagementConsole.html",
+          "force-app/main/default/lwc/caseManagementConsole/caseManagementConsole.js"
+        ],
+        "correction_wiki_trace_digest": "sha256:76c6c101f9e7eda87e913e5979d0ded8fd50c206ffb96bfa994d5d165d549049",
+        "requires_changed_file_delta": true
+      },
+      "raw_artifact_sha256": {
+        "export_json": "852e338b061525361f2be67cf17dcef806521813c2ec9f65a95d9323f0b3b6d8",
+        "attempt_1_validation_report_json": "a6b4408d44eb9726cab4ccce1117aa1a42469677ca338cf5c34c29fc1194a66b",
+        "attempt_2_validation_report_json": "a814fba9718ab9eaf74cf375231aab8aaf8c5089d355bf5232b44e3861db3bb3",
+        "browser_screenshot_png": "31c9773d00707ff384fe2938dc04f2500c6550f6a2774a169a48d58520c1bd79"
+      },
+      "final_review": {
+        "review_id": "final-review-eacd2046014ff1f53f1b31c8bd72f45a",
+        "status": "awaiting_final_review",
+        "designated_reviewer": "course-reviewer",
+        "identity_assurance": "declarative_unverified",
+        "authority_granted": false
+      },
+      "external_validation": "No fresh Claude Salesforce org compile, test, deploy, or publication receipt is claimed."
+    },
+    {
+      "scenario_id": "salesforce-case-management-console-final-interactive",
+      "interaction_kind": "user_operated_browser_run",
+      "conversation_id": "b8a8831f1f0053cb90817446",
+      "conversation_exchange_count": 2,
+      "handle": "4c46bd073373f561881612ae",
+      "run_id": "ui-run-4c46bd073373f561881612ae",
+      "thread_id": "ui-thread-4c46bd073373f561881612ae",
+      "provider_id": "claude-cli",
+      "model_id": "claude-sonnet-5",
+      "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+      "attempt": 1,
+      "retry_opened": false,
+      "report_id": "report-salesforce-27e491e09f8b01c14e982745",
+      "completed_at": "2026-08-30T07:49:11.239805Z",
+      "disposition": "ready_for_human_review",
+      "checks_passed": 7,
+      "checks_failed": 0,
+      "checks_unavailable": 0,
+      "candidate_authored_jest_tests_passed": 7,
+      "controller_owned_jest_tests_passed": 19,
+      "generated_file_count": 11,
+      "manifest_digest": "sha256:950d4480e0cadf44b1964aa5bdecc4e474eae9d8a5ebc05089fc0857064e7a25",
+      "candidate_digest": "sha256:649476ba710e37077ed0d5a2ff74e1b21a2008e152165c632e59446256929d63",
+      "change_set_digest": "sha256:65a155e57d6ea2f993ddd5abe34224474dd311b89bce3bed6129a56a63e0f1b0",
+      "candidate_archive_sha256": "sha256:f21af9b4e85018498bc9b38ec4109f7be10cc6b101c66867b15c7f0193b5f1bc",
+      "raw_artifact_sha256": {
+        "export_json": "7de5af15511e4e7caf65be0451d156a28783f8c893f614bd1ada2179acc167c1",
+        "validation_report_json": "299c0938b1f5ae4543c826bf7521249c36403956c73887db64fbd9526640aef7",
+        "final_review_request_json": "635999732bd4014a49ded5024e28aa7807b7795974f411f9b79f17700b45eff9",
+        "final_review_decision_json": "c47b05ab9a76beb7575e6eeff2451f2a30aa7d7cf646c4c36c7f89ecfeb4ca60",
+        "conversation_launch_json": "5857e42121aa8f832e04883090beca049fb319b8958f553f703401226ee8c173"
+      },
+      "final_review": {
+        "review_id": "final-review-6f8cf9a5eb699331b4374563792bec3c",
+        "request_status": "awaiting_final_review",
+        "recorded_selection": "accept",
+        "designated_reviewer": "independent-reviewer",
+        "identity_assurance": "declarative_unverified",
+        "authority_granted": false,
+        "counts_as_independent_review": false,
+        "boundary": "The unauthenticated empty-comment UI selection demonstrates the decision surface only and is not claimed as review by an instructor, classmate, or colleague."
+      },
+      "external_validation": "No Salesforce org compile, test, deploy, publication, commit, push, or external action receipt is claimed."
+    },
+    {
+      "scenario_id": "mulesoft-mule3-to-mule4",
+      "handle": "1bb9d57751e3c2ab109f7c0c",
+      "provider_id": "claude-cli",
+      "model_id": "claude-sonnet-5",
+      "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+      "attempt": 1,
+      "report_id": "report-f4d737279eec8f1e311fe435",
+      "completed_at": "2026-08-30T06:07:44.912589Z",
+      "disposition": "environment_unavailable",
+      "checks_passed": 3,
+      "checks_failed": 0,
+      "checks_unavailable": 2,
+      "passed_check_ids": [
+        "mulesoft-candidate-contract",
+        "mulesoft-dependency-closure",
+        "mulesoft-workspace-fingerprint"
+      ],
+      "unavailable_check_ids": [
+        "mulesoft-toolchain-contract",
+        "mulesoft-munit"
+      ],
+      "generated_file_count": 6,
+      "manifest_digest": "sha256:3f78934f26cabb365484544dfbe3d4cb3744d50cc1caff87d69157e47520a2cc",
+      "candidate_digest": "sha256:d7ef2c64b06c54cd1862c6fff02cc8a234fdea43db31426996938d7c8c603ab8",
+      "change_set_digest": "sha256:481ece2a1d11c1cc15918a77abb9ca455984e249e21b9c6360f37682d95f52f5",
+      "candidate_archive_sha256": "sha256:cca777f06e24da01ceae09e73b233b958948396745ca11f9609ea7dc0ccece49",
+      "validator_assessment": "raises_concern",
+      "validator_claim": "The balanced per-file excerpt and authoritative report support environment_unavailable. Static checks do not substitute for Maven, Mule runtime, or executed MUnit evidence.",
+      "raw_artifact_sha256": {
+        "export_json": "de24cd0bb726b0e40acffbb837bb355047347b3321e6b646d2de036c6d763cfa",
+        "validation_report_json": "1fc6ec0cbe65c4f1eb12346c3ba7ae3e0264403bead8c5c74b180b9996ee56a8",
+        "validator_json": "af42e00a56ac443066af8d1a666ac2459c820ae8c88b72d563724eddd0d418df",
+        "browser_screenshot_png": "763314baf97b17932c35dbb3de62c6547eaa95b346400eae3724f0f381781b48"
+      },
+      "retry_opened": false,
+      "external_validation": "No Maven resolution, executable MUnit, Mule startup, listener invocation, Anypoint deployment, or runtime success is claimed."
+    }
+  ],
+  "graph_assurance": {
+    "policy_version": "bounded-graph-assurance/1.0",
+    "runtime_boundary": "Controller-owned deterministic report between graph construction and the Architect; non-assured status creates a digest-bound PlanningIntervention before Wiki or model access.",
+    "plan_invalid_boundary": "A late omitted or incorrect dependency requires graph-and-assurance regeneration, a new MigrationManifest digest, and new human approval; it never opens Engineer attempt two.",
+    "claim_boundary": "Bounded reconciliation for the three supported capstone scenarios, not proof that dynamic, reflective, unsupported, or external dependencies are universally discoverable.",
+    "evaluation_label_boundary": "Independently reviewed dependency labels remain evaluation oracles only and are not provided to runtime agents."
+  },
+  "benchmark_v2": {
+    "registry_id": "legacy-migration-benchmark-v2",
+    "protocol_status": "completed_historical_campaign_independently_reviewed_pre_graph_assurance",
+    "case_count": 3,
+    "configuration_count": 2,
+    "repetitions_per_case_configuration": 3,
+    "planned_live_cells": 18,
+    "verified_result_receipts": 18,
+    "result_receipts_status": "complete_and_verified",
+    "model_invoked_for_benchmark": true,
+    "dependency_label_count": 65,
+    "initial_high_impact_labels": 51,
+    "initial_low_impact_labels": 14,
+    "label_review_status": "independently_accepted",
+    "output_review_status": "BW reviewed all 18 corrected cells, including both attempts where present; all accepted and semantically conformant; escaped defects none.",
+    "independent_reviewer_id": "BW",
+    "review_subject_digest": "sha256:fa76b2b5b9f8a9f4dea0637e7c3a1f6d9cddce6fa08ff7fbc4695631ffd29183",
+    "corrected_raw_archive_sha256": "f6a2e2ac0672a7631c0b6331e41a896574933c8704e2eb7707222ee5eeae1336",
+    "review_packet_sha256": "425fadd39e12b62226041f1a0bb8d95e100c1dd1ae5fc1846ec8b736e4232bae",
+    "dependency_recall": {
+      "numerator": 390,
+      "denominator": 390,
+      "zero_missed_high_impact_dependencies": true
+    },
+    "authorization_violations": 0,
+    "escaped_defects": 0,
+    "expected_outcome_conformance": {
+      "numerator": 13,
+      "denominator": 18
+    },
+    "quality_gate_passed": false,
+    "quality_gate_reason": "Expected-outcome conformance missed its threshold; assertion-level Wiki attribution and Mule runtime validation were unavailable.",
+    "historical_boundary": "The completed campaign predates GraphAssuranceReport and does not support a runtime-assurance or Wiki-benefit claim."
+  },
+  "remaining_human_or_external_items": [
+    "Record the user-operated demo and submit the final course-template PDF; neither action is performed by this harness.",
+    "Optional independent review of the Account/Contact and recovery Case candidates; BW's acceptance applies only to the final interactive Case candidate.",
+    "Optional Salesforce org compile and test receipt for a fresh Claude candidate; no deployment is required for the bounded capstone claim.",
+    "Mule runtime and MUnit execution only if an attested immutable local runtime and dependency authority are separately provided."
+  ]
+}

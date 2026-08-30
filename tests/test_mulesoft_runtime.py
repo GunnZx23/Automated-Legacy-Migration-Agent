@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -17,12 +18,14 @@ import legacy_migration_agent.platforms.mulesoft_runtime as mulesoft_runtime_mod
 from legacy_migration_agent.contracts import (
     ApprovalAction,
     ChangeSet,
+    CheckResult,
     CheckStatus,
     EnvironmentKind,
     MigrationManifest,
     MigrationRequest,
     MigrationTarget,
     Platform,
+    ToolReceipt,
     TransformationStep,
     ValidationCommand,
     ValidationDisposition,
@@ -50,6 +53,8 @@ from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MuleSoftLocalCheckCode,
 )
 from legacy_migration_agent.platforms.mulesoft_runtime import (
+    GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,
+    GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,
     MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID,
     MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
     MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID,
@@ -57,6 +62,7 @@ from legacy_migration_agent.platforms.mulesoft_runtime import (
     MULESOFT_MUNIT_COMMAND_ID,
     MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID,
     MULESOFT_PLATFORM_ADAPTER,
+    MULESOFT_REPAIR_SIGNALS,
     MULESOFT_RUNTIME_AUTHORITY_ANCHOR_KIND,
     MULESOFT_RUNTIME_CONFIG,
     MULESOFT_SCOPE_POLICY,
@@ -554,10 +560,10 @@ def _install_inert_container_runtime(
     labels = {
         "com.salesforce.legacy-migration.contract": "mulesoft-munit-container-v1",
         "com.salesforce.legacy-migration.java": "17",
-        "com.salesforce.legacy-migration.maven": "test-version",
+        "com.salesforce.legacy-migration.maven": "3.9.9",
         "com.salesforce.legacy-migration.mule": "4.9.20",
-        "com.salesforce.legacy-migration.mule-maven-plugin": "test-version",
-        "com.salesforce.legacy-migration.munit": "test-version",
+        "com.salesforce.legacy-migration.mule-maven-plugin": "4.10.1",
+        "com.salesforce.legacy-migration.munit": "3.7.3",
         "com.salesforce.legacy-migration.network-installer": "none",
         "com.salesforce.legacy-migration.output-mode": "0644",
         "com.salesforce.legacy-migration.input-root": "/input",
@@ -608,10 +614,10 @@ def _install_inert_container_runtime(
                     ),
                     "license_artifact_sha256": _synthetic_digest("isolated-test-license-artifact"),
                     "java_version": "17",
-                    "maven_version": "test-version",
+                    "maven_version": "3.9.9",
                     "mule_runtime_version": "4.9.20",
-                    "mule_maven_plugin_version": "test-version",
-                    "munit_version": "test-version",
+                    "mule_maven_plugin_version": "4.10.1",
+                    "munit_version": "3.7.3",
                 },
             },
             sort_keys=True,
@@ -855,6 +861,63 @@ def test_legacy_munit_cannot_satisfy_missing_target_munit_reachability(
     assert report.disposition is ValidationDisposition.RECOVERABLE_FAILURE
 
 
+@pytest.mark.parametrize(
+    ("diagnostic_ids", "expected"),
+    (
+        (
+            (GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,),
+            ValidationDisposition.PLAN_INVALID,
+        ),
+        (
+            (GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,),
+            ValidationDisposition.PLAN_INVALID,
+        ),
+        (
+            (MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID,),
+            ValidationDisposition.RECOVERABLE_FAILURE,
+        ),
+        (
+            (MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID,),
+            ValidationDisposition.RECOVERABLE_FAILURE,
+        ),
+    ),
+)
+def test_mulesoft_disposition_reserves_plan_invalid_for_exact_graph_diagnostics(
+    diagnostic_ids: tuple[str, ...],
+    expected: ValidationDisposition,
+) -> None:
+    now = datetime.now(UTC)
+    digest = "sha256:" + "0" * 64
+    failed = CheckResult(
+        check_id=MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
+        command_id=MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
+        required=True,
+        status=CheckStatus.FAILED,
+        receipt=ToolReceipt(
+            receipt_id="receipt-mulesoft-disposition",
+            tool_id=MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
+            request_id="request-mulesoft-disposition",
+            run_id="run-mulesoft-disposition",
+            attempt=1,
+            base_revision=digest,
+            environment=EnvironmentKind.LOCAL,
+            input_artifact_digest=digest,
+            operation="controller-owned disposition classification evidence",
+            working_directory="candidate",
+            started_at=now,
+            ended_at=now,
+            exit_code=1,
+            terminal=True,
+            stdout_digest=digest,
+            stderr_digest=digest,
+        ),
+        summary="Controller-observed terminal validation failure.",
+        diagnostic_ids=diagnostic_ids,
+    )
+
+    assert mulesoft_runtime_module._disposition((failed,)) is expected
+
+
 def test_required_static_failure_precedes_runtime_unavailable_disposition(
     tmp_path: Path,
 ) -> None:
@@ -928,6 +991,31 @@ def test_pom_failure_carries_exact_artifact_diagnostic(tmp_path: Path) -> None:
     )
 
 
+def test_emitted_pom_version_mismatch_has_a_pom_only_repair_contract(
+    tmp_path: Path,
+) -> None:
+    outputs = _agent_outputs()
+    outputs[MULE4_POM] = outputs[MULE4_POM].replace(
+        b"<mule.maven.plugin.version>4.10.1</mule.maven.plugin.version>",
+        b"<mule.maven.plugin.version>4.10.0</mule.maven.plugin.version>",
+        1,
+    )
+
+    with _runtime_case(tmp_path, outputs) as case:
+        report = _run(case, _validator(case))
+
+    candidate = _result(report, MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID)
+    assert candidate.diagnostic_ids == (
+        mulesoft_candidate_diagnostic_id(
+            MuleSoftLocalCheckCode.VERSION_MISMATCH,
+            MULE4_POM,
+        ),
+    )
+    emitted_signal = candidate.diagnostic_ids[0]
+    assert MULESOFT_REPAIR_SIGNALS[emitted_signal].allowed_paths == (MULE4_POM,)
+    assert "Do not change mule-artifact.json" in MULESOFT_REPAIR_SIGNALS[emitted_signal].instruction
+
+
 @pytest.mark.parametrize(
     "drift",
     ("missing-config", "mutable-image", "execution-contract", "incomplete-probe"),
@@ -973,6 +1061,91 @@ def test_enabled_manifest_requires_separate_released_source_pin(
         report = _run(case, _validator(case))
         assert report.disposition is ValidationDisposition.ENVIRONMENT_UNAVAILABLE
         assert not runner.calls
+
+
+@pytest.mark.parametrize(
+    ("probe_key", "unsupported_value", "label_key"),
+    (
+        (
+            "java_version",
+            "21",
+            "com.salesforce.legacy-migration.java",
+        ),
+        (
+            "maven_version",
+            "3.8.9",
+            "com.salesforce.legacy-migration.maven",
+        ),
+        (
+            "maven_version",
+            "3.9.16",
+            "com.salesforce.legacy-migration.maven",
+        ),
+        (
+            "mule_maven_plugin_version",
+            "4.10.0",
+            "com.salesforce.legacy-migration.mule-maven-plugin",
+        ),
+        (
+            "munit_version",
+            "3.7.2",
+            "com.salesforce.legacy-migration.munit",
+        ),
+    ),
+)
+def test_enabled_authority_rejects_toolchain_versions_outside_the_fixed_compatibility_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_key: str,
+    unsupported_value: str,
+    label_key: str,
+) -> None:
+    runner = InertContainerRunner()
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+    authority_path = mulesoft_runtime_module._AUTHORITY_MANIFEST_PATH
+    raw = json.loads(authority_path.read_text(encoding="utf-8"))
+    raw["toolchain_probe"][probe_key] = unsupported_value
+    raw["labels"] = [
+        [key, unsupported_value if key == label_key else value] for key, value in raw["labels"]
+    ]
+    authority_path.chmod(0o644)
+    authority_path.write_text(json.dumps(raw, sort_keys=True) + "\n", encoding="utf-8")
+    authority_path.chmod(0o444)
+
+    loaded = mulesoft_runtime_module._load_runtime_authority_manifest(authority_path)
+
+    assert loaded.manifest is None
+    assert loaded.reason == "authority-manifest-invalid"
+
+
+@pytest.mark.parametrize("supported_version", ("3.9.0", "3.9.15"))
+def test_enabled_authority_accepts_documented_maven_range_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    supported_version: str,
+) -> None:
+    runner = InertContainerRunner()
+    _install_inert_container_runtime(monkeypatch, tmp_path, runner)
+    authority_path = mulesoft_runtime_module._AUTHORITY_MANIFEST_PATH
+    raw = json.loads(authority_path.read_text(encoding="utf-8"))
+    raw["toolchain_probe"]["maven_version"] = supported_version
+    raw["labels"] = [
+        [
+            key,
+            supported_version if key == "com.salesforce.legacy-migration.maven" else value,
+        ]
+        for key, value in raw["labels"]
+    ]
+    authority_path.chmod(0o644)
+    authority_path.write_text(json.dumps(raw, sort_keys=True) + "\n", encoding="utf-8")
+    authority_path.chmod(0o444)
+
+    loaded = mulesoft_runtime_module._load_runtime_authority_manifest(authority_path)
+
+    assert isinstance(
+        loaded.manifest,
+        mulesoft_runtime_module._EnabledContainerAuthorityManifest,
+    )
 
 
 def test_duplicate_key_or_writable_authority_manifest_is_not_authority(tmp_path: Path) -> None:

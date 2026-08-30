@@ -30,8 +30,7 @@ private class LegacyCaseConsoleCtrlTest {
                 Subject = 'Cooling fan malfunction',
                 Status = 'New',
                 Priority = 'High',
-                Description = 'Unit reports intermittent overheating.',
-                IsClosed = false
+                Description = 'Unit reports intermittent overheating.'
             ),
             new Case(
                 AccountId = skynetAccount.Id,
@@ -39,8 +38,7 @@ private class LegacyCaseConsoleCtrlTest {
                 Subject = 'Firmware update request',
                 Status = 'Closed',
                 Priority = 'Low',
-                Description = 'Customer requested the latest firmware build.',
-                IsClosed = true
+                Description = 'Customer requested the latest firmware build.'
             )
         };
     }

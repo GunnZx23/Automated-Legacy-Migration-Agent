@@ -3,7 +3,7 @@
   "fixture_id": "salesforce-account-contact-explorer",
   "platform": "salesforce",
   "graph": "source",
-  "review_status": "unreviewed_initial",
+  "review_status": "initial_label_set",
   "edges": [
     {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Account.Id", "symbol": "Account.Id"},
     {"kind": "soql_field", "source": "LegacyAccountContactExplorerController", "target": "Account.Name", "symbol": "Account.Name"},

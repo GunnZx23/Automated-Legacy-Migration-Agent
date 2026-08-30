@@ -1,0 +1,18 @@
+{
+  "schema_version": "2.0",
+  "review_id": "benchmark-v2-label-review-bw-20260830",
+  "registry_id": "legacy-migration-benchmark-v2",
+  "reviewer_id": "bw",
+  "reviewer_domain": "Manager",
+  "reviewed_at": "2026-08-30T11:00:00-08:00",
+  "review_method": "independent_human_review",
+  "review_subject_digest": "sha256:fa76b2b5b9f8a9f4dea0637e7c3a1f6d9cddce6fa08ff7fbc4695631ffd29183",
+  "high_impact_definition_id": "migration-dependency-impact-v1",
+  "accepted_case_ids": [
+    "mulesoft-customer-status-simple",
+    "salesforce-account-contact-medium",
+    "salesforce-case-management-complex-risk"
+  ],
+  "corrections": [],
+  "attestation": "Approved"
+}

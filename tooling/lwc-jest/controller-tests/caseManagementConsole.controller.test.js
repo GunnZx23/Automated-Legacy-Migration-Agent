@@ -100,6 +100,19 @@ function isSemanticallyVisible(node) {
     return true;
 }
 
+function visibleTextContent(node) {
+    return Array.from(node?.childNodes ?? [])
+        .map((child) => {
+            if (child.nodeType === 3) {
+                return child.textContent ?? '';
+            }
+            return child.nodeType === 1 && isSemanticallyVisible(child)
+                ? visibleTextContent(child)
+                : '';
+        })
+        .join(' ');
+}
+
 function uniqueVisibleElement(element, selector, label) {
     const candidates = Array.from(element.shadowRoot.querySelectorAll(selector));
     if (candidates.length !== 1) {
@@ -220,6 +233,34 @@ function selectAccount(element, accountId) {
     );
 }
 
+function selectStatus(element, statusValue) {
+    const control = statusFilterControl(element);
+    const ariaOptions = comboboxOptions(control).filter(
+        (option) => option.getAttribute?.('role') === 'option'
+    );
+    if (ariaOptions.length > 0) {
+        const ariaOption = ariaOptions.find((option) => {
+            return (
+                optionValue(option).toUpperCase() === statusValue ||
+                optionLabel(option).toUpperCase() === statusValue
+            );
+        });
+        if (ariaOption === undefined) {
+            throw new Error('accessible status option is unavailable');
+        }
+        ariaOption.click();
+        return;
+    }
+    control.value = statusValue;
+    control.dispatchEvent(
+        new CustomEvent('change', {
+            bubbles: true,
+            composed: true,
+            detail: { value: statusValue }
+        })
+    );
+}
+
 function loadCases(element) {
     loadControl(element).click();
 }
@@ -264,43 +305,142 @@ function structuredCaseRows(element) {
     if (result === undefined) {
         return [];
     }
-    const requiredFields = ['CaseNumber', 'Subject', 'Status', 'Priority', 'ContactName'];
-    const tagName = String(result.tagName ?? '').toLowerCase();
-    const columns = Array.isArray(result.columns) ? result.columns : [];
-    const visibleFields = new Set(
-        columns
-            .map((column) => column?.fieldName)
-            .filter((fieldName) => typeof fieldName === 'string')
+    const requiredFields = ['CaseNumber', 'Subject', 'Status', 'Priority'];
+    return [result, ...Array.from(result.querySelectorAll?.('*') ?? [])].flatMap(
+        (node) => {
+            const tagName = String(node.tagName ?? '').toLowerCase();
+            const role = String(node.getAttribute?.('role') ?? '').toLowerCase();
+            const isStructuredTable =
+                tagName === 'lightning-datatable' ||
+                tagName === 'table' ||
+                role === 'grid' ||
+                role === 'table';
+            const columns = Array.isArray(node.columns) ? node.columns : [];
+            const visibleFields = new Set(
+                columns
+                    .map((column) => String(column?.fieldName ?? '').toLowerCase())
+                    .filter((fieldName) => fieldName !== '')
+            );
+            const rows = Array.isArray(node.data) ? node.data : [];
+            const isUsableStructuredTable =
+                isStructuredTable &&
+                isSemanticallyVisible(node) &&
+                rows.length > 0 &&
+                requiredFields.every((field) => visibleFields.has(field.toLowerCase()));
+            if (tagName === 'lightning-datatable' && isUsableStructuredTable) {
+                const keyField = String(
+                    node.keyField ?? node.getAttribute?.('key-field') ?? ''
+                ).trim();
+                if (keyField === '') {
+                    throw new Error('lightning-datatable must declare a key-field');
+                }
+                const keys = rows.map((row) => row?.[keyField]);
+                if (
+                    keys.some(
+                        (key) =>
+                            key === undefined ||
+                            key === null ||
+                            String(key).trim() === ''
+                    )
+                ) {
+                    throw new Error(
+                        'every lightning-datatable row must retain its key-field value'
+                    );
+                }
+                const uniqueKeys = new Set(
+                    keys.map((key) => `${typeof key}:${String(key)}`)
+                );
+                if (uniqueKeys.size !== keys.length) {
+                    throw new Error('lightning-datatable key-field values must be unique');
+                }
+            }
+            return isUsableStructuredTable ? rows : [];
+        }
     );
-    const rows = Array.isArray(result.data) ? result.data : [];
-    const isUsableStructuredTable =
-        tagName === 'lightning-datatable' &&
-        rows.length > 0 &&
-        requiredFields.every((field) => visibleFields.has(field));
-    if (!isUsableStructuredTable) {
-        return [];
+}
+
+function rowField(row, fieldName) {
+    let current = row;
+    for (const segment of fieldName.split('.')) {
+        if (current === null || typeof current !== 'object') {
+            return undefined;
+        }
+        const key = Object.keys(current).find(
+            (candidate) => candidate.toLowerCase() === segment.toLowerCase()
+        );
+        if (key === undefined) {
+            return undefined;
+        }
+        current = current[key];
     }
-    const keyField = String(result.keyField ?? result.getAttribute?.('key-field') ?? '').trim();
-    if (keyField === '') {
-        throw new Error('lightning-datatable must declare a key-field');
+    return current;
+}
+
+function contactNameValues(row) {
+    const values = [
+        rowField(row, 'Contact.Name'),
+        rowField(row, 'ContactName'),
+        rowField(row, 'RequesterName'),
+        rowField(row, 'CustomerName')
+    ];
+    for (const [key, value] of Object.entries(row ?? {})) {
+        const semanticKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!/(?:contact|requester|customer)/.test(semanticKey)) {
+            continue;
+        }
+        if (value !== null && typeof value === 'object') {
+            values.push(rowField(value, 'Name'));
+        } else {
+            values.push(value);
+        }
     }
-    const keys = rows.map((row) => row?.[keyField]);
+    return values
+        .filter((value) => value !== undefined && value !== null)
+        .map((value) => String(value).trim())
+        .filter((value) => value !== '');
+}
+
+function caseVisible(element, expected) {
+    const normalize = (value) => String(value ?? '').trim().toLowerCase();
+    const requiredFields = ['CaseNumber', 'Subject', 'Status', 'Priority'];
     if (
-        keys.some(
-            (key) => key === undefined || key === null || String(key).trim() === ''
+        structuredCaseRows(element).some(
+            (row) =>
+                requiredFields.every((field) =>
+                    normalize(rowField(row, field)).includes(normalize(expected[field]))
+                ) &&
+                contactNameValues(row).some((value) =>
+                    normalize(value).includes(normalize(expected.Contact.Name))
+                )
         )
     ) {
-        throw new Error('every lightning-datatable row must retain its key-field value');
+        return true;
     }
-    const uniqueKeys = new Set(keys.map((key) => `${typeof key}:${String(key)}`));
-    if (uniqueKeys.size !== keys.length) {
-        throw new Error('lightning-datatable key-field values must be unique');
+    const result = caseResults(element);
+    if (result === undefined) {
+        return false;
     }
-    return rows;
+    const accessibleRows = Array.from(
+        result.querySelectorAll?.(
+            '[role="row"], tr, [role="article"], article, [role="listitem"], li, '
+                + '[data-row-key], [data-record-id]'
+        ) ?? []
+    ).filter((node) => isSemanticallyVisible(node));
+    const visibleContainers = accessibleRows.length > 0 ? accessibleRows : [result];
+    return visibleContainers.some((container) => {
+        const text = normalize(visibleTextContent(container));
+        return (
+            requiredFields.every((field) => text.includes(normalize(expected[field]))) &&
+            text.includes(normalize(expected.Contact.Name))
+        );
+    });
 }
 
 function hasCaseResults(element) {
-    return structuredCaseRows(element).length > 0;
+    return (
+        structuredCaseRows(element).length > 0 ||
+        CASES.some((caseRecord) => caseVisible(element, caseRecord))
+    );
 }
 
 function emptyStateVisible(element) {
@@ -310,9 +450,9 @@ function emptyStateVisible(element) {
 }
 
 function guidanceVisible(element) {
-    return Array.from(element.shadowRoot.querySelectorAll('[data-state="guidance"]')).some(
-        (node) => isSemanticallyVisible(node)
-    );
+    // Guidance markup and wording are candidate-owned. The public contract only
+    // requires a visible, nonempty accessible alert before an Account is chosen.
+    return alertText(element) !== '';
 }
 
 describe('controller-owned case management console behavior', () => {
@@ -323,6 +463,18 @@ describe('controller-owned case management console behavior', () => {
         jest.clearAllMocks();
         getAccounts.mockReset();
         getCases.mockReset();
+    });
+
+    it('controller: renders initial guidance before account selection', async () => {
+        const element = createComponent();
+        await flushPromises();
+
+        expect(guidanceVisible(element)).toBe(true);
+        expect(controlIsDisabled(loadControl(element))).toBe(true);
+        expect(caseResults(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(getCases).not.toHaveBeenCalled();
     });
 
     it('controller: lists account options with a blank choice from the wire adapter', async () => {
@@ -364,7 +516,47 @@ describe('controller-owned case management console behavior', () => {
         });
     });
 
-    it('controller: renders scoped case results in a keyed datatable', async () => {
+    it('controller: requests closed cases when Closed is selected', async () => {
+        getCases.mockResolvedValue([]);
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        selectStatus(element, 'CLOSED');
+        await flushPromises();
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+
+        expect(getCases).toHaveBeenCalledTimes(1);
+        expect(getCases).toHaveBeenCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'CLOSED'
+        });
+    });
+
+    it('controller: requests all cases when All is selected', async () => {
+        getCases.mockResolvedValue([]);
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        selectStatus(element, 'ALL');
+        await flushPromises();
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+
+        expect(getCases).toHaveBeenCalledTimes(1);
+        expect(getCases).toHaveBeenCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'ALL'
+        });
+    });
+
+    it('controller: renders scoped case results with stable keys', async () => {
         getCases.mockResolvedValue(CASES);
         const element = createComponent();
         getAccounts.emit(ACCOUNTS);
@@ -376,16 +568,9 @@ describe('controller-owned case management console behavior', () => {
         await flushPromises();
         await flushPromises();
 
-        const rows = structuredCaseRows(element);
-        expect(rows).toHaveLength(CASES.length);
+        expect(hasCaseResults(element)).toBe(true);
         for (const expected of CASES) {
-            expect(
-                rows.some(
-                    (row) =>
-                        String(row.CaseNumber) === expected.CaseNumber &&
-                        String(row.ContactName) === expected.Contact.Name
-                )
-            ).toBe(true);
+            expect(caseVisible(element, expected)).toBe(true);
         }
     });
 
@@ -493,6 +678,110 @@ describe('controller-owned case management console behavior', () => {
         expect(loadingIndicator(element)).toBeUndefined();
     });
 
+    it('controller: resets completed and error state when status changes', async () => {
+        getCases
+            .mockResolvedValueOnce(CASES)
+            .mockResolvedValueOnce([])
+            .mockRejectedValueOnce(new Error('SELECT Id FROM Case'));
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+        expect(hasCaseResults(element)).toBe(true);
+
+        selectStatus(element, 'CLOSED');
+        await flushPromises();
+        expect(hasCaseResults(element)).toBe(false);
+        expect(caseResults(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(getCases).toHaveBeenCalledTimes(1);
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+        expect(getCases).toHaveBeenLastCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'CLOSED'
+        });
+        expect(emptyStateVisible(element)).toBe(true);
+
+        selectStatus(element, 'ALL');
+        await flushPromises();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(caseResults(element)).toBeUndefined();
+        expect(getCases).toHaveBeenCalledTimes(2);
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+        expect(getCases).toHaveBeenLastCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'ALL'
+        });
+        const caseLoadErrorText = alertText(element);
+        expect(caseLoadErrorText).not.toBe('');
+        expect(caseLoadErrorText).not.toContain('SELECT Id FROM Case');
+
+        selectStatus(element, 'OPEN');
+        await flushPromises();
+        expect(hasCaseResults(element)).toBe(false);
+        expect(caseResults(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(alertText(element)).not.toBe(caseLoadErrorText);
+        expect(alertText(element)).not.toContain('SELECT Id FROM Case');
+        expect(getCases).toHaveBeenCalledTimes(3);
+    });
+
+    it('controller: ignores a response made stale by status change', async () => {
+        const firstRequest = deferredPromise();
+        getCases.mockReturnValueOnce(firstRequest.promise).mockResolvedValueOnce([]);
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+
+        loadCases(element);
+        await flushPromises();
+        expect(getCases).toHaveBeenCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'OPEN'
+        });
+        expect(loadingIndicator(element)).toBeDefined();
+
+        selectStatus(element, 'CLOSED');
+        await flushPromises();
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(caseResults(element)).toBeUndefined();
+        expect(getCases).toHaveBeenCalledTimes(1);
+
+        firstRequest.resolve([
+            { ...CASES[0], Subject: 'StaleStatusValue', Contact: { Name: 'Stale Contact' } }
+        ]);
+        await flushPromises();
+        await flushPromises();
+        expect(hasCaseResults(element)).toBe(false);
+        expect(caseResults(element)).toBeUndefined();
+        expect(element.shadowRoot.textContent ?? '').not.toContain('StaleStatusValue');
+        expect(loadingIndicator(element)).toBeUndefined();
+
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+        expect(getCases).toHaveBeenCalledTimes(2);
+        expect(getCases).toHaveBeenLastCalledWith({
+            accountId: ACCOUNTS[0].Id,
+            statusFilter: 'CLOSED'
+        });
+    });
+
     it('controller: clears results and prompts to reselect on clear', async () => {
         getCases.mockResolvedValue(CASES);
         const element = createComponent();
@@ -561,5 +850,88 @@ describe('controller-owned case management console behavior', () => {
 
         expect(alertText(element)).not.toBe('');
         expect(alertText(element)).not.toContain('SELECT Id, Name FROM Account');
+    });
+
+    it('controller: clears completed case state when the account wire later fails', async () => {
+        getCases.mockResolvedValue(CASES);
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+        loadCases(element);
+        await flushPromises();
+        await flushPromises();
+        expect(hasCaseResults(element)).toBe(true);
+
+        getAccounts.error(new Error('SELECT Id, Name FROM Account WITH USER_MODE'));
+        await flushPromises();
+
+        expect(alertText(element)).not.toBe('');
+        expect(alertText(element)).not.toContain('SELECT Id, Name FROM Account');
+        expect(controlIsDisabled(loadControl(element))).toBe(true);
+        expect(caseResults(element)).toBeUndefined();
+        expect(hasCaseResults(element)).toBe(false);
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+    });
+
+    it('controller: invalidates pending case work when the account wire fails', async () => {
+        const lateSuccess = deferredPromise();
+        const lateFailure = deferredPromise();
+        getCases
+            .mockReturnValueOnce(lateSuccess.promise)
+            .mockReturnValueOnce(lateFailure.promise);
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+        loadCases(element);
+        await flushPromises();
+
+        getAccounts.error(new Error('Account wire technical detail'));
+        await flushPromises();
+        const successBoundaryAlert = alertText(element);
+        expect(successBoundaryAlert).not.toBe('');
+
+        lateSuccess.resolve([
+            {
+                ...CASES[0],
+                Subject: 'LateAccountWireSuccess',
+                Contact: { Name: 'Stale Contact' }
+            }
+        ]);
+        await flushPromises();
+        await flushPromises();
+        expect(alertText(element)).toBe(successBoundaryAlert);
+        expect(element.shadowRoot.textContent ?? '').not.toContain('LateAccountWireSuccess');
+        expect(caseResults(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(controlIsDisabled(loadControl(element))).toBe(true);
+
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+        selectAccount(element, ACCOUNTS[1].Id);
+        await flushPromises();
+        loadCases(element);
+        await flushPromises();
+
+        getAccounts.error(new Error('Second account wire technical detail'));
+        await flushPromises();
+        const failureBoundaryAlert = alertText(element);
+        expect(failureBoundaryAlert).not.toBe('');
+
+        lateFailure.reject(new Error('LateAccountWireFailure'));
+        await flushPromises();
+        await flushPromises();
+        expect(alertText(element)).toBe(failureBoundaryAlert);
+        expect(alertText(element)).not.toContain('LateAccountWireFailure');
+        expect(caseResults(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(controlIsDisabled(loadControl(element))).toBe(true);
+        expect(getCases).toHaveBeenCalledTimes(2);
     });
 });

@@ -1,0 +1,186 @@
+{
+  "$defs": {
+    "LockfileDigest": {
+      "additionalProperties": false,
+      "description": "One dependency lock included in the runtime inventory.",
+      "properties": {
+        "digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Digest",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "digest"
+      ],
+      "title": "LockfileDigest",
+      "type": "object"
+    },
+    "RuntimeInfluenceEntry": {
+      "additionalProperties": false,
+      "description": "One path and its exact file or tree content identity.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "file",
+            "tree"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "kind",
+        "revision"
+      ],
+      "title": "RuntimeInfluenceEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict authority binding runtime bytes to creation-time Git provenance.",
+  "properties": {
+    "agent_definitions_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Agent Definitions Digest",
+      "type": "string"
+    },
+    "anchor_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Anchor Id",
+      "type": "string"
+    },
+    "benchmark_registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Benchmark Registry Digest",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "execution_boundary": {
+      "const": "remote_provider_managed",
+      "default": "remote_provider_managed",
+      "title": "Execution Boundary",
+      "type": "string"
+    },
+    "git_head_commit_oid": {
+      "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+      "title": "Git Head Commit Oid",
+      "type": "string"
+    },
+    "git_head_tree_oid": {
+      "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$",
+      "title": "Git Head Tree Oid",
+      "type": "string"
+    },
+    "lockfile_digests": {
+      "items": {
+        "$ref": "#/$defs/LockfileDigest"
+      },
+      "maxItems": 16,
+      "minItems": 2,
+      "title": "Lockfile Digests",
+      "type": "array"
+    },
+    "model_id": {
+      "const": "claude-sonnet-5",
+      "default": "claude-sonnet-5",
+      "title": "Model Id",
+      "type": "string"
+    },
+    "protocol_declaration_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Protocol Declaration Digest",
+      "type": "string"
+    },
+    "provider_id": {
+      "const": "claude-cli",
+      "default": "claude-cli",
+      "title": "Provider Id",
+      "type": "string"
+    },
+    "runtime_content_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runtime Content Revision",
+      "type": "string"
+    },
+    "runtime_identity_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runtime Identity Digest",
+      "type": "string"
+    },
+    "runtime_inventory": {
+      "items": {
+        "$ref": "#/$defs/RuntimeInfluenceEntry"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Runtime Inventory",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "supporting_artifact_graph_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Supporting Artifact Graph Digest",
+      "type": "string"
+    },
+    "supporting_artifact_paths": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Supporting Artifact Paths",
+      "type": "array"
+    },
+    "wiki_tree_revision": {
+      "maxLength": 160,
+      "minLength": 7,
+      "title": "Wiki Tree Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "anchor_id",
+    "created_at",
+    "protocol_declaration_digest",
+    "benchmark_registry_digest",
+    "supporting_artifact_paths",
+    "supporting_artifact_graph_digest",
+    "git_head_commit_oid",
+    "git_head_tree_oid",
+    "runtime_inventory",
+    "runtime_content_revision",
+    "wiki_tree_revision",
+    "agent_definitions_digest",
+    "lockfile_digests",
+    "runtime_identity_digest"
+  ],
+  "title": "BenchmarkExecutionAnchor",
+  "type": "object"
+}

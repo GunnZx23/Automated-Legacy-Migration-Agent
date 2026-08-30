@@ -19,6 +19,22 @@
           "minLength": 1,
           "title": "Approved By",
           "type": "string"
+        },
+        "approved_remote_provider_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[^\\x00\\r\\n]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Authenticated remote provider explicitly approved by the operator. Required by provider-managed CLI adapters before source is sent.",
+          "title": "Approved Remote Provider Id"
         }
       },
       "required": [
@@ -91,7 +107,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Digest-only public evidence for one structured model invocation.",
+  "description": "Digest-only public evidence for one structured model invocation.\n\n``output_digest`` commits to the provider's schema-valid structured response.\nIt does not claim that controller-owned secret, scope, or policy checks accepted\nthat response as a role artifact.",
   "properties": {
     "agent_definition_digest": {
       "pattern": "^sha256:[0-9a-f]{64}$",
@@ -185,7 +201,7 @@
         }
       ],
       "default": null,
-      "description": "Digest binding the configured runtime identity. For a remote CLI this covers the executable version, model alias, and authenticated provider, not model weights.",
+      "description": "Digest binding the configured runtime identity. For a remote CLI this covers the canonical executable path and bytes, CLI version, model alias, retained routing environment, and authenticated provider, not model weights.",
       "title": "Runtime Identity Digest"
     },
     "store_false_sent": {

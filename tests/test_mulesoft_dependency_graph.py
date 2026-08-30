@@ -87,6 +87,13 @@ def test_mule3_fixture_graph_is_exact_deterministic_and_revision_bound() -> None
         ),
         (
             "customer-status-api-flow",
+            "mule_route_parameter_binding",
+            "customerId",
+            "{customerId}",
+            True,
+        ),
+        (
+            "customer-status-api-flow",
             "flow_reference",
             "build-customer-status-response",
             "build-customer-status-response",
@@ -136,7 +143,7 @@ def test_mule3_fixture_graph_is_exact_deterministic_and_revision_bound() -> None
         ),
         (
             "build-customer-status-response-test",
-            "dataweave_variable_reference",
+            "munit_variable_reference",
             "responseStatus",
             "flowVars.responseStatus",
             True,
@@ -154,6 +161,36 @@ def test_mule3_fixture_graph_is_exact_deterministic_and_revision_bound() -> None
             (MULE3_APP,),
             "sha256:" + "0" * 64,
         )
+
+
+def test_mule3_route_lineage_and_munit_variable_reference_kinds_are_explicit() -> None:
+    graph = _build(MULE3_ROOT, (MULE3_APP,))
+    nodes = {node.node_id: node for node in graph.nodes}
+    route_binding = next(
+        edge
+        for edge in graph.edges
+        if edge.kind is EdgeKind.MULE_ROUTE_PARAMETER_BINDING
+        and nodes[edge.source_id].name == "customer-status-api-flow"
+        and nodes[edge.target_id].name == "customerId"
+    )
+
+    assert route_binding.symbol == "{customerId}"
+    assert tuple((item.parser, item.line) for item in route_binding.provenance) == (
+        ("mule_http_route", 18),
+        ("mule_expression", 21),
+    )
+    assert (
+        "build-customer-status-response-test",
+        "munit_variable_reference",
+        "responseStatus",
+        "flowVars.responseStatus",
+        True,
+    ) in _edge_tuples(graph)
+    assert not any(
+        edge.kind is EdgeKind.DATAWEAVE_VARIABLE_REFERENCE
+        and nodes[edge.source_id].kind is NodeKind.MUNIT_TEST
+        for edge in graph.edges
+    )
 
 
 def test_entry_paths_are_a_canonical_set_and_snapshot_store_round_trips(

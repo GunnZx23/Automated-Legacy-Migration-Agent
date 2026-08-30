@@ -7,6 +7,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,7 @@ from legacy_migration_agent.contracts import (
     TransformationStep,
     ValidationCommand,
 )
+from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.workspace import content_revision, snapshot_tree
 from legacy_migration_agent.graphs.dependency_graph import build_salesforce_dependency_graph
 from legacy_migration_agent.schema_compatibility import PUBLIC_SCHEMA_MODELS
@@ -51,6 +53,10 @@ EXPECTED_COMMANDS = {
     "evaluation-pilot-run-local",
     "evaluation-pilot-verify",
     "evaluation-pilot-ingest-agent-run",
+    "evaluation-benchmark-v2-status",
+    "evaluation-benchmark-v2-anchor-create",
+    "evaluation-benchmark-v2-cell-start",
+    "evaluation-benchmark-v2-cell-receipt",
     "ui",
 }
 
@@ -339,6 +345,305 @@ def test_run_and_final_review_parsers_require_identity_human_and_live_gates() ->
     assert parsed.command == "agent-run-start"
 
 
+def test_agent_run_parser_accepts_the_approved_claude_cli_runtime() -> None:
+    parsed = build_parser().parse_args(
+        [
+            "agent-run-retry",
+            "--run-dir",
+            ".runs/example",
+            "--run-id",
+            "run-1",
+            "--thread-id",
+            "thread-1",
+            "--approval",
+            "approval.json",
+            "--claude-model",
+            "claude-sonnet-5",
+            "--claude-timeout-seconds",
+            "600",
+            "--approved-by",
+            "operator-1",
+            "--approved-remote-provider",
+            "bedrock",
+            "--allow-live-api",
+            "--allow-prompt-data-sharing",
+        ]
+    )
+
+    assert parsed.claude_model == "claude-sonnet-5"
+    assert parsed.model_id is None
+
+
+def test_benchmark_status_enumerates_cells_without_invoking_a_model(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    shutil.copytree(PROJECT_ROOT / "agents", project / "agents")
+    shutil.copytree(PROJECT_ROOT / "evaluation", project / "evaluation")
+    shutil.copytree(PROJECT_ROOT / "fixtures", project / "fixtures")
+    shutil.copytree(PROJECT_ROOT / "knowledge/wiki", project / "knowledge/wiki")
+    shutil.copytree(
+        PROJECT_ROOT / "tooling/mulesoft-runtime",
+        project / "tooling/mulesoft-runtime",
+    )
+    result = main(
+        [
+            "evaluation-benchmark-v2-status",
+            "--project-root",
+            str(project),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cell_count"] == 18
+    assert payload["model_invoked_by_status_command"] is False
+    assert "model_invoked" not in payload
+    assert payload["labels_reviewed"] is True
+    assert payload["execution_anchor_ready"] is False
+    assert {cell["next_action"] for cell in payload["cells"]} == {"create_execution_anchor"}
+
+
+def test_benchmark_status_projects_only_retryable_corrections_to_human_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    from legacy_migration_agent.agent_runtime.correction import CorrectionAction
+    from legacy_migration_agent.evaluation_runner import BenchmarkCellRoute
+    from legacy_migration_agent.measured_evaluation import LabelReviewStatus
+
+    project = tmp_path / "project"
+    project.mkdir()
+    anchor = project / ".runs/benchmark-v2/execution-anchor.json"
+    anchor.parent.mkdir(parents=True)
+    anchor.write_text("{}\n", encoding="utf-8")
+
+    cases = (
+        ("manifest", object(), None, None, False, False, "human_manifest_decision"),
+        (
+            "retry",
+            None,
+            CorrectionAction.RETRY_IMPLEMENTATION,
+            "recoverable_failure",
+            False,
+            False,
+            "human_correction_decision",
+        ),
+        (
+            "complete",
+            None,
+            CorrectionAction.COMPLETE,
+            "ready_for_human_review",
+            False,
+            False,
+            "independent_human_rubric",
+        ),
+        (
+            "stop-environment",
+            None,
+            CorrectionAction.STOP_ENVIRONMENT,
+            "environment_unavailable",
+            False,
+            False,
+            "independent_human_rubric",
+        ),
+        (
+            "stop-exhausted",
+            None,
+            CorrectionAction.STOP_EXHAUSTED,
+            "recoverable_failure",
+            False,
+            False,
+            "independent_human_rubric",
+        ),
+        (
+            "replan",
+            None,
+            CorrectionAction.REPLAN_WITH_NEW_APPROVAL,
+            "decision_required",
+            False,
+            False,
+            "independent_human_rubric",
+        ),
+        (
+            "controlled-failure",
+            None,
+            None,
+            "controlled_failure",
+            False,
+            False,
+            "independent_human_rubric",
+        ),
+        (
+            "rubric",
+            None,
+            CorrectionAction.COMPLETE,
+            "ready_for_human_review",
+            True,
+            False,
+            "extract_receipt",
+        ),
+        (
+            "receipt",
+            None,
+            CorrectionAction.STOP_EXHAUSTED,
+            "recoverable_failure",
+            True,
+            True,
+            "complete",
+        ),
+        ("active", None, None, None, False, False, "resume_existing_run"),
+    )
+    routes = []
+    statuses = {}
+    expected = {}
+    for index, (
+        name,
+        interrupt,
+        correction_action,
+        terminal_disposition,
+        rubric_exists,
+        receipt_exists,
+        next_action,
+    ) in enumerate(cases, start=1):
+        cell_id = f"status-matrix-{name}"
+        route = BenchmarkCellRoute(
+            cell_id=cell_id,
+            case_id=f"case-{index}",
+            scenario_id="salesforce-account-contact",
+            config_id="full-agent-wiki",
+            knowledge_arm="full_agent_wiki",
+            repetition=1,
+            run_dir=f".runs/benchmark-v2/{cell_id}",
+            run_id=f"run-{index}",
+            thread_id=f"thread-{index}",
+            request_id=f"request-{index}",
+            rubric_path=f"evaluation/benchmark-v2/rubrics/{cell_id}.json",
+            receipt_path=f"evaluation/benchmark-v2/results/receipts/{cell_id}.json",
+        )
+        routes.append(route)
+        (project / route.run_dir).mkdir(parents=True)
+        if rubric_exists:
+            rubric = project / route.rubric_path
+            rubric.parent.mkdir(parents=True, exist_ok=True)
+            rubric.write_text("{}\n", encoding="utf-8")
+        if receipt_exists:
+            receipt = project / route.receipt_path
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            receipt.write_text("{}\n", encoding="utf-8")
+        statuses[route.run_id] = SimpleNamespace(
+            status="completed" if terminal_disposition else "running",
+            terminal_disposition=terminal_disposition,
+            execution_attempt=2 if correction_action is not None else 1,
+            pending_nodes=() if terminal_disposition else ("engineer",),
+            interrupt=interrupt,
+            correction=(
+                SimpleNamespace(action=correction_action) if correction_action is not None else None
+            ),
+        )
+        expected[cell_id] = next_action
+
+    reviewed = LabelReviewStatus.INDEPENDENTLY_REVIEWED
+    protocol = SimpleNamespace(
+        label_review_evidence=object(),
+        dependency_labels=SimpleNamespace(review_status=reviewed),
+        registry=SimpleNamespace(
+            registry_id="benchmark-v2-status-matrix",
+            cases=(SimpleNamespace(review_status=reviewed),),
+        ),
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.benchmark_protocol.load_verified_benchmark_protocol",
+        lambda _root: protocol,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.benchmark_execution.load_verified_benchmark_execution_anchor",
+        lambda _root, _path: object(),
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner.benchmark_cell_routes",
+        lambda _root: tuple(routes),
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.application.agent_run.get_agent_run_status",
+        lambda _root, _run_dir, *, run_id, thread_id: statuses[run_id],
+    )
+    provider_calls = 0
+
+    def provider_spy(_args):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("status projection must not construct a provider client")
+
+    monkeypatch.setattr(
+        "legacy_migration_agent.cli_commands._benchmark_claude_models_from_args",
+        provider_spy,
+    )
+
+    result = main(
+        [
+            "evaluation-benchmark-v2-status",
+            "--project-root",
+            str(project),
+        ]
+    )
+
+    assert result == 0
+    assert provider_calls == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["model_invoked_by_status_command"] is False
+    assert "model_invoked" not in payload
+    assert {cell["cell_id"]: cell["next_action"] for cell in payload["cells"]} == expected
+
+
+def test_benchmark_start_refuses_simulated_unreviewed_labels_before_model_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    def forbidden_model_construction(_args):
+        raise AssertionError("model clients must not be built before label review")
+
+    monkeypatch.setattr(
+        "legacy_migration_agent.cli_commands._benchmark_claude_models_from_args",
+        forbidden_model_construction,
+    )
+
+    def refuse_unreviewed_protocol(_root):
+        raise PolicyViolation("benchmark execution requires independently reviewed label evidence")
+
+    monkeypatch.setattr(
+        "legacy_migration_agent.benchmark_protocol.require_independently_reviewed_benchmark_protocol",
+        refuse_unreviewed_protocol,
+    )
+    result = main(
+        [
+            "evaluation-benchmark-v2-cell-start",
+            "--project-root",
+            str(PROJECT_ROOT),
+            "--cell-id",
+            "salesforce-account-contact-medium--full-agent-wiki--r1",
+            "--requested-at",
+            "2026-08-29T12:00:00+00:00",
+            "--claude-model",
+            "claude-sonnet-5",
+            "--claude-timeout-seconds",
+            "600",
+            "--approved-by",
+            "operator-1",
+            "--approved-remote-provider",
+            "bedrock",
+            "--allow-live-api",
+            "--allow-prompt-data-sharing",
+        ]
+    )
+
+    assert result == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == "evaluation_invalid"
+
+
 def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
     parser = build_parser()
 
@@ -386,6 +691,8 @@ def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
             "900",
             "--approved-by",
             "demo-operator",
+            "--approved-remote-provider",
+            "bedrock",
             "--allow-live-api",
             "--allow-prompt-data-sharing",
         ]
@@ -393,6 +700,7 @@ def test_ui_parser_keeps_the_server_on_a_bounded_local_port() -> None:
     assert claude.claude_model == "claude-sonnet-5"
     assert claude.ollama_model is None
     assert claude.claude_timeout_seconds == 900.0
+    assert claude.approved_remote_provider == "bedrock"
     with pytest.raises(SystemExit):
         parser.parse_args(
             [
@@ -427,8 +735,9 @@ def test_vscode_launch_profile_opens_only_the_integrated_browser() -> None:
 
     by_name = {profile["name"]: profile for profile in configurations}
 
-    # The offline CLI profile still forwards the exact bounded server configuration.
-    cli_profile = by_name["Agent UI: VS Code Integrated Browser"]
+    # The optional local compatibility profile forwards the exact bounded server
+    # configuration without displacing the first-class Claude profiles.
+    cli_profile = by_name["Agent UI: local Ollama compatibility"]
     assert cli_profile["type"] == "node-terminal"
     assert cli_profile["cwd"] == "${workspaceFolder}"
     assert cli_profile["command"] == (
@@ -436,7 +745,23 @@ def test_vscode_launch_profile_opens_only_the_integrated_browser() -> None:
         "--ollama-model qwen3.8:latest --ollama-timeout-seconds 600"
     )
 
-    # The live Claude profile uses the same first-class CLI path as an operator.
+    # Both live Claude profiles use the first-class CLI path. The debugger must
+    # not reintroduce the historical Ollama-shaped compatibility seam.
+    debug_profile = by_name["Agent UI: live Claude (debugger)"]
+    assert debug_profile["type"] == "debugpy"
+    assert debug_profile["module"] == "legacy_migration_agent.cli"
+    assert debug_profile["cwd"] == "${workspaceFolder}"
+    assert "program" not in debug_profile
+    debug_args = debug_profile["args"]
+    assert "tooling/e2e/live_claude_serve.py" not in debug_args
+    assert debug_args[:5] == ["ui", "--project-root", ".", "--port", "8899"]
+    assert debug_args[debug_args.index("--claude-model") + 1] == "claude-sonnet-5"
+    assert debug_args[debug_args.index("--claude-timeout-seconds") + 1] == "900"
+    assert debug_args[debug_args.index("--approved-by") + 1] == "local-demo-operator"
+    assert debug_args[debug_args.index("--approved-remote-provider") + 1] == "bedrock"
+    assert "--allow-live-api" in debug_args
+    assert "--allow-prompt-data-sharing" in debug_args
+
     live_profile = by_name["Agent UI: live Claude"]
     assert live_profile["type"] == "node-terminal"
     assert live_profile["cwd"] == "${workspaceFolder}"
@@ -445,6 +770,7 @@ def test_vscode_launch_profile_opens_only_the_integrated_browser() -> None:
     assert "--claude-model claude-sonnet-5" in live_command
     assert "--claude-timeout-seconds 900" in live_command
     assert "--approved-by local-demo-operator" in live_command
+    assert "--approved-remote-provider bedrock" in live_command
     assert "--allow-live-api" in live_command
     assert "--allow-prompt-data-sharing" in live_command
     live_timeout = float(live_command.split("--claude-timeout-seconds ", 1)[1].split()[0])
@@ -525,12 +851,36 @@ def test_ui_command_requires_explicit_claude_approval_and_forwards_it(
     ]
     with pytest.raises(ValueError, match="Claude UI use requires"):
         main(base)
+    with pytest.raises(ValueError, match="--approved-remote-provider"):
+        main(
+            [
+                *base,
+                "--approved-by",
+                "demo-operator",
+                "--allow-live-api",
+                "--allow-prompt-data-sharing",
+            ]
+        )
+    with pytest.raises(ValueError, match="require --claude-model"):
+        main(
+            [
+                "ui",
+                "--project-root",
+                str(tmp_path),
+                "--ollama-model",
+                "qwen3.8:latest",
+                "--approved-remote-provider",
+                "bedrock",
+            ]
+        )
 
     result = main(
         [
             *base,
             "--approved-by",
             "demo-operator",
+            "--approved-remote-provider",
+            "bedrock",
             "--allow-live-api",
             "--allow-prompt-data-sharing",
         ]
@@ -544,6 +894,7 @@ def test_ui_command_requires_explicit_claude_approval_and_forwards_it(
     approval = calls[0]["live_model_approval"]
     assert isinstance(approval, LiveModelApproval)
     assert approval.approved_by == "demo-operator"
+    assert approval.approved_remote_provider_id == "bedrock"
 
 
 def test_ui_command_does_not_import_dormant_cli_capabilities() -> None:

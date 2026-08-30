@@ -1,7 +1,289 @@
 {
+  "$defs": {
+    "BenchmarkKnowledgeBinding": {
+      "additionalProperties": false,
+      "description": "Immutable benchmark arm binding; it is never accepted by normal run starts.",
+      "properties": {
+        "benchmark_definition_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Benchmark Definition Digest",
+          "type": "string"
+        },
+        "benchmark_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Benchmark Id",
+          "type": "string"
+        },
+        "benchmark_registry_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Benchmark Registry Digest",
+          "type": "string"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "cell_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "configuration_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Configuration Digest",
+          "type": "string"
+        },
+        "execution_anchor_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Anchor Digest"
+        },
+        "knowledge_arm": {
+          "enum": [
+            "full_agent_wiki",
+            "full_agent_no_wiki"
+          ],
+          "title": "Knowledge Arm",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "provider_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "risk_seed_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BenchmarkRiskSeedBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "runtime_identity_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Identity Digest"
+        },
+        "scenario_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Scenario Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_revision": {
+          "maxLength": 160,
+          "minLength": 7,
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "wiki_tree_revision": {
+          "maxLength": 160,
+          "minLength": 7,
+          "title": "Wiki Tree Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "benchmark_id",
+        "benchmark_definition_digest",
+        "benchmark_registry_digest",
+        "configuration_digest",
+        "provider_id",
+        "model_id",
+        "cell_id",
+        "case_id",
+        "scenario_id",
+        "knowledge_arm",
+        "request_digest",
+        "source_revision",
+        "wiki_tree_revision"
+      ],
+      "title": "BenchmarkKnowledgeBinding",
+      "type": "object"
+    },
+    "BenchmarkRiskSeedBinding": {
+      "additionalProperties": false,
+      "description": "Controller policy for one digest-bound synthetic risk stimulus.",
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "expected_disposition": {
+          "const": "decision_required",
+          "default": "decision_required",
+          "title": "Expected Disposition",
+          "type": "string"
+        },
+        "required_categories": {
+          "items": {
+            "$ref": "#/$defs/RiskCategory"
+          },
+          "title": "Required Categories",
+          "type": "array"
+        },
+        "required_reasons": {
+          "items": {
+            "$ref": "#/$defs/RiskReason"
+          },
+          "title": "Required Reasons",
+          "type": "array"
+        },
+        "seed_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Seed Id",
+          "type": "string"
+        },
+        "stimulus": {
+          "$ref": "#/$defs/BenchmarkRiskStimulus"
+        },
+        "stimulus_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Stimulus Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seed_id",
+        "case_id",
+        "stimulus",
+        "stimulus_digest",
+        "required_categories",
+        "required_reasons"
+      ],
+      "title": "BenchmarkRiskSeedBinding",
+      "type": "object"
+    },
+    "BenchmarkRiskStimulus": {
+      "additionalProperties": false,
+      "description": "Inert, non-authorizing benchmark evidence safe for the Architect call.",
+      "properties": {
+        "authority": {
+          "const": "none",
+          "default": "none",
+          "title": "Authority",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "request_text": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Request Text",
+          "type": "string"
+        },
+        "seed_artifact_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Seed Artifact Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "request_text",
+        "seed_artifact_digest"
+      ],
+      "title": "BenchmarkRiskStimulus",
+      "type": "object"
+    },
+    "RiskCategory": {
+      "enum": [
+        "security",
+        "public_contract",
+        "destructive_change",
+        "cross_application",
+        "incomplete_evidence",
+        "dynamic_dependency"
+      ],
+      "title": "RiskCategory",
+      "type": "string"
+    },
+    "RiskReason": {
+      "description": "Generic, model-facing reason classification for public risk observations.",
+      "enum": [
+        "destructive_legacy_deletion",
+        "sharing_boundary_weakening",
+        "object_field_security_weakening",
+        "permission_scope_expansion",
+        "public_contract_change",
+        "cross_application_effect",
+        "unresolved_dynamic_dependency",
+        "incomplete_evidence"
+      ],
+      "title": "RiskReason",
+      "type": "string"
+    }
+  },
   "additionalProperties": false,
   "description": "Portable non-secret inputs needed to reproduce runtime composition.",
   "properties": {
+    "benchmark_knowledge_binding": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BenchmarkKnowledgeBinding"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "preset_id": {
       "maxLength": 160,
       "minLength": 1,

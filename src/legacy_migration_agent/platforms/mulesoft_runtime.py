@@ -102,7 +102,9 @@ from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MULE4_PROPERTIES,
     MULE4_RUNTIME,
     MULE4_TEST,
+    MULE_MAVEN_PLUGIN_VERSION,
     MULESOFT_IMPLEMENTATION_CONTRACT,
+    MUNIT_VERSION,
     SOURCE_FILES,
     TARGET_FILES,
     MuleSoftLocalCheckCode,
@@ -129,6 +131,19 @@ MULESOFT_RUNTIME_AUTHORITY_ANCHOR_KIND: Final = "mulesoft-munit-authority-v1"
 MULESOFT_DEPENDENCY_CLOSURE_DIAGNOSTIC_ID: Final = "mulesoft_dependency_closure.target_graph"
 MULESOFT_MUNIT_EXECUTION_DIAGNOSTIC_ID: Final = "mulesoft_munit_execution.candidate_behavior"
 
+# These controller-owned diagnostics identify a defect in the approved source
+# dependency plan, not a defect that the Engineer may repair inside the already
+# approved generated-file boundary.  The values intentionally match the
+# Salesforce controller vocabulary.
+GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID: Final = "graph_dependency_omission"
+GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID: Final = "graph_dependency_incorrect"
+_PLAN_INVALID_GRAPH_DIAGNOSTIC_IDS: Final = frozenset(
+    {
+        GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,
+        GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,
+    }
+)
+
 MULESOFT_VALIDATION_COMMAND_IDS: Final = (
     MULESOFT_CANDIDATE_CONTRACT_COMMAND_ID,
     MULESOFT_DEPENDENCY_CLOSURE_COMMAND_ID,
@@ -140,6 +155,19 @@ MULESOFT_VALIDATION_COMMAND_IDS: Final = (
 MULESOFT_TARGET_RUNTIME: Final = "Mule 4.9.20 with Java 17"
 MULESOFT_SOURCE_VERSION: Final = "Mule 3.9.5"
 MULESOFT_TARGET_VERSION: Final = "Mule 4.9.20"
+MULESOFT_MAVEN_MIN_VERSION: Final = "3.9.0"
+MULESOFT_MAVEN_MAX_VERSION: Final = "3.9.15"
+_MULESOFT_MAVEN_VERSION: Final = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+
+
+def _supported_mulesoft_maven_version(value: str) -> bool:
+    match = _MULESOFT_MAVEN_VERSION.fullmatch(value)
+    if match is None:
+        return False
+    resolved = tuple(int(component) for component in match.groups())
+    minimum = tuple(int(component) for component in MULESOFT_MAVEN_MIN_VERSION.split("."))
+    maximum = tuple(int(component) for component in MULESOFT_MAVEN_MAX_VERSION.split("."))
+    return minimum <= resolved <= maximum
 
 
 @dataclass(frozen=True)
@@ -302,8 +330,21 @@ MULESOFT_REPAIR_SIGNALS: Final[dict[str, MuleSoftRepairSignalSpec]] = {
             instruction=_artifact_repair_instruction(
                 MULE4_POM,
                 "Restore the approved packaging, pinned compatibility set, dependency and "
-                "plugin allowlists, and repository restrictions without adding credentials or "
-                "unapproved build capabilities.",
+                "plugin allowlists, and repository restrictions. Under the active direct "
+                "mule-maven-plugin declaration, include exactly one direct configuration whose "
+                "runtimeVersion resolves through the direct app.runtime property to Mule "
+                "4.9.20. Do not add credentials or unapproved build capabilities.",
+            ),
+        )
+    ),
+    _mulesoft_signal(MuleSoftLocalCheckCode.VERSION_MISMATCH, MULE4_POM): (
+        MuleSoftRepairSignalSpec(
+            allowed_paths=(MULE4_POM,),
+            instruction=_artifact_repair_instruction(
+                MULE4_POM,
+                "Align only the direct active POM runtime, Mule Maven Plugin, MUnit, and HTTP "
+                "connector versions with the approved compatibility set. Do not change "
+                "mule-artifact.json or any generated source without its own diagnostic.",
             ),
         )
     ),
@@ -598,7 +639,10 @@ class _EnabledContainerAuthorityManifest(StrictModel):
             raise ValueError("authority image labels do not implement the fixed runtime contract")
         if (
             self.toolchain_probe.java_version != JAVA_VERSION
+            or not _supported_mulesoft_maven_version(self.toolchain_probe.maven_version)
             or self.toolchain_probe.mule_runtime_version != MULE4_RUNTIME
+            or self.toolchain_probe.mule_maven_plugin_version != MULE_MAVEN_PLUGIN_VERSION
+            or self.toolchain_probe.munit_version != MUNIT_VERSION
         ):
             raise ValueError("authority toolchain versions do not match the migration target")
         return self
@@ -2342,6 +2386,12 @@ def _container_receipt(
 
 def _disposition(results: tuple[CheckResult, ...]) -> ValidationDisposition:
     required = tuple(result for result in results if result.required)
+    if any(
+        result.status is CheckStatus.FAILED
+        and not _PLAN_INVALID_GRAPH_DIAGNOSTIC_IDS.isdisjoint(result.diagnostic_ids)
+        for result in required
+    ):
+        return ValidationDisposition.PLAN_INVALID
     if any(result.status is CheckStatus.FAILED for result in required):
         return ValidationDisposition.RECOVERABLE_FAILURE
     if any(result.status is CheckStatus.UNAVAILABLE for result in required):

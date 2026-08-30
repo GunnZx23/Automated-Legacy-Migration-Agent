@@ -70,8 +70,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--model-id",
-        default=os.environ.get("RECORD_MODE_MODEL_ID", "qwen3:8b"),
-        help="Ollama model id string presented by the UI (never called live).",
+        default=os.environ.get("RECORD_MODE_MODEL_ID", "recorded-e2e-model"),
+        help="Synthetic model id presented by the UI (never called live).",
     )
     parser.add_argument(
         "--timeout-seconds",

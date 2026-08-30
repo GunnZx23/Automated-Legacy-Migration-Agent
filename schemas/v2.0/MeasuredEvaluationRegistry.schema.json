@@ -1,0 +1,390 @@
+{
+  "$defs": {
+    "BenchmarkCaseLabel": {
+      "additionalProperties": false,
+      "description": "Expert label fixed before any candidate is generated.",
+      "properties": {
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "complexity": {
+          "$ref": "#/$defs/Complexity"
+        },
+        "dependencies": {
+          "items": {
+            "$ref": "#/$defs/DependencyLabel"
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Dependencies",
+          "type": "array"
+        },
+        "expected_disposition": {
+          "$ref": "#/$defs/WorkflowDisposition"
+        },
+        "expected_intervention_reason_ids": {
+          "items": {
+            "$ref": "#/$defs/RiskReason"
+          },
+          "maxItems": 64,
+          "title": "Expected Intervention Reason Ids",
+          "type": "array"
+        },
+        "intervention_expected": {
+          "title": "Intervention Expected",
+          "type": "boolean"
+        },
+        "label_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Label Id",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "review_evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Review Evidence Digest"
+        },
+        "review_status": {
+          "$ref": "#/$defs/LabelReviewStatus"
+        },
+        "reviewer_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer Id"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label_id",
+        "case_id",
+        "platform",
+        "complexity",
+        "source_digest",
+        "dependencies",
+        "expected_disposition",
+        "intervention_expected",
+        "expected_intervention_reason_ids",
+        "rationale",
+        "review_status"
+      ],
+      "title": "BenchmarkCaseLabel",
+      "type": "object"
+    },
+    "BenchmarkConfiguration": {
+      "additionalProperties": false,
+      "description": "One controlled execution configuration in the Wiki ablation.",
+      "properties": {
+        "agent_definitions_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Agent Definitions Digest",
+          "type": "string"
+        },
+        "config_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Config Id",
+          "type": "string"
+        },
+        "model_id": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "prompt_policy_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Prompt Policy Digest",
+          "type": "string"
+        },
+        "provider_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "uses_agents": {
+          "const": true,
+          "default": true,
+          "title": "Uses Agents",
+          "type": "boolean"
+        },
+        "uses_bounded_correction": {
+          "const": true,
+          "default": true,
+          "title": "Uses Bounded Correction",
+          "type": "boolean"
+        },
+        "uses_dependency_graph": {
+          "const": true,
+          "default": true,
+          "title": "Uses Dependency Graph",
+          "type": "boolean"
+        },
+        "uses_wiki": {
+          "title": "Uses Wiki",
+          "type": "boolean"
+        },
+        "validation_policy_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Validation Policy Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "config_id",
+        "provider_id",
+        "model_id",
+        "uses_wiki",
+        "agent_definitions_digest",
+        "prompt_policy_digest",
+        "validation_policy_digest"
+      ],
+      "title": "BenchmarkConfiguration",
+      "type": "object"
+    },
+    "Complexity": {
+      "enum": [
+        "simple",
+        "medium",
+        "complex"
+      ],
+      "title": "Complexity",
+      "type": "string"
+    },
+    "DependencyLabel": {
+      "additionalProperties": false,
+      "properties": {
+        "dependency_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Dependency Id",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence Digest",
+          "type": "string"
+        },
+        "high_impact": {
+          "title": "High Impact",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dependency_id",
+        "high_impact",
+        "evidence_digest"
+      ],
+      "title": "DependencyLabel",
+      "type": "object"
+    },
+    "LabelReviewStatus": {
+      "enum": [
+        "initial_label_set",
+        "independently_reviewed"
+      ],
+      "title": "LabelReviewStatus",
+      "type": "string"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "QualityThresholdPolicy": {
+      "additionalProperties": false,
+      "description": "Code-owned pilot exit thresholds included in the registry digest.",
+      "properties": {
+        "escaped_defects_maximum": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Escaped Defects Maximum",
+          "type": "integer"
+        },
+        "first_pass_rate_minimum": {
+          "default": 0.6666666666666666,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "First Pass Rate Minimum",
+          "type": "number"
+        },
+        "intervention_precision_minimum": {
+          "default": 1.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Intervention Precision Minimum",
+          "type": "number"
+        },
+        "policy_id": {
+          "default": "benchmark-v2-quality-thresholds",
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "semantic_conformance_minimum": {
+          "default": 1.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Semantic Conformance Minimum",
+          "type": "number"
+        },
+        "wiki_support_accuracy_minimum": {
+          "default": 1.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Wiki Support Accuracy Minimum",
+          "type": "number"
+        }
+      },
+      "title": "QualityThresholdPolicy",
+      "type": "object"
+    },
+    "RiskReason": {
+      "description": "Generic, model-facing reason classification for public risk observations.",
+      "enum": [
+        "destructive_legacy_deletion",
+        "sharing_boundary_weakening",
+        "object_field_security_weakening",
+        "permission_scope_expansion",
+        "public_contract_change",
+        "cross_application_effect",
+        "unresolved_dynamic_dependency",
+        "incomplete_evidence"
+      ],
+      "title": "RiskReason",
+      "type": "string"
+    },
+    "WorkflowDisposition": {
+      "enum": [
+        "ready_for_human_review",
+        "recoverable_failure",
+        "plan_invalid",
+        "environment_unavailable",
+        "decision_required",
+        "controlled_failure"
+      ],
+      "title": "WorkflowDisposition",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Versioned predeclaration of the exact 18-cell pilot matrix.",
+  "properties": {
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkCaseLabel"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Cases",
+      "type": "array"
+    },
+    "configurations": {
+      "items": {
+        "$ref": "#/$defs/BenchmarkConfiguration"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Configurations",
+      "type": "array"
+    },
+    "declaration_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Declaration Digest",
+      "type": "string"
+    },
+    "quality_thresholds": {
+      "$ref": "#/$defs/QualityThresholdPolicy"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "repetitions": {
+      "const": 3,
+      "default": 3,
+      "title": "Repetitions",
+      "type": "integer"
+    },
+    "require_full_cross_product": {
+      "const": true,
+      "default": true,
+      "title": "Require Full Cross Product",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "registry_id",
+    "declaration_digest",
+    "cases",
+    "configurations"
+  ],
+  "title": "MeasuredEvaluationRegistry",
+  "type": "object"
+}

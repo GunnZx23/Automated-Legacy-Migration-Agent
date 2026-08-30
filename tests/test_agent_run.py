@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import sqlite3
@@ -9,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mulesoft_candidate_factory import mulesoft_target_outputs
@@ -30,7 +32,9 @@ from legacy_migration_agent.agent_runtime.correction import (
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectManifestProposal,
     ArchitectModelContext,
+    ArchitectRiskObservation,
     ArchitectSemanticDecision,
+    EngineerCorrectionProviderContext,
     EngineerFilePlan,
     EngineerFilePlanOutcome,
     EngineerFileUpdate,
@@ -44,6 +48,7 @@ from legacy_migration_agent.agent_runtime.model_agents import (
 from legacy_migration_agent.agent_runtime.model_workflow import (
     ModelAgentWorkflowRoles,
     ModelWorkflowIntegrationError,
+    RejectedArchitectModelCallReceipt,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
     LiveModelApproval,
@@ -53,11 +58,14 @@ from legacy_migration_agent.agent_runtime.openai_model import (
     ModelRuntimeError,
     ModelUsageEvidence,
 )
+from legacy_migration_agent.agent_runtime.run_artifact_paths import RunArtifactPaths
 from legacy_migration_agent.application.agent_run import (
     AgentRunModelClients,
     build_live_openai_model_clients,
     build_local_ollama_model_clients,
     get_agent_run_status,
+    get_historical_terminal_agent_run_status,
+    get_verified_agent_run_evidence,
     prepare_agent_run_request,
     recover_incomplete_agent_run_start,
     resume_agent_run,
@@ -74,6 +82,7 @@ from legacy_migration_agent.application.migration_scenarios import (
     migration_launch_contract,
     migration_scenario,
 )
+from legacy_migration_agent.application.run_query import load_verified_planning_snapshot
 from legacy_migration_agent.contracts import (
     ApprovalAction,
     CheckResult,
@@ -87,6 +96,7 @@ from legacy_migration_agent.contracts import (
     MigrationTarget,
     PlanningInterventionOption,
     Platform,
+    RiskCategory,
     ToolReceipt,
     TransformationStep,
     ValidationCommand,
@@ -94,9 +104,24 @@ from legacy_migration_agent.contracts import (
     ValidationReport,
 )
 from legacy_migration_agent.core.integrity import artifact_digest
+from legacy_migration_agent.core.observability import terminal_lifecycle_logging
 from legacy_migration_agent.core.policies import PolicyViolation
+from legacy_migration_agent.core.run_session import AgentRunSession
 from legacy_migration_agent.core.workspace import content_revision, snapshot_tree
-from legacy_migration_agent.knowledge.wiki import RetrievalTrace
+from legacy_migration_agent.evaluation_runner import (
+    bind_benchmark_knowledge_arm,
+    recover_incomplete_benchmark_agent_run_start,
+    start_benchmark_agent_run,
+)
+from legacy_migration_agent.graphs.graph_assurance import (
+    GraphAssuranceReport,
+    GraphAssuranceStatus,
+)
+from legacy_migration_agent.knowledge.wiki import (
+    BENCHMARK_RISK_REASONS,
+    RetrievalTrace,
+    RiskReason,
+)
 from legacy_migration_agent.platforms.local_checks import (
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID,
     SALESFORCE_AGENT_OUTPUT_PATHS,
@@ -129,7 +154,7 @@ from legacy_migration_agent.workflow import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-AS_OF = date(2026, 8, 27)
+AS_OF = date(2026, 8, 29)
 MODEL_ID = "test-model:latest"
 LOCAL_MODEL_REVISION_A = "sha256:" + "a" * 64
 LOCAL_MODEL_REVISION_B = "sha256:" + "b" * 64
@@ -143,6 +168,49 @@ MULE_FROZEN_OUTPUTS = {
     for relative_path, content in mulesoft_target_outputs().items()
 }
 SENSITIVE_FAILURE = "sk-provider-error-secret-123456789 /private/tmp/oracle"
+
+
+def is_engineer_output_type(output_type: type[BaseModel]) -> bool:
+    return issubclass(output_type, EngineerModelOutcome)
+
+
+def is_engineer_model_outcome_type(output_type: type[BaseModel]) -> bool:
+    return issubclass(output_type, EngineerModelOutcome)
+
+
+def is_engineer_file_plan_outcome_type(output_type: type[BaseModel]) -> bool:
+    return is_engineer_model_outcome_type(output_type) and (
+        getattr(output_type, "_exact_coverage_required", None) is False
+    )
+
+
+def engineer_input_context(
+    input_value: BaseModel,
+) -> EngineerWorkspaceContext | EngineerCorrectionProviderContext:
+    if isinstance(input_value, EngineerCorrectionProviderContext):
+        return EngineerCorrectionProviderContext.model_validate(input_value)
+    return EngineerWorkspaceContext.model_validate(input_value)
+
+
+def engineer_controller_input_digest(
+    context: EngineerWorkspaceContext | EngineerCorrectionProviderContext,
+) -> str:
+    if isinstance(context, EngineerCorrectionProviderContext):
+        return context.controller_input_evidence_digest
+    return context.input_evidence_digest
+
+
+def output_type_matches(
+    output_type: type[BaseModel],
+    expected: type[BaseModel],
+) -> bool:
+    if expected is ArchitectManifestProposal:
+        return issubclass(output_type, ArchitectManifestProposal)
+    if expected is EngineerModelOutcome:
+        return is_engineer_model_outcome_type(output_type)
+    if expected is EngineerFilePlanOutcome:
+        return is_engineer_file_plan_outcome_type(output_type)
+    return output_type is expected
 
 
 class PresetStructuredModel:
@@ -165,8 +233,12 @@ class PresetStructuredModel:
     ) -> BaseModel:
         assert system_prompt
         self.calls.append(output_type.__name__)
-        if output_type is ArchitectManifestProposal:
+        if issubclass(output_type, ArchitectManifestProposal):
             context = ArchitectModelContext.model_validate(input_value)
+            no_wiki_control = context.wiki_trace.retrieval_strategy == "benchmark_no_wiki_control"
+            evidence_ids = (context.dependency_graph.nodes[0].node_id,)
+            if not no_wiki_control:
+                evidence_ids += (context.wiki_trace.hits[0].page_id,)
             return ArchitectManifestProposal(
                 semantic_decisions=(
                     ArchitectSemanticDecision(
@@ -175,26 +247,24 @@ class PresetStructuredModel:
                         summary=(
                             "Use the exact shipped additive scope and controller-owned checks."
                         ),
-                        evidence_ids=(
-                            context.dependency_graph.nodes[0].node_id,
-                            context.wiki_trace.hits[0].page_id,
-                        ),
+                        evidence_ids=evidence_ids,
                     ),
                 ),
                 cited_graph_nodes=(context.dependency_graph.nodes[0].node_id,),
                 cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
             )
-        if output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}:
-            context = EngineerWorkspaceContext.model_validate(input_value)
+        if is_engineer_output_type(output_type):
+            context = engineer_input_context(input_value)
             if context.correction is None:
                 updates = tuple(
                     EngineerFileUpdate(path=path, content=self.outputs[path])
                     for path in sorted(self.outputs)
                 )
             else:
+                assert isinstance(context, EngineerCorrectionProviderContext)
                 prior = {
                     update.path: update.content
-                    for update in context.correction.prior_file_plan.updates
+                    for update in context.correction.prior_allowed_updates
                 }
                 path = context.correction.allowed_correction_paths[0]
                 updates = (EngineerFileUpdate(path=path, content=prior[path] + "\n"),)
@@ -202,8 +272,6 @@ class PresetStructuredModel:
                 updates=updates,
                 assumptions=("Only the manifest-approved additive files are changed.",),
             )
-            if output_type is EngineerFilePlanOutcome:
-                return EngineerFilePlanOutcome(kind="file_plan", file_plan=file_plan)
             return EngineerModelOutcome.for_file_plan(file_plan)
         if output_type is ValidatorModelAdvisory:
             context = ValidatorEvidenceContext.model_validate(input_value)
@@ -219,6 +287,76 @@ class PresetStructuredModel:
         raise AssertionError(f"unexpected structured output type: {output_type}")
 
 
+class BenchmarkRiskAwareModel(PresetStructuredModel):
+    """Offline test double that identifies all mandatory seeded risk reasons."""
+
+    def parse(
+        self,
+        *,
+        system_prompt: str,
+        input_value: BaseModel,
+        output_type: type[BaseModel],
+    ) -> BaseModel:
+        if not issubclass(output_type, ArchitectManifestProposal):
+            return super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+        assert system_prompt
+        self.calls.append(output_type.__name__)
+        context = ArchitectModelContext.model_validate(input_value)
+        assert context.supplemental_request_evidence is not None
+        graph_node = context.dependency_graph.nodes[0].node_id
+        no_wiki_control = context.wiki_trace.retrieval_strategy == "benchmark_no_wiki_control"
+        semantic_evidence = (graph_node,)
+        if not no_wiki_control:
+            semantic_evidence += (context.wiki_trace.hits[0].page_id,)
+        risk_evidence = (context.supplemental_request_evidence.evidence_id,)
+        return ArchitectManifestProposal(
+            semantic_decisions=(
+                ArchitectSemanticDecision(
+                    decision_id="bounded-case-additive-plan",
+                    category="target_architecture",
+                    summary="Keep the Case migration additive within the bounded source graph.",
+                    evidence_ids=semantic_evidence,
+                ),
+            ),
+            cited_graph_nodes=(graph_node,),
+            cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
+            risk_observations=(
+                ArchitectRiskObservation(
+                    category=RiskCategory.DESTRUCTIVE_CHANGE,
+                    hazard_reason=RiskReason.DESTRUCTIVE_LEGACY_DELETION,
+                    summary="Deleting the legacy Case artifacts requires a human decision.",
+                    evidence_ids=risk_evidence,
+                    requires_human_decision=True,
+                ),
+                ArchitectRiskObservation(
+                    category=RiskCategory.SECURITY,
+                    hazard_reason=RiskReason.SHARING_BOUNDARY_WEAKENING,
+                    summary="Weakening the sharing boundary requires a human decision.",
+                    evidence_ids=risk_evidence,
+                    requires_human_decision=True,
+                ),
+                ArchitectRiskObservation(
+                    category=RiskCategory.SECURITY,
+                    hazard_reason=RiskReason.OBJECT_FIELD_SECURITY_WEAKENING,
+                    summary="Weakening object and field security requires a human decision.",
+                    evidence_ids=risk_evidence,
+                    requires_human_decision=True,
+                ),
+                ArchitectRiskObservation(
+                    category=RiskCategory.SECURITY,
+                    hazard_reason=RiskReason.PERMISSION_SCOPE_EXPANSION,
+                    summary="Expanding permission scope requires a human decision.",
+                    evidence_ids=risk_evidence,
+                    requires_human_decision=True,
+                ),
+            ),
+        )
+
+
 class EngineerStopStructuredModel(PresetStructuredModel):
     def __init__(self, outputs: dict[str, str], *, stop_on_occurrence: int = 1) -> None:
         super().__init__(outputs)
@@ -231,7 +369,7 @@ class EngineerStopStructuredModel(PresetStructuredModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type is not EngineerModelOutcome:
+        if not is_engineer_model_outcome_type(output_type):
             return super().parse(
                 system_prompt=system_prompt,
                 input_value=input_value,
@@ -245,7 +383,8 @@ class EngineerStopStructuredModel(PresetStructuredModel):
                 output_type=output_type,
             )
         self.calls.append(output_type.__name__)
-        context = EngineerWorkspaceContext.model_validate(input_value)
+        context = engineer_input_context(input_value)
+        input_evidence_digest = engineer_controller_input_digest(context)
         output_path = context.manifest.approved_paths[0]
         affected_paths = (output_path, context.request.target.entry_path)
         intervention = ImplementationIntervention(
@@ -257,7 +396,7 @@ class EngineerStopStructuredModel(PresetStructuredModel):
             base_revision=context.workspace_base_revision,
             agent_version=context.agent_version,
             agent_definition_digest=context.agent_definition_digest,
-            input_evidence_digest=context.input_evidence_digest,
+            input_evidence_digest=input_evidence_digest,
             reason="A required public implementation contract is absent.",
             requested_action=ApprovalAction.EXPAND_SCOPE,
             affected_paths=affected_paths,
@@ -265,7 +404,7 @@ class EngineerStopStructuredModel(PresetStructuredModel):
             evidence=(
                 ImplementationInterventionEvidence(
                     source="engineer_input",
-                    source_digest=context.input_evidence_digest,
+                    source_digest=input_evidence_digest,
                     summary="The frozen implementation context lacks the contract.",
                     affected_paths=affected_paths,
                 ),
@@ -303,7 +442,7 @@ class ExplodingStructuredModel(PresetStructuredModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type is self.fail_output_type:
+        if output_type_matches(output_type, self.fail_output_type):
             self.calls.append(output_type.__name__)
             raise self.failure
         return super().parse(
@@ -335,9 +474,9 @@ class InterruptOnceStructuredModel(PresetStructuredModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        matches_role = output_type is self.interrupt_output_type
+        matches_role = output_type_matches(output_type, self.interrupt_output_type)
         if self.interrupt_output_type is EngineerModelOutcome:
-            matches_role = output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}
+            matches_role = is_engineer_output_type(output_type)
         if matches_role:
             self.role_occurrences += 1
             if self.role_occurrences == self.interrupt_on_occurrence:
@@ -364,13 +503,13 @@ class SemanticallyInvalidStructuredModel(PresetStructuredModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type is not self.invalid_output:
+        if not output_type_matches(output_type, self.invalid_output):
             return super().parse(
                 system_prompt=system_prompt,
                 input_value=input_value,
                 output_type=output_type,
             )
-        if output_type is ArchitectManifestProposal:
+        if issubclass(output_type, ArchitectManifestProposal):
             valid = ArchitectManifestProposal.model_validate(
                 super().parse(
                     system_prompt=system_prompt,
@@ -379,9 +518,9 @@ class SemanticallyInvalidStructuredModel(PresetStructuredModel):
                 )
             )
             return valid.model_copy(update={"cited_wiki_pages": ("foreign-wiki-page",)})
-        if output_type is EngineerModelOutcome:
+        if is_engineer_model_outcome_type(output_type):
             self.calls.append(output_type.__name__)
-            context = EngineerWorkspaceContext.model_validate(input_value)
+            context = engineer_input_context(input_value)
             first_path = context.manifest.approved_paths[0]
             return EngineerModelOutcome.for_file_plan(
                 EngineerFilePlan(
@@ -414,14 +553,14 @@ def _models(model: PresetStructuredModel) -> AgentRunModelClients:
 def _project(tmp_path: Path, platform: Platform) -> tuple[Path, MigrationRequest]:
     project = tmp_path / f"project-{platform.value}"
     contract = migration_scenario(platform).launch_contract
-    fixture = (
-        PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input"
-        if platform is Platform.SALESFORCE
-        else PROJECT_ROOT / "fixtures/mulesoft/customer-status-api/input"
-    )
-    shutil.copytree(fixture, project / contract.source_root)
+    shutil.copytree(PROJECT_ROOT / "fixtures", project / "fixtures")
     shutil.copytree(PROJECT_ROOT / "agents", project / "agents")
     shutil.copytree(PROJECT_ROOT / "knowledge/wiki", project / "knowledge/wiki")
+    shutil.copytree(PROJECT_ROOT / "evaluation", project / "evaluation")
+    shutil.copytree(
+        PROJECT_ROOT / "tooling/mulesoft-runtime",
+        project / "tooling/mulesoft-runtime",
+    )
     if platform is Platform.SALESFORCE:
         target = MigrationTarget(
             entry_path=SALESFORCE_SOURCE_ENTRY,
@@ -567,6 +706,109 @@ def test_prepare_mulesoft_request_accepts_the_shipped_nested_input_path() -> Non
     assert prepared.repository == contract.source_root
     assert prepared.base_revision == content_revision(PROJECT_ROOT / contract.source_root)
     assert prepared.target.entry_path == MULE3_APP
+
+
+def test_historical_terminal_status_allows_prompt_and_launch_drift_but_not_source_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    run_dir = project / ".runs/run-historical-terminal-status"
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    models = _models(model)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id="run-historical-terminal-status",
+        thread_id="thread-historical-terminal-status",
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+    )
+
+    with pytest.raises(PolicyViolation, match="no verified terminal lifecycle"):
+        get_historical_terminal_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-historical-terminal-status",
+            thread_id="thread-historical-terminal-status",
+        )
+
+    completed = resume_agent_run(
+        project,
+        run_dir,
+        run_id="run-historical-terminal-status",
+        thread_id="thread-historical-terminal-status",
+        approval=_approval(started),
+        models=models,
+    )
+    with (project / "agents/engineer.md").open("a", encoding="utf-8") as prompt:
+        prompt.write("\nHistorical terminal readback prompt evolution.\n")
+
+    with pytest.raises(PolicyViolation, match="current agent definitions differ"):
+        get_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-historical-terminal-status",
+            thread_id="thread-historical-terminal-status",
+        )
+    assert (
+        get_historical_terminal_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-historical-terminal-status",
+            thread_id="thread-historical-terminal-status",
+        )
+        == completed
+    )
+
+    current = migration_scenario(Platform.SALESFORCE)
+    drifted = current.model_copy(
+        update={
+            "canonical_description": current.canonical_description
+            + " Preserve the frozen terminal run under the evolved launch contract."
+        }
+    )
+    monkeypatch.setitem(migration_scenarios_module._SCENARIOS, current.scenario_id, drifted)
+    monkeypatch.setitem(
+        migration_scenarios_module._PRIMARY_BY_PLATFORM,
+        Platform.SALESFORCE,
+        drifted,
+    )
+    assert (
+        get_historical_terminal_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-historical-terminal-status",
+            thread_id="thread-historical-terminal-status",
+        )
+        == completed
+    )
+
+    source_file = project / request.repository / request.target.entry_path
+    source_file.write_text(source_file.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(PolicyViolation, match="source content revision changed"):
+        get_historical_terminal_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-historical-terminal-status",
+            thread_id="thread-historical-terminal-status",
+        )
+
+
+def test_normal_agent_run_config_preserves_the_pre_benchmark_canonical_digest() -> None:
+    config = agent_run_module.AgentRunConfig(
+        preset_id="salesforce-vf-to-lwc",
+        wiki_as_of=AS_OF,
+    )
+    legacy_payload = {
+        "schema_version": "1.0",
+        "preset_id": "salesforce-vf-to-lwc",
+        "wiki_as_of": AS_OF.isoformat(),
+    }
+
+    assert config.model_dump(mode="json") == legacy_payload
+    assert artifact_digest(config) == artifact_digest(legacy_payload)
 
 
 @pytest.mark.parametrize(
@@ -832,10 +1074,11 @@ def test_canonical_launch_contract_starts_supported_migration(
     model = PresetStructuredModel(
         SF_FROZEN_OUTPUTS if platform is Platform.SALESFORCE else MULE_FROZEN_OUTPUTS
     )
+    run_dir = project / ".runs/canonical-launch"
 
     started = start_agent_run(
         project,
-        project / ".runs/canonical-launch",
+        run_dir,
         run_id=f"run-canonical-{platform.value}",
         thread_id=f"thread-canonical-{platform.value}",
         launch_contract=migration_scenario(platform).launch_contract,
@@ -845,6 +1088,328 @@ def test_canonical_launch_contract_starts_supported_migration(
 
     assert started.status == "awaiting_approval"
     assert model.calls == ["ArchitectManifestProposal"]
+    config = json.loads(
+        (run_dir / "evidence" / agent_run_module.AGENT_RUN_CONFIG_PATH).read_text(encoding="utf-8")
+    )
+    assert "benchmark_knowledge_binding" not in config
+    trace = RetrievalTrace.model_validate_json(
+        (run_dir / "evidence" / RunArtifactPaths(request.request_id).wiki_trace).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert trace.retrieval_strategy == "deterministic_lexical"
+
+
+def test_benchmark_no_wiki_start_uses_same_gate_without_loading_wiki(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id="salesforce-account-contact-medium--full-agent-no-wiki--r1",
+        case_id="salesforce-account-contact-medium",
+        scenario_id=contract.scenario_id,
+        knowledge_arm="full_agent_no_wiki",
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_model_identity",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_execution_anchor_binding",
+        lambda *_args: None,
+    )
+
+    def fail_if_wiki_loads(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no-Wiki benchmark arm must never load the Wiki")
+
+    monkeypatch.setattr(agent_run_module.LlmWiki, "load", fail_if_wiki_loads)
+    run_dir = project / ".runs/benchmark-no-wiki"
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+
+    started = start_benchmark_agent_run(
+        project,
+        run_dir,
+        run_id="run-benchmark-no-wiki",
+        thread_id="thread-benchmark-no-wiki",
+        launch_contract=contract,
+        request=request,
+        models=_models(model),
+        knowledge_binding=binding,
+    )
+
+    assert started.status == "awaiting_approval"
+    assert model.calls == ["ArchitectManifestProposal"]
+    config = json.loads(
+        (run_dir / "evidence" / agent_run_module.AGENT_RUN_CONFIG_PATH).read_text(encoding="utf-8")
+    )
+    assert config["benchmark_knowledge_binding"] == binding.model_dump(mode="json")
+    trace = RetrievalTrace.model_validate_json(
+        (run_dir / "evidence" / RunArtifactPaths(request.request_id).wiki_trace).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert trace.retrieval_strategy == "benchmark_no_wiki_control"
+    assert trace.query == contract.wiki_query
+    assert trace.hits[0].sources == ()
+
+    config["benchmark_knowledge_binding"]["knowledge_arm"] = "full_agent_wiki"
+    config_path = run_dir / "evidence" / agent_run_module.AGENT_RUN_CONFIG_PATH
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(PolicyViolation, match="artifact digest mismatch"):
+        get_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-benchmark-no-wiki",
+            thread_id="thread-benchmark-no-wiki",
+            request=request,
+        )
+
+
+@pytest.mark.parametrize(
+    ("knowledge_arm", "config_id"),
+    (
+        ("full_agent_wiki", "full-agent-wiki"),
+        ("full_agent_no_wiki", "full-agent-no-wiki"),
+    ),
+)
+def test_benchmark_complex_risk_cell_stops_after_one_architect_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    knowledge_arm: str,
+    config_id: str,
+) -> None:
+    project = tmp_path / f"project-case-risk-{config_id}"
+    contract = migration_launch_contract("case-management-console")
+    shutil.copytree(PROJECT_ROOT / "fixtures", project / "fixtures")
+    shutil.copytree(PROJECT_ROOT / "agents", project / "agents")
+    shutil.copytree(PROJECT_ROOT / "knowledge/wiki", project / "knowledge/wiki")
+    shutil.copytree(PROJECT_ROOT / "evaluation", project / "evaluation")
+    shutil.copytree(
+        PROJECT_ROOT / "tooling/mulesoft-runtime",
+        project / "tooling/mulesoft-runtime",
+    )
+    request = prepare_agent_run_request(
+        project,
+        request_id=f"request-case-risk-{config_id}",
+        launch_contract=contract,
+        requested_at=datetime(2026, 8, 28, tzinfo=UTC),
+    )
+    binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id=f"salesforce-case-management-complex-risk--{config_id}--r1",
+        case_id="salesforce-case-management-complex-risk",
+        scenario_id=contract.scenario_id,
+        knowledge_arm=knowledge_arm,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_model_identity",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_execution_anchor_binding",
+        lambda *_args: None,
+    )
+    run_id = f"run-case-risk-{config_id}"
+    run_dir = project / f".runs/{run_id}"
+    model = BenchmarkRiskAwareModel(SF_FROZEN_OUTPUTS)
+
+    stopped = start_benchmark_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=f"thread-case-risk-{config_id}",
+        launch_contract=contract,
+        request=request,
+        models=_models(model),
+        knowledge_binding=binding,
+    )
+
+    assert stopped.status == "decision_required"
+    assert stopped.terminal_disposition == "decision_required"
+    assert stopped.pending_nodes == ()
+    assert model.calls == ["ArchitectManifestProposal"]
+    paths = RunArtifactPaths(request.request_id)
+    evidence_root = run_dir / "evidence"
+    assert (evidence_root / paths.architect).is_file()
+    architect_evidence = json.loads((evidence_root / paths.architect).read_text(encoding="utf-8"))
+    risk_evaluation = architect_evidence["proposal"]["expansion_receipt"][
+        "benchmark_risk_evaluation"
+    ]
+    assert risk_evaluation["model_intervened"] is True
+    assert tuple(risk_evaluation["observed_reasons"]) == tuple(
+        reason.value for reason in BENCHMARK_RISK_REASONS
+    )
+    assert risk_evaluation["missing_reasons"] == []
+    assert risk_evaluation["missing_categories"] == []
+    assert not (evidence_root / paths.engineer(1)).exists()
+    assert not (evidence_root / paths.report(1)).exists()
+    assert not (evidence_root / paths.validator(1)).exists()
+    terminal = get_verified_agent_run_evidence(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=f"thread-case-risk-{config_id}",
+    )
+    planning = load_verified_planning_snapshot(AgentRunSession.load(project, run_dir))
+    assert terminal.status == stopped
+    assert terminal.benchmark_binding_digest == artifact_digest(binding)
+    assert terminal.run_evidence_digest.startswith("sha256:")
+    assert planning.architect.proposal.expansion_receipt.benchmark_risk_evaluation is not None
+    assert (
+        planning.architect.proposal.expansion_receipt.benchmark_risk_evaluation.model_intervened
+        is True
+    )
+
+
+def test_incomplete_benchmark_start_recovers_only_through_the_exact_binding_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id="salesforce-account-contact-medium--full-agent-no-wiki--r1",
+        case_id="salesforce-account-contact-medium",
+        scenario_id=contract.scenario_id,
+        knowledge_arm="full_agent_no_wiki",
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_model_identity",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_execution_anchor_binding",
+        lambda *_args: None,
+    )
+    run_dir = project / ".runs/incomplete-benchmark-bootstrap"
+    original_write = agent_run_module._write_run_evidence
+
+    def interrupt_after_initialize(*_args, **_kwargs) -> None:
+        raise OSError("simulated benchmark bootstrap interruption")
+
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", interrupt_after_initialize)
+    with pytest.raises(OSError, match="simulated benchmark bootstrap interruption"):
+        start_benchmark_agent_run(
+            project,
+            run_dir,
+            run_id="run-incomplete-benchmark",
+            thread_id="thread-incomplete-benchmark",
+            launch_contract=contract,
+            request=request,
+            models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
+            knowledge_binding=binding,
+        )
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", original_write)
+
+    normal_recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    with pytest.raises(PolicyViolation, match="unexpected runtime state"):
+        recover_incomplete_agent_run_start(
+            project,
+            run_dir,
+            run_id="run-incomplete-benchmark",
+            thread_id="thread-incomplete-benchmark",
+            launch_contract=contract,
+            request=request,
+            models=_models(normal_recovery_model),
+        )
+    assert normal_recovery_model.calls == []
+
+    recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    recovered = recover_incomplete_benchmark_agent_run_start(
+        project,
+        run_dir,
+        run_id="run-incomplete-benchmark",
+        thread_id="thread-incomplete-benchmark",
+        launch_contract=contract,
+        request=request,
+        models=_models(recovery_model),
+        knowledge_binding=binding,
+    )
+
+    assert recovered.status == "awaiting_approval"
+    assert recovery_model.calls == ["ArchitectManifestProposal"]
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ("wrong-cell", "cross-arm"),
+)
+def test_incomplete_benchmark_start_rejects_a_wrong_or_cross_arm_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id="salesforce-account-contact-medium--full-agent-no-wiki--r1",
+        case_id="salesforce-account-contact-medium",
+        scenario_id=contract.scenario_id,
+        knowledge_arm="full_agent_no_wiki",
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_model_identity",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_execution_anchor_binding",
+        lambda *_args: None,
+    )
+    run_dir = project / f".runs/incomplete-benchmark-{replacement}"
+    original_write = agent_run_module._write_run_evidence
+
+    def interrupt_after_initialize(*_args, **_kwargs) -> None:
+        raise OSError("simulated benchmark bootstrap interruption")
+
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", interrupt_after_initialize)
+    with pytest.raises(OSError, match="simulated benchmark bootstrap interruption"):
+        start_benchmark_agent_run(
+            project,
+            run_dir,
+            run_id=f"run-incomplete-benchmark-{replacement}",
+            thread_id=f"thread-incomplete-benchmark-{replacement}",
+            launch_contract=contract,
+            request=request,
+            models=_models(PresetStructuredModel(SF_FROZEN_OUTPUTS)),
+            knowledge_binding=binding,
+        )
+    monkeypatch.setattr(agent_run_module, "_write_run_evidence", original_write)
+
+    replacement_binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id=(
+            "salesforce-account-contact-medium--full-agent-no-wiki--r2"
+            if replacement == "wrong-cell"
+            else "salesforce-account-contact-medium--full-agent-wiki--r1"
+        ),
+        case_id="salesforce-account-contact-medium",
+        scenario_id=contract.scenario_id,
+        knowledge_arm=("full_agent_no_wiki" if replacement == "wrong-cell" else "full_agent_wiki"),
+    )
+    recovery_model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    with pytest.raises(PolicyViolation, match="runtime evidence anchor digest mismatch"):
+        recover_incomplete_benchmark_agent_run_start(
+            project,
+            run_dir,
+            run_id=f"run-incomplete-benchmark-{replacement}",
+            thread_id=f"thread-incomplete-benchmark-{replacement}",
+            launch_contract=contract,
+            request=request,
+            models=_models(recovery_model),
+            knowledge_binding=replacement_binding,
+        )
+
+    assert recovery_model.calls == []
 
 
 @pytest.mark.parametrize(
@@ -1384,6 +1949,92 @@ def test_planned_lifecycle_rejects_request_only_checkpoint_rewrite_before_engine
     assert model.calls == ["ArchitectManifestProposal"]
 
 
+def test_run_status_and_replay_reject_tampered_graph_assurance_report(
+    tmp_path: Path,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/run-assurance-tamper"
+    start_agent_run(
+        project,
+        run_dir,
+        run_id="run-assurance-tamper",
+        thread_id="thread-assurance-tamper",
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=_models(model),
+    )
+    report_path = run_dir / "evidence" / RunArtifactPaths(request.request_id).graph_assurance_report
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    payload["dependency_graph_digest"] = "sha256:" + "0" * 64
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        PolicyViolation,
+        match="lifecycle artifact digest mismatch|run graph assurance report is malformed",
+    ):
+        get_agent_run_status(
+            project,
+            run_dir,
+            run_id="run-assurance-tamper",
+            thread_id="thread-assurance-tamper",
+        )
+    with pytest.raises(
+        PolicyViolation,
+        match="run snapshot graph assurance report is malformed",
+    ):
+        load_verified_planning_snapshot(AgentRunSession.load(project, run_dir))
+
+
+def test_non_assured_agent_run_status_exposes_report_without_model_invocation(
+    tmp_path: Path,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    controller_path = next(
+        path
+        for path in SALESFORCE_TRANSFORMATION_INPUT_PATHS
+        if path.endswith("LegacyAccountContactExplorerController.cls")
+    )
+    controller = project / request.repository / controller_path
+    source = controller.read_text(encoding="utf-8")
+    prefix, closing = source.rsplit("}", 1)
+    controller.write_text(
+        prefix
+        + "\n    private void assuranceDynamicProbe() {\n"
+        + "        Database.query('SELECT Id FROM Account');\n"
+        + "    }\n}"
+        + closing,
+        encoding="utf-8",
+    )
+    request = request.model_copy(
+        update={"base_revision": content_revision(project / request.repository)}
+    )
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    run_dir = project / ".runs/run-assurance-stop"
+
+    stopped = start_agent_run(
+        project,
+        run_dir,
+        run_id="run-assurance-stop",
+        thread_id="thread-assurance-stop",
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=_models(model),
+    )
+
+    assert model.calls == []
+    assert stopped.graph_assurance_status in {"review_required", "blocked"}
+    assert stopped.graph_assurance_report_digest is not None
+    assert stopped.manifest_id is None
+    report = GraphAssuranceReport.model_validate_json(
+        (
+            run_dir / "evidence" / RunArtifactPaths(request.request_id).graph_assurance_report
+        ).read_text(encoding="utf-8")
+    )
+    assert artifact_digest(report) == stopped.graph_assurance_report_digest
+    assert report.status.value == stopped.graph_assurance_status
+
+
 @pytest.mark.parametrize(
     ("platform", "outputs"),
     (
@@ -1412,6 +2063,19 @@ def test_real_three_agent_run_reloads_exact_sqlite_thread_and_stops_unavailable(
     assert started.status == "awaiting_approval"
     assert started.pending_nodes == ("approval_gate",)
     assert architect_model.calls == ["ArchitectManifestProposal"]
+    paths = RunArtifactPaths(request.request_id)
+    report = GraphAssuranceReport.model_validate_json(
+        (run_dir / "evidence" / paths.graph_assurance_report).read_text(encoding="utf-8")
+    )
+    assert report.status is GraphAssuranceStatus.ASSURED
+    assert started.graph_assurance_status == "assured"
+    assert started.graph_assurance_report_digest == artifact_digest(report)
+    assert started.interrupt is not None
+    assert started.interrupt.graph_assurance_report_digest == artifact_digest(report)
+    planning = load_verified_planning_snapshot(AgentRunSession.load(project, run_dir))
+    assert planning.graph_assurance_report == report
+    assert planning.manifest.graph_assurance_report_digest == artifact_digest(report)
+    assert planning.manifest.graph_assurance_status == "assured"
     preset = agent_run_module._preset_for(migration_scenario(platform).scenario_id)
     wiki_trace = RetrievalTrace.model_validate_json(
         (run_dir / f"evidence/model-runs/{request.request_id}/wiki-trace.json").read_text(
@@ -2474,7 +3138,7 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
     assert failed.failure.seam == role
     assert failed.failure.category == "invalid"
     if role == "engineer":
-        assert failed.failure.reason_code == "file_plan_scope_mismatch"
+        assert failed.failure.reason_code == "structured_output_invalid"
     else:
         assert failed.failure.reason_code in {
             "policy_rejected",
@@ -2484,6 +3148,16 @@ def test_schema_valid_semantic_role_failures_become_durable_invalid_failures(
     assert failed.failure.retry_eligible is False
     assert (run_dir / "evidence/agent-run-failure.json").is_file()
     assert (run_dir / "evidence/indexes/agent-run-failed.json").is_file()
+    if role == "architect" and failed.failure.reason_code == "policy_rejected":
+        paths = RunArtifactPaths(request.request_id)
+        rejection_path = run_dir / "evidence" / paths.architect_policy_rejection
+        receipt = RejectedArchitectModelCallReceipt.model_validate_json(
+            rejection_path.read_text(encoding="utf-8")
+        )
+        assert receipt.request_digest == artifact_digest(request)
+        assert receipt.reason_code == failed.failure.reason_code
+        assert receipt.model_call.output_digest.startswith("sha256:")
+        assert not (run_dir / "evidence" / paths.architect).exists()
     assert (
         get_agent_run_status(
             project,
@@ -2626,6 +3300,11 @@ def test_architect_semantics_cannot_remove_controller_implementation_contract(
             "structured_output_invalid",
         ),
         (
+            ModelOutputError("Claude structured output failed schema validation"),
+            "invalid",
+            "structured_output_invalid",
+        ),
+        (
             ModelOutputError("local Ollama response attempted an unauthorized tool call"),
             "invalid",
             "unauthorized_tool_call",
@@ -2637,6 +3316,11 @@ def test_architect_semantics_cannot_remove_controller_implementation_contract(
         ),
         (
             ModelRuntimeError("local Ollama request exceeded its deadline"),
+            "provider_unavailable",
+            "provider_timeout",
+        ),
+        (
+            ModelRuntimeError("Claude request exceeded its deadline"),
             "provider_unavailable",
             "provider_timeout",
         ),
@@ -2668,6 +3352,338 @@ def test_model_failure_categories_are_typed_without_original_error_bytes(
     assert failed.failure.category == category
     assert failed.failure.reason_code == reason_code
     _assert_failure_tree_is_sanitized(run_dir)
+
+
+def test_engineer_local_path_assumption_fails_at_scoped_output_boundary(
+    tmp_path: Path,
+) -> None:
+    local_path = "/Users/private/engineer-assumption.txt"
+
+    class LocalPathAssumptionModel(PresetStructuredModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            parsed = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if not is_engineer_model_outcome_type(output_type):
+                return parsed
+            outcome = EngineerModelOutcome.model_validate(parsed)
+            assert isinstance(outcome.result, EngineerFilePlanOutcome)
+            return EngineerModelOutcome.for_file_plan(
+                outcome.result.file_plan.model_copy(
+                    update={"assumptions": (f"Read generated evidence from {local_path}",)}
+                )
+            )
+
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    run_id = "run-engineer-local-path-assumption"
+    thread_id = "thread-engineer-local-path-assumption"
+    run_dir = project / f".runs/{run_id}"
+    model = LocalPathAssumptionModel(SF_FROZEN_OUTPUTS)
+    models = _models(model)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+    )
+
+    terminal_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=terminal_output):
+        failed = resume_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            approval=_approval(started),
+            models=models,
+        )
+
+    assert failed.status == "failed"
+    assert failed.failure is not None
+    assert failed.failure.seam == "engineer"
+    assert failed.failure.category == "invalid"
+    assert failed.failure.reason_code == "structured_output_invalid"
+    assert model.calls == ["ArchitectManifestProposal", "EngineerModelOutcome"]
+    lifecycle_log = terminal_output.getvalue()
+    assert "event=model.call.failed" in lifecycle_log
+    assert 'role="engineer"' in lifecycle_log
+    assert 'reason_code="structured_output_invalid"' in lifecycle_log
+    assert "event=model.output.persistence.rejected" not in lifecycle_log
+    assert local_path not in lifecycle_log
+    for artifact in run_dir.rglob("*"):
+        if artifact.is_file():
+            assert local_path.encode() not in artifact.read_bytes()
+
+
+def test_architect_local_path_summary_is_rejected_by_private_provider_schema(
+    tmp_path: Path,
+) -> None:
+    local_path = "/workspace/private/architect-summary.txt"
+
+    class LocalPathArchitectModel(PresetStructuredModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            parsed = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if not issubclass(output_type, ArchitectManifestProposal):
+                return parsed
+            proposal = ArchitectManifestProposal.model_validate(parsed)
+            decision = proposal.semantic_decisions[0].model_copy(
+                update={"summary": f"Read migration evidence from {local_path}."}
+            )
+            candidate = proposal.model_copy(update={"semantic_decisions": (decision,)})
+            return output_type.model_validate(candidate.model_dump(mode="python"))
+
+    project, request = _project(tmp_path, Platform.MULESOFT)
+    run_id = "run-architect-local-path-summary"
+    thread_id = "thread-architect-local-path-summary"
+    run_dir = project / f".runs/{run_id}"
+    model = LocalPathArchitectModel(MULE_FROZEN_OUTPUTS)
+
+    terminal_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=terminal_output):
+        failed = start_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            launch_contract=migration_scenario(request.platform).launch_contract,
+            request=request,
+            models=_models(model),
+        )
+
+    assert failed.status == "failed"
+    assert failed.failure is not None
+    assert failed.failure.seam == "architect"
+    assert failed.failure.category == "invalid"
+    assert failed.failure.reason_code == "structured_output_invalid"
+    assert model.calls == ["ArchitectManifestProposal"]
+    lifecycle_log = terminal_output.getvalue()
+    assert "event=model.call.failed" in lifecycle_log
+    assert 'reason_code="structured_output_invalid"' in lifecycle_log
+    assert "event=model.output.persistence.rejected" not in lifecycle_log
+    assert local_path not in lifecycle_log
+    for artifact in run_dir.rglob("*"):
+        if artifact.is_file():
+            assert local_path.encode() not in artifact.read_bytes()
+
+
+def test_architect_separator_free_visualforce_narrative_persists(
+    tmp_path: Path,
+) -> None:
+    summary = "Retain the legacy Case Management Console page and preserve OPEN, CLOSED, and ALL."
+
+    class PortableArchitectNarrativeModel(PresetStructuredModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            parsed = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if not issubclass(output_type, ArchitectManifestProposal):
+                return parsed
+            proposal = ArchitectManifestProposal.model_validate(parsed)
+            decision = proposal.semantic_decisions[0].model_copy(update={"summary": summary})
+            return proposal.model_copy(update={"semantic_decisions": (decision,)})
+
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    run_id = "run-architect-portable-salesforce-narrative"
+    run_dir = project / f".runs/{run_id}"
+    model = PortableArchitectNarrativeModel(SF_FROZEN_OUTPUTS)
+
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id="thread-architect-portable-salesforce-narrative",
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=_models(model),
+    )
+
+    assert started.status == "awaiting_approval"
+    architect_path = run_dir / f"evidence/model-runs/{request.request_id}/architect.json"
+    assert summary in architect_path.read_text(encoding="utf-8")
+
+
+def test_validator_local_path_advisory_becomes_safe_unavailable_evidence(
+    tmp_path: Path,
+) -> None:
+    local_path = "/private/tmp/validator-advisory.txt"
+
+    class LocalPathValidatorModel(PresetStructuredModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            parsed = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if output_type is not ValidatorModelAdvisory:
+                return parsed
+            advisory = ValidatorModelAdvisory.model_validate(parsed)
+            return advisory.model_copy(
+                update={"summary": f"Review local advisory evidence at {local_path}."}
+            )
+
+    project, request = _project(tmp_path, Platform.MULESOFT)
+    run_id = "run-validator-local-path-advisory"
+    thread_id = "thread-validator-local-path-advisory"
+    run_dir = project / f".runs/{run_id}"
+    model = LocalPathValidatorModel(MULE_FROZEN_OUTPUTS)
+    models = _models(model)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+    )
+
+    terminal_output = io.StringIO()
+    with terminal_lifecycle_logging(stream=terminal_output):
+        completed = resume_agent_run(
+            project,
+            run_dir,
+            run_id=run_id,
+            thread_id=thread_id,
+            approval=_approval(started),
+            models=models,
+        )
+
+    assert completed.status == "completed"
+    assert completed.failure is None
+    assessment = ValidatorAssessment.model_validate_json(
+        (run_dir / f"evidence/model-runs/{request.request_id}/validator-attempt-1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert assessment.advisory.assessment == "unavailable"
+    assert assessment.model_call is None
+    assert assessment.unavailable_receipt is not None
+    assert assessment.unavailable_receipt.reason_code == "model_output_invalid"
+    assert assessment.authoritative_disposition.value == completed.terminal_disposition
+    lifecycle_log = terminal_output.getvalue()
+    assert "event=model.output.persistence.rejected" in lifecycle_log
+    assert 'role="validator"' in lifecycle_log
+    assert 'phase="role_artifact_persistence"' in lifecycle_log
+    assert 'policy_code="output_evidence_local_path"' in lifecycle_log
+    assert "event=validator.advisory.unavailable" in lifecycle_log
+    assert 'reason_code="model_output_invalid"' in lifecycle_log
+    assert local_path not in lifecycle_log
+    for artifact in run_dir.rglob("*"):
+        if artifact.is_file():
+            assert local_path.encode() not in artifact.read_bytes()
+
+
+def test_all_three_role_artifacts_persist_path_free_portable_narrative(
+    tmp_path: Path,
+) -> None:
+    narrative = "customer status retrieval contract"
+
+    class RouteNarrativeModel(PresetStructuredModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            parsed = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if issubclass(output_type, ArchitectManifestProposal):
+                proposal = ArchitectManifestProposal.model_validate(parsed)
+                decision = proposal.semantic_decisions[0].model_copy(
+                    update={"summary": f"Preserve the {narrative}."}
+                )
+                candidate = proposal.model_copy(update={"semantic_decisions": (decision,)})
+                return output_type.model_validate(candidate.model_dump(mode="python"))
+            if is_engineer_model_outcome_type(output_type):
+                outcome = EngineerModelOutcome.model_validate(parsed)
+                assert isinstance(outcome.result, EngineerFilePlanOutcome)
+                return EngineerModelOutcome.for_file_plan(
+                    outcome.result.file_plan.model_copy(
+                        update={"assumptions": (f"The {narrative} remains stable.",)}
+                    )
+                )
+            if output_type is ValidatorModelAdvisory:
+                advisory = ValidatorModelAdvisory.model_validate(parsed)
+                return advisory.model_copy(
+                    update={
+                        "summary": f"The deterministic report covers the {narrative}.",
+                        "concerns": (f"No unresolved concern remains for the {narrative}.",),
+                    }
+                )
+            return parsed
+
+    project, request = _project(tmp_path, Platform.MULESOFT)
+    run_id = "run-portable-role-route-narrative"
+    thread_id = "thread-portable-role-route-narrative"
+    run_dir = project / f".runs/{run_id}"
+    model = RouteNarrativeModel(MULE_FROZEN_OUTPUTS)
+    models = _models(model)
+    started = start_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=migration_scenario(request.platform).launch_contract,
+        request=request,
+        models=models,
+    )
+    completed = resume_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=_approval(started),
+        models=models,
+    )
+
+    assert completed.status == "completed"
+    assert completed.failure is None
+    model_root = run_dir / f"evidence/model-runs/{request.request_id}"
+    for artifact_name in (
+        "architect.json",
+        "engineer-attempt-1.json",
+        "validator-attempt-1.json",
+    ):
+        assert narrative in (model_root / artifact_name).read_text(encoding="utf-8")
 
 
 def test_deterministic_validator_failure_is_sanitized_and_terminal(tmp_path: Path) -> None:
@@ -3700,6 +4716,89 @@ def test_exact_correction_approval_runs_attempt_two_once(tmp_path: Path) -> None
     assert model.calls == calls
 
 
+def test_benchmark_no_wiki_arm_uses_the_same_bounded_attempt_two_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, request = _project(tmp_path, Platform.SALESFORCE)
+    contract = migration_scenario(Platform.SALESFORCE).launch_contract
+    binding = bind_benchmark_knowledge_arm(
+        project,
+        request,
+        cell_id="salesforce-account-contact-medium--full-agent-no-wiki--r2",
+        case_id="salesforce-account-contact-medium",
+        scenario_id=contract.scenario_id,
+        knowledge_arm="full_agent_no_wiki",
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_model_identity",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "legacy_migration_agent.evaluation_runner._verify_execution_anchor_binding",
+        lambda *_args: None,
+    )
+
+    def fail_if_wiki_loads(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no-Wiki retry must never load the Wiki")
+
+    monkeypatch.setattr(agent_run_module.LlmWiki, "load", fail_if_wiki_loads)
+    run_id = "run-benchmark-no-wiki-retry"
+    thread_id = "thread-benchmark-no-wiki-retry"
+    run_dir = project / f".runs/{run_id}"
+    model = PresetStructuredModel(SF_FROZEN_OUTPUTS)
+    models = _models(model)
+    validator = _recoverable_validator(run_id)
+    started = start_benchmark_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        launch_contract=contract,
+        request=request,
+        models=models,
+        knowledge_binding=binding,
+        trusted_validator=validator,
+    )
+    attempt_one = resume_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=_approval(started),
+        models=models,
+        trusted_validator=validator,
+    )
+
+    completed = retry_agent_run(
+        project,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        approval=_correction_approval(attempt_one, reviewer="no-wiki-retry-reviewer"),
+        models=models,
+        trusted_validator=validator,
+    )
+
+    assert attempt_one.terminal_disposition == "recoverable_failure"
+    assert completed.terminal_disposition == "ready_for_human_review"
+    assert completed.execution_attempt == 2
+    correction_trace = RetrievalTrace.model_validate_json(
+        (run_dir / "evidence" / RunArtifactPaths(request.request_id).correction_wiki).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert correction_trace.retrieval_strategy == "benchmark_no_wiki_control"
+    assert correction_trace.hits[0].sources == ()
+    assert APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID in (
+        correction_trace.hits[0].selected_content
+    )
+    assert (
+        sum(model.calls.count(name) for name in ("EngineerModelOutcome", "EngineerFilePlanOutcome"))
+        == 2
+    )
+
+
 def test_correction_authorization_recovers_after_pre_execution_interruption(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3807,7 +4906,7 @@ def test_correction_authorization_recovers_after_pre_execution_interruption(
     assert completed.terminal_disposition == "ready_for_human_review"
     assert model.calls == [
         *calls_before,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
 
@@ -3958,7 +5057,7 @@ def test_correction_authorized_controller_failure_resumes_exact_engineer_task_on
     assert continue_calls == 1
     assert model.calls == [
         *calls_before,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
 
@@ -4163,7 +5262,7 @@ def test_correction_authorization_intent_survives_crash_before_portable_approval
     assert completed.terminal_disposition == "ready_for_human_review"
     assert model.calls == [
         *calls_before,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
 
@@ -4318,7 +5417,7 @@ def test_provider_free_agent_status_survives_governed_final_review(tmp_path: Pat
     assert completed.terminal_disposition == "ready_for_human_review"
 
     now = datetime.now(UTC)
-    request_final_review_for_run(
+    review_request = request_final_review_for_run(
         project,
         run_dir,
         run_id="run-final-review-status",
@@ -4328,6 +5427,8 @@ def test_provider_free_agent_status_survives_governed_final_review(tmp_path: Pat
         requested_at=now,
         expires_at=now + timedelta(days=2),
     )
+    assert review_request.graph_assurance_status == "assured"
+    assert review_request.graph_assurance_report_digest == completed.graph_assurance_report_digest
     assert (
         get_final_review_status_for_run(
             project,

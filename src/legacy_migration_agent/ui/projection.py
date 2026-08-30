@@ -295,6 +295,20 @@ _FAILURE_DETAILS: Final[
             "path outside the approved manifest; otherwise Engineer must return the bounded delta."
         ),
     ),
+    "output_evidence_local_path": (
+        "role_artifact_persistence",
+        True,
+        True,
+        False,
+        (
+            "The role output could not be stored as portable evidence because it contained "
+            "local filesystem notation."
+        ),
+        (
+            "Start a fresh run and keep authored narrative limited to repository paths, API "
+            "routes, or other portable prose without local filesystem locations."
+        ),
+    ),
     "policy_rejected": (
         "policy_validation",
         True,
@@ -734,9 +748,7 @@ class RunViewProjector:
         if len(revisions) != 1:
             raise ui_contracts.AgentUiError("run_unavailable")
         model_revision = next(iter(revisions))
-        runtime_identities = {
-            call.resolved_runtime_identity_digest for call in calls
-        }
+        runtime_identities = {call.resolved_runtime_identity_digest for call in calls}
         if len(runtime_identities) != 1 or None in runtime_identities:
             raise ui_contracts.AgentUiError("run_unavailable")
         runtime_identity_digest = next(iter(runtime_identities))
@@ -1440,6 +1452,7 @@ def _correction_view(
         completed_attempt=correction.completed_attempt,
         authorized_attempt=correction.next_attempt,
         action=correction.action,
+        requires_graph_regeneration=correction.requires_graph_regeneration,
         failed_check_ids=projected_failure_ids,
         reason=correction.reason,
         retry_available=retry_available,
@@ -1475,6 +1488,7 @@ def _status_correction_matches(
         and summary.completed_attempt == correction.completed_attempt
         and summary.authorized_attempt == correction.next_attempt
         and summary.action is correction.action
+        and summary.requires_graph_regeneration == correction.requires_graph_regeneration
     )
 
 

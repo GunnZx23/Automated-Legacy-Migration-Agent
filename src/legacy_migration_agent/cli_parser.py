@@ -194,7 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     pilot_run = _add_command(
         subparsers,
         "evaluation-pilot-run-local",
-        "write the unmeasured two-cell Qwen pilot baseline without invoking a provider",
+        "write the historical unmeasured two-cell pilot baseline without invoking a provider",
     )
     pilot_run.add_argument("--project-root", type=Path, default=Path("."))
     pilot_run.add_argument("--registry", type=Path, required=True)
@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     pilot_ingest = _add_command(
         subparsers,
         "evaluation-pilot-ingest-agent-run",
-        "ingest an existing terminal Qwen run without invoking a provider",
+        "ingest an existing terminal historical-pilot run without invoking a provider",
     )
     pilot_ingest.add_argument("--project-root", type=Path, default=Path("."))
     pilot_ingest.add_argument("--registry", type=Path, required=True)
@@ -223,6 +223,63 @@ def build_parser() -> argparse.ArgumentParser:
     pilot_ingest.add_argument("--run-dir", type=Path, required=True)
     pilot_ingest.add_argument("--run-id", required=True)
     pilot_ingest.add_argument("--thread-id", required=True)
+
+    benchmark_status = _add_command(
+        subparsers,
+        "evaluation-benchmark-v2-status",
+        "enumerate the frozen benchmark matrix and its resumable operator actions",
+    )
+    benchmark_status.add_argument("--project-root", type=Path, default=Path("."))
+    benchmark_status.add_argument(
+        "--execution-anchor",
+        type=Path,
+        default=Path(".runs/benchmark-v2/execution-anchor.json"),
+    )
+
+    benchmark_anchor = _add_command(
+        subparsers,
+        "evaluation-benchmark-v2-anchor-create",
+        "freeze reviewed benchmark authority and the approved Claude runtime identity",
+    )
+    benchmark_anchor.add_argument("--project-root", type=Path, default=Path("."))
+    benchmark_anchor.add_argument(
+        "--execution-anchor",
+        type=Path,
+        default=Path(".runs/benchmark-v2/execution-anchor.json"),
+    )
+    benchmark_anchor.add_argument("--anchor-id", required=True)
+    benchmark_anchor.add_argument("--created-at", type=datetime.fromisoformat, required=True)
+    _add_benchmark_claude_arguments(benchmark_anchor)
+
+    benchmark_start = _add_command(
+        subparsers,
+        "evaluation-benchmark-v2-cell-start",
+        "start or recover one exact reviewed and anchored benchmark cell",
+    )
+    benchmark_start.add_argument("--project-root", type=Path, default=Path("."))
+    benchmark_start.add_argument("--cell-id", required=True)
+    benchmark_start.add_argument(
+        "--execution-anchor",
+        type=Path,
+        default=Path(".runs/benchmark-v2/execution-anchor.json"),
+    )
+    benchmark_start.add_argument("--requested-at", type=datetime.fromisoformat, required=True)
+    _add_benchmark_claude_arguments(benchmark_start)
+
+    benchmark_receipt = _add_command(
+        subparsers,
+        "evaluation-benchmark-v2-cell-receipt",
+        "extract one receipt using a separately supplied independent-human rubric",
+    )
+    benchmark_receipt.add_argument("--project-root", type=Path, default=Path("."))
+    benchmark_receipt.add_argument("--cell-id", required=True)
+    benchmark_receipt.add_argument(
+        "--execution-anchor",
+        type=Path,
+        default=Path(".runs/benchmark-v2/execution-anchor.json"),
+    )
+    benchmark_receipt.add_argument("--rubric", type=Path, required=True)
+    benchmark_receipt.add_argument("--output", type=Path)
 
     ui = _add_command(
         subparsers,
@@ -273,6 +330,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument(
         "--approved-by",
         help="named operator approving this Claude CLI session",
+    )
+    ui.add_argument(
+        "--approved-remote-provider",
+        help=(
+            "authenticated remote-provider identifier approved for this Claude CLI "
+            "session (for example, bedrock)"
+        ),
     )
     ui.add_argument(
         "--allow-live-api",
@@ -360,14 +424,38 @@ def _add_live_model_arguments(
     *,
     required: bool,
 ) -> None:
-    parser.add_argument("--model-id", required=required)
-    parser.add_argument("--api-key-env", required=required)
+    runtime = parser.add_mutually_exclusive_group(required=required)
+    runtime.add_argument("--model-id")
+    runtime.add_argument("--claude-model", type=_ui_claude_model)
+    parser.add_argument("--api-key-env")
+    parser.add_argument(
+        "--claude-timeout-seconds",
+        type=_ui_claude_timeout_seconds,
+    )
+    parser.add_argument("--approved-remote-provider")
     parser.add_argument("--approved-by", required=required)
     parser.add_argument("--allow-live-api", action="store_true", required=required)
     parser.add_argument(
         "--allow-prompt-data-sharing",
         action="store_true",
         required=required,
+    )
+
+
+def _add_benchmark_claude_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--claude-model", type=_ui_claude_model, required=True)
+    parser.add_argument(
+        "--claude-timeout-seconds",
+        type=_ui_claude_timeout_seconds,
+        required=True,
+    )
+    parser.add_argument("--approved-by", required=True)
+    parser.add_argument("--approved-remote-provider", required=True)
+    parser.add_argument("--allow-live-api", action="store_true", required=True)
+    parser.add_argument(
+        "--allow-prompt-data-sharing",
+        action="store_true",
+        required=True,
     )
 
 

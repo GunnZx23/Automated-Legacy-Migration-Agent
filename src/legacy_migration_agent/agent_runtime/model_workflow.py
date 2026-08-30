@@ -39,6 +39,7 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     correction_wiki_query,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
+    ModelCallRecord,
     ModelEvidenceError,
     StructuredModelClient,
 )
@@ -63,6 +64,7 @@ from legacy_migration_agent.core.policies import (
     validate_manifest_for_request,
     validate_report,
 )
+from legacy_migration_agent.core.run_session import PortableEvidencePolicyViolation
 from legacy_migration_agent.core.workspace import IsolatedWorkspace
 from legacy_migration_agent.knowledge.wiki import RetrievalTrace
 from legacy_migration_agent.workflow import (
@@ -223,8 +225,30 @@ SanitizedRolePolicyReason = Literal[
     "workspace_scope_mismatch",
     "workspace_not_clean",
     "attempt_two_scope_expansion_invalid",
+    "output_evidence_local_path",
     "policy_rejected",
 ]
+
+
+class RejectedArchitectModelCallReceipt(StrictModel):
+    """Internal proof of one schema-valid call rejected by controller policy."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    receipt_kind: Literal["architect_controller_policy_rejection"] = (
+        "architect_controller_policy_rejection"
+    )
+    request_id: Identifier
+    request_digest: Sha256Digest
+    role: Literal["architect"] = "architect"
+    attempt: Literal[1] = 1
+    phase: Literal["controller_policy_validation"] = "controller_policy_validation"
+    provider_response_received: Literal[True] = True
+    structured_output_schema_valid: Literal[True] = True
+    controller_policy_valid: Literal[False] = False
+    accepted_role_artifact_persisted: Literal[False] = False
+    downstream_authority_granted: Literal[False] = False
+    reason_code: SanitizedRolePolicyReason
+    model_call: ModelCallRecord
 
 
 class SanitizedModelPolicyError(ValueError):
@@ -297,15 +321,30 @@ class ModelAgentWorkflowRoles:
         existing = self._read_optional(path)
         preflight_path = paths.architect_preflight
         existing_preflight = self._read_optional(preflight_path)
+        rejection_path = paths.architect_policy_rejection
+        existing_rejection = self._read_optional(rejection_path)
         if existing is not None:
-            if existing_preflight is not None:
+            if existing_preflight is not None or existing_rejection is not None:
                 raise ModelWorkflowIntegrationError(
-                    "persisted preflight stop conflicts with persisted Architect model run"
+                    "persisted Architect outcomes conflict with the completed model run"
                 )
             context = self._load_architect_evidence(request)
             run = ArchitectRun.model_validate(existing)
             self._verify_architect_replay(run, context)
             return run.proposal.manifest
+
+        if existing_rejection is not None:
+            if existing_preflight is not None:
+                raise ModelWorkflowIntegrationError(
+                    "persisted Architect policy rejection conflicts with a preflight stop"
+                )
+            context = self._load_architect_evidence(request)
+            receipt = self._validate_architect_policy_rejection(
+                existing_rejection,
+                request,
+                context,
+            )
+            raise SanitizedModelPolicyError("architect", receipt.reason_code)
 
         supplied = self.architect_context_factory(request)
         if isinstance(supplied, PlanningIntervention):
@@ -328,10 +367,28 @@ class ModelAgentWorkflowRoles:
             )
         context = ArchitectContext.model_validate(supplied.model_dump(mode="python"))
         self._persist_architect_evidence(request, context)
+        generation = self.architect_agent.generate(context)
         try:
-            run = self.architect_agent.propose(context)
+            run = self.architect_agent.finalize(generation, context)
         except PolicyViolation as error:
             sanitized = _sanitized_role_policy_error("architect", error)
+            receipt = RejectedArchitectModelCallReceipt(
+                request_id=request.request_id,
+                request_digest=artifact_digest(request),
+                reason_code=sanitized.reason_code,
+                model_call=generation.model_call,
+            )
+            self.artifact_store.write_json(rejection_path, receipt)
+            persisted_receipt = self._read_optional(rejection_path)
+            if persisted_receipt is None:
+                raise ModelWorkflowIntegrationError(
+                    "Architect policy-rejection evidence was not persisted"
+                ) from None
+            self._validate_architect_policy_rejection(
+                persisted_receipt,
+                request,
+                context,
+            )
             lifecycle_event(
                 "model.policy.rejected",
                 level=logging.WARNING,
@@ -339,7 +396,23 @@ class ModelAgentWorkflowRoles:
                 policy_code=sanitized.reason_code,
             )
             raise sanitized from None
-        self.artifact_store.write_json(path, run)
+        try:
+            self.artifact_store.write_json(path, run)
+        except PolicyViolation as error:
+            reason_code = _safe_role_artifact_persistence_code(error)
+            evidence_category, evidence_field_class = _safe_role_artifact_persistence_diagnostics(
+                error
+            )
+            lifecycle_event(
+                "model.output.persistence.rejected",
+                level=logging.WARNING,
+                role="architect",
+                phase="role_artifact_persistence",
+                policy_code=reason_code,
+                evidence_category=evidence_category,
+                evidence_field_class=evidence_field_class,
+            )
+            raise SanitizedModelPolicyError("architect", reason_code) from None
         return run.proposal.manifest
 
     def engineer(
@@ -449,6 +522,10 @@ class ModelAgentWorkflowRoles:
                     correction_authority=correction_authority,
                     prepared_context=context,
                 )
+                if run.model_call.input_digest != binding.input_evidence_digest:
+                    raise ModelWorkflowIntegrationError(
+                        "Engineer model-call input differs from the claimed provider dispatch"
+                    )
             except PolicyViolation as error:
                 lifecycle_event(
                     "model.policy.rejected",
@@ -458,7 +535,23 @@ class ModelAgentWorkflowRoles:
                 )
                 raise _sanitized_role_policy_error("engineer", error) from None
         self._validate_engineer_run(run, request, manifest)
-        self.artifact_store.write_json(path, run)
+        try:
+            self.artifact_store.write_json(path, run)
+        except PolicyViolation as error:
+            reason_code = _safe_role_artifact_persistence_code(error)
+            evidence_category, evidence_field_class = _safe_role_artifact_persistence_diagnostics(
+                error
+            )
+            lifecycle_event(
+                "model.output.persistence.rejected",
+                level=logging.WARNING,
+                role="engineer",
+                phase="role_artifact_persistence",
+                policy_code=reason_code,
+                evidence_category=evidence_category,
+                evidence_field_class=evidence_field_class,
+            )
+            raise SanitizedModelPolicyError("engineer", reason_code) from None
         return self._engineer_outcome(run)
 
     def validator(
@@ -627,7 +720,35 @@ class ModelAgentWorkflowRoles:
                             if assessment.unavailable_receipt is not None
                             else "unknown",
                         )
-            self.artifact_store.write_json(assessment_path, assessment)
+            try:
+                self.artifact_store.write_json(assessment_path, assessment)
+            except PolicyViolation as error:
+                if not _is_role_artifact_portability_error(error):
+                    raise
+                evidence_category, evidence_field_class = (
+                    _safe_role_artifact_persistence_diagnostics(error)
+                )
+                lifecycle_event(
+                    "model.output.persistence.rejected",
+                    level=logging.WARNING,
+                    role="validator",
+                    phase="role_artifact_persistence",
+                    policy_code=_safe_role_artifact_persistence_code(error),
+                    evidence_category=evidence_category,
+                    evidence_field_class=evidence_field_class,
+                )
+                assessment = self.validator_agent.unavailable(
+                    evidence,
+                    reason_code="model_output_invalid",
+                    attempted=True,
+                )
+                lifecycle_event(
+                    "validator.advisory.unavailable",
+                    level=logging.WARNING,
+                    attempt=attempt,
+                    reason_code="model_output_invalid",
+                )
+                self.artifact_store.write_json(assessment_path, assessment)
         else:
             assessment = ValidatorAssessment.model_validate(existing_assessment)
             self._verify_role_invocation_lease_if_present(
@@ -650,6 +771,36 @@ class ModelAgentWorkflowRoles:
             self.architect_agent.verify_replay(run, context)
         except (AgentRuntimeError, ModelEvidenceError) as exc:
             raise ModelWorkflowIntegrationError(str(exc)) from exc
+
+    def _validate_architect_policy_rejection(
+        self,
+        value: object,
+        request: MigrationRequest,
+        context: ArchitectContext,
+    ) -> RejectedArchitectModelCallReceipt:
+        """Cross-bind one sanitized rejection to its request and provider input."""
+
+        try:
+            receipt = RejectedArchitectModelCallReceipt.model_validate(value)
+        except (TypeError, ValueError) as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect policy-rejection evidence is structurally invalid"
+            ) from exc
+        if (
+            receipt.request_id != request.request_id
+            or receipt.request_digest != artifact_digest(request)
+            or context.request != request
+        ):
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect policy rejection belongs to another request"
+            )
+        try:
+            self.architect_agent.verify_rejected_call_input(receipt.model_call, context)
+        except (AgentRuntimeError, ModelEvidenceError, TypeError, ValueError) as exc:
+            raise ModelWorkflowIntegrationError(
+                "persisted Architect policy rejection differs from exact model input"
+            ) from exc
+        return receipt
 
     def _verify_engineer_replay(
         self,
@@ -823,12 +974,13 @@ class ModelAgentWorkflowRoles:
         context: EngineerWorkspaceContext,
         correction: EngineerCorrectionContext | None,
     ) -> RoleInvocationBinding:
+        provider_input = self.engineer_agent.provider_input(context)
         return RoleInvocationBinding(
             role="engineer",
             request_id=request.request_id,
             request_digest=artifact_digest(request),
             attempt=cast(Literal[1, 2], attempt),
-            input_evidence_digest=artifact_digest(context),
+            input_evidence_digest=artifact_digest(provider_input),
             agent_version=self.engineer_agent.definition.version,
             agent_definition_digest=self.engineer_agent.definition.definition_digest,
             manifest_digest=artifact_digest(manifest),
@@ -1077,6 +1229,11 @@ class ModelAgentWorkflowRoles:
         paths = RunArtifactPaths(request.request_id)
         artifacts = (
             (paths.dependency_graph, context.dependency_graph),
+            *(
+                ((paths.graph_assurance_report, context.graph_assurance_report),)
+                if context.graph_assurance_report is not None
+                else ()
+            ),
             (paths.wiki_trace, context.wiki_trace),
             (paths.architect_context, context),
         )
@@ -1118,6 +1275,16 @@ class ModelAgentWorkflowRoles:
         if raw_wiki != context.wiki_trace.model_dump(mode="json"):
             raise ModelWorkflowIntegrationError(
                 "persisted Architect Wiki trace differs from frozen context"
+            )
+        raw_assurance = self._read_optional(paths.graph_assurance_report)
+        if context.graph_assurance_report is None:
+            if raw_assurance is not None:
+                raise ModelWorkflowIntegrationError(
+                    "persisted graph assurance report conflicts with legacy Architect context"
+                )
+        elif raw_assurance != context.graph_assurance_report.model_dump(mode="json"):
+            raise ModelWorkflowIntegrationError(
+                "persisted graph assurance report differs from frozen Architect context"
             )
         return context
 
@@ -1245,6 +1412,35 @@ def _safe_engineer_policy_code(error: PolicyViolation) -> SanitizedRolePolicyRea
         (code for prefix, code in prefixes if message.startswith(prefix)),
         "policy_rejected",
     )
+
+
+def _safe_role_artifact_persistence_code(
+    error: PolicyViolation,
+) -> SanitizedRolePolicyReason:
+    """Classify a role artifact write without exposing authored output."""
+
+    if str(error) in {
+        "portable evidence contains a local absolute path",
+        "portable evidence contains an absolute project or source path",
+    }:
+        return "output_evidence_local_path"
+    return "policy_rejected"
+
+
+def _safe_role_artifact_persistence_diagnostics(
+    error: PolicyViolation,
+) -> tuple[str, str]:
+    """Return only fixed classifier tokens, never authored field names or text."""
+
+    if isinstance(error, PortableEvidencePolicyViolation):
+        return error.evidence_category, error.field_class
+    return "unknown", "unknown"
+
+
+def _is_role_artifact_portability_error(error: PolicyViolation) -> bool:
+    """Identify portability rejections without inspecting or relaying authored text."""
+
+    return str(error).startswith("portable evidence contains ")
 
 
 __all__ = [

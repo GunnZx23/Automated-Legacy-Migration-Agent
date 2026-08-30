@@ -26,13 +26,14 @@ from ui_test_doubles import (
 )
 
 import legacy_migration_agent.application.migration_scenarios as migration_scenarios_module
+import legacy_migration_agent.ui.service as ui_service_module
 from legacy_migration_agent.agent_runtime.correction import CorrectionAction
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectManifestProposal,
     ArchitectRiskObservation,
     ArchitectSemanticDecision,
+    EngineerCorrectionProviderContext,
     EngineerFilePlan,
-    EngineerFilePlanOutcome,
     EngineerFileUpdate,
     EngineerInterventionOutcome,
     EngineerModelOutcome,
@@ -97,6 +98,32 @@ OTHER_MODEL_ID = "other-test-model:latest"
 CLAUDE_MODEL_ID = "claude-sonnet-5"
 CLAUDE_RUNTIME_IDENTITY_DRIFT = "sha256:" + "c" * 64
 SALESFORCE_SCENARIO_PROMPT = migration_scenario(Platform.SALESFORCE).canonical_description
+
+
+def engineer_input_context(
+    input_value: BaseModel,
+) -> EngineerWorkspaceContext | EngineerCorrectionProviderContext:
+    if isinstance(input_value, EngineerCorrectionProviderContext):
+        return EngineerCorrectionProviderContext.model_validate(input_value)
+    return EngineerWorkspaceContext.model_validate(input_value)
+
+
+def engineer_controller_input_digest(
+    context: EngineerWorkspaceContext | EngineerCorrectionProviderContext,
+) -> str:
+    if isinstance(context, EngineerCorrectionProviderContext):
+        return context.controller_input_evidence_digest
+    return context.input_evidence_digest
+
+
+def is_engineer_model_outcome_type(output_type: type[BaseModel]) -> bool:
+    return issubclass(output_type, EngineerModelOutcome)
+
+
+def is_engineer_file_plan_outcome_type(output_type: type[BaseModel]) -> bool:
+    return is_engineer_model_outcome_type(output_type) and (
+        getattr(output_type, "_exact_coverage_required", None) is False
+    )
 
 
 def _project(tmp_path: Path) -> Path:
@@ -176,6 +203,7 @@ def _claude_approval() -> LiveModelApproval:
         allow_live_api=True,
         allow_prompt_data_sharing=True,
         approved_by="course-demo-operator",
+        approved_remote_provider_id="bedrock",
     )
 
 
@@ -447,7 +475,8 @@ def test_scenarios_expose_only_fixed_browser_safe_metadata(tmp_path: Path) -> No
         "(LegacyAccountContactExplorer.page and LegacyAccountContactExplorerController.cls) "
         "to an additive Lightning Web Component and Apex implementation. Preserve account "
         "selection, an explicit contact-loading action, visible loading, empty, and "
-        "safe-error states, "
+        "safe-error states, clear prior contact state and invalidate pending work whenever the "
+        "account changes, "
         "stale-response protection, sharing and field-security controls, and include Apex and "
         "LWC Jest tests."
     )
@@ -620,7 +649,7 @@ def test_claude_runtime_readiness_uses_the_server_owned_cli_identity_probe(
         "model_id": CLAUDE_MODEL_ID,
         "configured": True,
         "runtime_reachable": True,
-        "model_available": True,
+        "model_available": None,
         "status": "ready",
     }
     assert len(constructed) == 1
@@ -759,7 +788,7 @@ def test_claude_start_projects_truthful_remote_runtime_evidence(
     assert started.boundaries.deployment_performed is False
     assert role_calls == ["ArchitectManifestProposal"]
     assert len(constructed) == 1
-    assert getattr(constructed[0], "live_approval") == approval
+    assert constructed[0].live_approval == approval
     assert snapshot_tree(source) == before
 
     run_dir = project / ".runs/agent-ui" / started.handle
@@ -921,6 +950,64 @@ def test_latest_recovers_the_newest_verifiable_run(
     assert recovered_terminal is not None
     assert recovered_terminal.handle == completed.handle
     assert recovered_terminal.status == "completed"
+
+
+def test_start_projects_its_frozen_status_without_reloading_evolved_prompts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+    original_start = ui_service_module.start_agent_run
+
+    def evolving_start(*args, **kwargs):
+        status = original_start(*args, **kwargs)
+        with (project / "agents/architect.md").open("a", encoding="utf-8") as prompt:
+            prompt.write("\nPrompt evolved after the start lifecycle froze.\n")
+        return status
+
+    monkeypatch.setattr(ui_service_module, "start_agent_run", evolving_start)
+
+    started = _start(service, "salesforce")
+
+    assert started.status == "awaiting_approval"
+    assert started.manifest is not None
+    with pytest.raises(AgentUiError) as nonterminal_readback:
+        service.get(started.handle)
+    assert nonterminal_readback.value.code == "run_unavailable"
+
+
+def test_decide_projects_and_reads_terminal_status_after_prompt_evolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+    started = _start(service, "salesforce")
+    original_resume = ui_service_module.resume_agent_run
+
+    def evolving_resume(*args, **kwargs):
+        status = original_resume(*args, **kwargs)
+        with (project / "agents/engineer.md").open("a", encoding="utf-8") as prompt:
+            prompt.write("\nPrompt evolved after the resume lifecycle froze.\n")
+        return status
+
+    monkeypatch.setattr(ui_service_module, "resume_agent_run", evolving_resume)
+
+    completed = service.decide(
+        started.handle,
+        selection="approve",
+        reviewer="course-reviewer",
+    )
+
+    assert completed.status == "completed"
+    assert service.get(started.handle) == completed
+    assert service.latest() == completed
+    exported = service.export_candidate(started.handle)
+    assert exported.handle == started.handle
+    assert exported.attempt == completed.execution_attempt
 
 
 def test_latest_skips_stale_runs_with_one_handle_free_info_event(
@@ -1277,6 +1364,47 @@ def test_recoverable_attempt_requires_exact_human_retry_and_projects_attempt_two
     assert unavailable.value.code == "retry_unavailable"
 
 
+def test_retry_projects_and_reads_terminal_status_after_prompt_evolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _project(tmp_path)
+    _stub_ollama(monkeypatch, project)
+    monkeypatch.setattr(
+        "legacy_migration_agent.application.agent_run.build_salesforce_local_validator",
+        lambda session, registry, timeout_seconds: _recoverable_validator(session.context.run_id),
+    )
+    service = AgentUiService(project, ollama_model_id=MODEL_ID)
+    started = _start(service, "salesforce")
+    attempt_one = service.decide(
+        started.handle,
+        selection="approve",
+        reviewer="course-reviewer",
+    )
+    assert attempt_one.correction is not None
+    original_retry = ui_service_module.retry_agent_run
+
+    def evolving_retry(*args, **kwargs):
+        status = original_retry(*args, **kwargs)
+        with (project / "agents/validator.md").open("a", encoding="utf-8") as prompt:
+            prompt.write("\nPrompt evolved after the retry lifecycle froze.\n")
+        return status
+
+    monkeypatch.setattr(ui_service_module, "retry_agent_run", evolving_retry)
+
+    completed = service.retry(
+        started.handle,
+        correction_id=attempt_one.correction.correction_id,
+        reviewer="course-reviewer",
+    )
+
+    assert completed.status == "completed"
+    assert completed.execution_attempt == 2
+    assert completed.terminal_disposition == "ready_for_human_review"
+    assert service.get(started.handle) == completed
+    assert service.candidate_zip(started.handle)
+
+
 def test_lwc_load_failure_projects_one_root_and_preserves_raw_failed_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1482,6 +1610,12 @@ def test_final_review_requires_ready_evidence_and_is_bound_one_use_and_non_autho
             decided_at=datetime.now(UTC),
         )
     assert duplicate_decision.value.code == "final_review_already_decided"
+
+    with (project / "agents/engineer.md").open("a", encoding="utf-8") as prompt:
+        prompt.write("\nPrompt evolved after final human review froze.\n")
+    historical_review = service.get(started.handle)
+    assert historical_review.final_review == accepted.final_review
+    assert service.latest() == historical_review
 
 
 def test_retry_lifecycle_logging_exposes_typed_diagnostics_without_private_content(
@@ -1785,13 +1919,14 @@ def test_attempt_two_engineer_intervention_is_rejected_by_correction_schema(
             input_value: BaseModel,
             output_type: type[BaseModel],
         ) -> BaseModel:
-            if output_type is not EngineerFilePlanOutcome:
+            if not is_engineer_file_plan_outcome_type(output_type):
                 return super().parse(
                     system_prompt=system_prompt,
                     input_value=input_value,
                     output_type=output_type,
                 )
-            context = EngineerWorkspaceContext.model_validate(input_value)
+            context = engineer_input_context(input_value)
+            input_evidence_digest = engineer_controller_input_digest(context)
             role_calls.append(output_type.__name__)
             output_path = context.manifest.approved_paths[0]
             affected_paths = (output_path, context.request.target.entry_path)
@@ -1814,7 +1949,7 @@ def test_attempt_two_engineer_intervention_is_rejected_by_correction_schema(
                         base_revision=context.workspace_base_revision,
                         agent_version=context.agent_version,
                         agent_definition_digest=context.agent_definition_digest,
-                        input_evidence_digest=context.input_evidence_digest,
+                        input_evidence_digest=input_evidence_digest,
                         reason="The corrective attempt still lacks a required public contract.",
                         requested_action=ApprovalAction.EXPAND_SCOPE,
                         affected_paths=affected_paths,
@@ -1824,7 +1959,7 @@ def test_attempt_two_engineer_intervention_is_rejected_by_correction_schema(
                         evidence=(
                             ImplementationInterventionEvidence(
                                 source="engineer_input",
-                                source_digest=context.input_evidence_digest,
+                                source_digest=input_evidence_digest,
                                 summary="The exact correction evidence does not resolve the gap.",
                                 affected_paths=affected_paths,
                             ),
@@ -1881,7 +2016,7 @@ def test_attempt_two_engineer_intervention_is_rejected_by_correction_schema(
     assert role_calls == [
         "ArchitectManifestProposal",
         "EngineerModelOutcome",
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
     ]
 
 
@@ -1937,13 +2072,13 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
             input_value: BaseModel,
             output_type: type[BaseModel],
         ) -> BaseModel:
-            if output_type is not EngineerFilePlanOutcome:
+            if not is_engineer_file_plan_outcome_type(output_type):
                 return super().parse(
                     system_prompt=system_prompt,
                     input_value=input_value,
                     output_type=output_type,
                 )
-            EngineerWorkspaceContext.model_validate(input_value)
+            engineer_input_context(input_value)
             role_calls.append(output_type.__name__)
             self.last_usage = ModelUsageEvidence(
                 latency_ms=5,
@@ -1952,15 +2087,14 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
                 output_tokens=25,
                 total_tokens=100,
             )
-            return EngineerFilePlanOutcome(
-                kind="file_plan",
-                file_plan=EngineerFilePlan(
+            return EngineerModelOutcome.for_file_plan(
+                EngineerFilePlan(
                     updates=(
                         EngineerFileUpdate(
                             path="force-app/main/default/lwc/unapproved/unapproved.js",
                             content="export default class Unapproved {}\n",
                         ),
-                    )
+                    ),
                 ),
             )
 
@@ -1994,9 +2128,9 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
     assert failed.execution_attempt == 2
     assert failed.failure is not None
     assert failed.failure.seam == "engineer"
-    assert failed.failure.reason_code == "correction_scope_invalid"
-    assert "outside the controller-owned repair boundary" in failed.failure.summary
-    assert "allowed paths" in failed.failure.guidance
+    assert failed.failure.reason_code == "structured_output_invalid"
+    assert "did not satisfy the typed contract" in failed.failure.summary
+    assert "rejected role boundary" in failed.failure.guidance
     assert failed.candidate is not None
     assert failed.candidate.attempt == 1
     assert failed.candidate.download_available is False
@@ -2014,17 +2148,19 @@ def test_attempt_two_engineer_failure_retains_prior_candidate_for_debugging(
     durable_failure = (
         project / f".runs/agent-ui/{started.handle}/evidence/agent-run-failure.json"
     ).read_text(encoding="utf-8")
-    assert '"reason_code":"correction_scope_invalid"' in durable_failure
-    assert "outside the controller-owned repair boundary" in durable_failure
+    assert '"reason_code":"structured_output_invalid"' in durable_failure
+    assert "did not satisfy the typed contract" in durable_failure
     assert "/Users/" not in durable_failure
     lifecycle_log = terminal_output.getvalue()
-    assert 'reason_code="correction_scope_invalid"' in lifecycle_log
-    assert 'failure_summary="Engineer attempt 2 proposed a path outside' in lifecycle_log
+    assert 'reason_code="structured_output_invalid"' in lifecycle_log
+    assert 'failure_summary="The model responded, but its role output did not satisfy' in (
+        lifecycle_log
+    )
     assert "/Users/" not in lifecycle_log
     assert role_calls == [
         "ArchitectManifestProposal",
         "EngineerModelOutcome",
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
     ]
 
 
@@ -2154,7 +2290,7 @@ def test_retry_resumes_only_identical_durable_approval_after_authorization_crash
     assert completed.terminal_disposition == "ready_for_human_review"
     assert role_calls == [
         *calls_before_retry,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
 
@@ -2242,7 +2378,7 @@ def test_retry_restart_resumes_authorized_engineer_controller_failure_once(
     assert completed.terminal_disposition == "ready_for_human_review"
     assert role_calls == [
         *calls_before_retry,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
     assert snapshot_tree(source) == before
@@ -2257,7 +2393,7 @@ def test_retry_restart_resumes_authorized_engineer_controller_failure_once(
     assert third_call.value.code == "retry_already_recorded"
     assert role_calls == [
         *calls_before_retry,
-        "EngineerFilePlanOutcome",
+        "EngineerModelOutcome",
         "ValidatorModelAdvisory",
     ]
 
@@ -2393,11 +2529,14 @@ def test_terminal_run_releases_capacity_after_current_repository_drift(
             drifted,
         )
 
-    # Full readback remains bound to the current source and current agent
-    # definitions; only capacity classification uses historical evidence.
-    with pytest.raises(AgentUiError) as strict_readback:
-        service.get(started.handle)
-    assert strict_readback.value.code == "run_unavailable"
+    # Terminal readback tolerates prompt/launch-contract evolution while
+    # remaining bound to the source revision that the run actually migrated.
+    if drift == "source":
+        with pytest.raises(AgentUiError) as strict_readback:
+            service.get(started.handle)
+        assert strict_readback.value.code == "run_unavailable"
+    else:
+        assert service.get(started.handle) == completed
 
     replacement = _start(service, "salesforce")
     assert replacement.status == "awaiting_approval"
@@ -2655,8 +2794,9 @@ def test_local_engineer_decision_required_is_a_safe_terminal_view_without_candid
             output_type: type[BaseModel],
         ) -> BaseModel:
             role_calls.append(output_type.__name__)
-            if output_type is EngineerModelOutcome:
-                context = EngineerWorkspaceContext.model_validate(input_value)
+            if is_engineer_model_outcome_type(output_type):
+                context = engineer_input_context(input_value)
+                input_evidence_digest = engineer_controller_input_digest(context)
                 output_path = context.manifest.approved_paths[0]
                 affected_paths = (output_path, context.request.target.entry_path)
                 result: BaseModel = EngineerModelOutcome(
@@ -2671,7 +2811,7 @@ def test_local_engineer_decision_required_is_a_safe_terminal_view_without_candid
                             base_revision=context.workspace_base_revision,
                             agent_version=context.agent_version,
                             agent_definition_digest=context.agent_definition_digest,
-                            input_evidence_digest=context.input_evidence_digest,
+                            input_evidence_digest=input_evidence_digest,
                             reason="A required public implementation contract is absent.",
                             requested_action=ApprovalAction.EXPAND_SCOPE,
                             affected_paths=affected_paths,
@@ -2681,7 +2821,7 @@ def test_local_engineer_decision_required_is_a_safe_terminal_view_without_candid
                             evidence=(
                                 ImplementationInterventionEvidence(
                                     source="engineer_input",
-                                    source_digest=context.input_evidence_digest,
+                                    source_digest=input_evidence_digest,
                                     summary="The bounded context lacks the required contract.",
                                     affected_paths=affected_paths,
                                 ),
@@ -3018,7 +3158,7 @@ def test_local_architect_provider_failure_returns_sanitized_durable_error_view(
     assert failed.failure.response_received is None
     assert failed.failure.schema_valid is None
     assert failed.failure.policy_valid is None
-    assert "Ollama" in failed.failure.guidance
+    assert "configured provider and model" in failed.failure.guidance
     assert failed.failure.terminal is True
     assert failed.failure.retry_eligible is False
     assert failed.boundaries.provider_attempted is True
@@ -3189,9 +3329,7 @@ def test_claude_retry_rejects_runtime_identity_drift_and_resumes_when_restored(
     _stub_claude(monkeypatch, project, role_calls=role_calls)
     monkeypatch.setattr(
         "legacy_migration_agent.application.agent_run.build_salesforce_local_validator",
-        lambda session, registry, timeout_seconds: _recoverable_validator(
-            session.context.run_id
-        ),
+        lambda session, registry, timeout_seconds: _recoverable_validator(session.context.run_id),
     )
     service = AgentUiService(
         project,

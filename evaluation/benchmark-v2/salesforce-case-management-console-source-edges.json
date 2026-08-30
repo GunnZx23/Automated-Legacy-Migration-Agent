@@ -1,0 +1,207 @@
+{
+  "schema_version": "1.0",
+  "fixture_id": "salesforce-case-management-console",
+  "platform": "salesforce",
+  "graph": "source",
+  "review_status": "initial_label_set",
+  "edges": [
+    {
+      "kind": "apex_class_reference",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "LegacyCaseManagementConsoleController",
+      "symbol": "LegacyCaseManagementConsoleController"
+    },
+    {
+      "kind": "apex_class_reference",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "LegacyCaseQueryService",
+      "symbol": "LegacyCaseQueryService"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "Account.Id",
+      "symbol": "Account.Id"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "Account.Name",
+      "symbol": "Account.Name"
+    },
+    {
+      "kind": "apex_page_reference",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "LegacyCaseManagementConsole",
+      "symbol": "LegacyCaseManagementConsole"
+    },
+    {
+      "kind": "soql_object",
+      "source": "LegacyCaseConsoleCtrlTest",
+      "target": "Account",
+      "symbol": "Account"
+    },
+    {
+      "kind": "apex_class_reference",
+      "source": "LegacyCaseManagementConsoleController",
+      "target": "LegacyCaseQueryService",
+      "symbol": "LegacyCaseQueryService"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseManagementConsoleController",
+      "target": "Account.Id",
+      "symbol": "Account.Id"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseManagementConsoleController",
+      "target": "Account.Name",
+      "symbol": "Account.Name"
+    },
+    {
+      "kind": "soql_object",
+      "source": "LegacyCaseManagementConsoleController",
+      "target": "Account",
+      "symbol": "Account"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.AccountId",
+      "symbol": "Case.AccountId"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.CaseNumber",
+      "symbol": "Case.CaseNumber"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.ContactId",
+      "symbol": "Case.ContactId"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.Description",
+      "symbol": "Case.Description"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.Id",
+      "symbol": "Case.Id"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.IsClosed",
+      "symbol": "Case.IsClosed"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.Priority",
+      "symbol": "Case.Priority"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.Status",
+      "symbol": "Case.Status"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Case.Subject",
+      "symbol": "Case.Subject"
+    },
+    {
+      "kind": "soql_field",
+      "source": "LegacyCaseQueryService",
+      "target": "Contact.Name",
+      "symbol": "Contact.Name"
+    },
+    {
+      "kind": "soql_object",
+      "source": "LegacyCaseQueryService",
+      "target": "Case",
+      "symbol": "Case"
+    },
+    {
+      "kind": "visualforce_controller",
+      "source": "LegacyCaseManagementConsole",
+      "target": "LegacyCaseManagementConsoleController",
+      "symbol": "LegacyCaseManagementConsoleController"
+    },
+    {
+      "kind": "permission_class_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "LegacyCaseManagementConsoleController",
+      "symbol": "LegacyCaseManagementConsoleController"
+    },
+    {
+      "kind": "permission_class_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "LegacyCaseQueryService",
+      "symbol": "LegacyCaseQueryService"
+    },
+    {
+      "kind": "permission_field_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case.AccountId",
+      "symbol": "Case.AccountId"
+    },
+    {
+      "kind": "permission_field_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case.ContactId",
+      "symbol": "Case.ContactId"
+    },
+    {
+      "kind": "permission_field_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case.Description",
+      "symbol": "Case.Description"
+    },
+    {
+      "kind": "permission_field_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case.Priority",
+      "symbol": "Case.Priority"
+    },
+    {
+      "kind": "permission_field_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case.Subject",
+      "symbol": "Case.Subject"
+    },
+    {
+      "kind": "permission_page_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "LegacyCaseManagementConsole",
+      "symbol": "LegacyCaseManagementConsole"
+    },
+    {
+      "kind": "permission_object_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Account",
+      "symbol": "Account"
+    },
+    {
+      "kind": "permission_object_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Case",
+      "symbol": "Case"
+    },
+    {
+      "kind": "permission_object_access",
+      "source": "CaseManagementConsoleUser",
+      "target": "Contact",
+      "symbol": "Contact"
+    }
+  ]
+}

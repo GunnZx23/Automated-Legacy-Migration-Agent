@@ -50,24 +50,24 @@ from legacy_migration_agent.agent_runtime.ollama_model import (
 )
 from legacy_migration_agent.agent_runtime.openai_model import LiveModelApproval
 from legacy_migration_agent.application.migration_scenarios import (
-    CASE_WIKI_QUERY,
     _KNOWLEDGE_AS_OF,
+    CASE_WIKI_QUERY,
 )
 from legacy_migration_agent.contracts import (
     MigrationManifest,
     MigrationRequest,
     ValidationReport,
 )
-from legacy_migration_agent.platforms.platform_runtime import _exact_diagnostic_ids
 from legacy_migration_agent.core.integrity import artifact_digest, canonical_json_bytes
 from legacy_migration_agent.core.policies import validate_manifest_for_request
 from legacy_migration_agent.core.run_session import AgentDefinitionDigests, AgentRunSession
 from legacy_migration_agent.core.workspace import IsolatedWorkspace
 from legacy_migration_agent.knowledge.wiki import LlmWiki, RetrievalTrace
 from legacy_migration_agent.platforms.local_checks import (
-    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
     CASE_IMPLEMENTATION_CONTRACT,
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID,
 )
+from legacy_migration_agent.platforms.platform_runtime import _exact_diagnostic_ids
 from legacy_migration_agent.platforms.salesforce_runtime import (
     CASE_SALESFORCE_PLATFORM_ADAPTER,
     build_salesforce_local_validator,
@@ -638,7 +638,10 @@ def run_correction(model_id: str, provider: str) -> dict[str, Any]:
             )
         if prior_after != prior["candidate_revision"]:
             raise RuntimeError("re-derived attempt-one revision differs from persisted evidence")
-        if prior["change_set_digest"] and artifact_digest(prior_change_set) != prior["change_set_digest"]:
+        if (
+            prior["change_set_digest"]
+            and artifact_digest(prior_change_set) != prior["change_set_digest"]
+        ):
             raise RuntimeError("re-derived attempt-one ChangeSet digest differs from evidence")
 
         evidence = CorrectionAttemptEvidence.freeze(manifest, prior_change_set, prior_report)
@@ -670,9 +673,7 @@ def run_correction(model_id: str, provider: str) -> dict[str, Any]:
         )
         authority.require_canonical_context(request, manifest)
         result["correction_authority_built"] = True
-        result["allowed_correction_paths"] = list(
-            authority.model_context.allowed_correction_paths
-        )
+        result["allowed_correction_paths"] = list(authority.model_context.allowed_correction_paths)
     except BaseException as error:
         result["failure_stage"] = "correction_authority"
         result["failure"] = _sanitized_error(error)
@@ -733,7 +734,9 @@ def run_correction(model_id: str, provider: str) -> dict[str, Any]:
         result["candidate_revision"] = run.workspace_after_revision
         result["change_set_digest"] = artifact_digest(run.change_set)
         if run.effective_file_plan is not None:
-            result["delta_changed_paths"] = [u.path for u in run.model_outcome.result.file_plan.updates]
+            result["delta_changed_paths"] = [
+                u.path for u in run.model_outcome.result.file_plan.updates
+            ]
 
         try:
             validator = build_salesforce_local_validator(session, registry, timeout_seconds=120)

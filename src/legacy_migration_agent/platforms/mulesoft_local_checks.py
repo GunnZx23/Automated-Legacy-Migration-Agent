@@ -99,7 +99,10 @@ MULESOFT_IMPLEMENTATION_CONTRACT = (
         "Package as mule-application and pin Mule runtime 4.9.20, Java 17, Mule Maven plugin "
         "4.10.1, MUnit 3.7.3 and HTTP connector 1.12.0. Allow only the Mule Maven and MUnit Maven "
         "plugins and only the HTTP connector, MUnit runner and MUnit tools dependencies at their "
-        "approved coordinates, classifiers and scopes."
+        "approved coordinates, classifiers and scopes. Bind the active Mule runtime directly "
+        "under mule-maven-plugin with "
+        "<configuration><runtimeVersion>${app.runtime}</runtimeVersion></configuration>, where "
+        "the direct app.runtime property resolves to 4.9.20."
     ),
     (
         "Repository and pluginRepository URLs may only use the MuleSoft releases repository. "
@@ -158,8 +161,20 @@ _DATAWEAVE_OUTPUT_JSON = re.compile(
 )
 _DATAWEAVE_BODY = re.compile(r"(?m)^[ \t]*---[ \t]*$")
 _DATAWEAVE_RESPONSE_KEY = re.compile(r"(?m)(?:^|[{,])\s*['\"]?(customerId|status|source)['\"]?\s*:")
-_DATAWEAVE_RUNTIME_VALUE = re.compile(r"\bvars\s*(?:\.|\[)")
-_MULE3_EXPRESSION = re.compile(r"\b(?:flowVars|sessionVars|inboundProperties|outboundProperties)\b")
+_DATAWEAVE_RUNTIME_VALUE = re.compile(
+    r"(?:"
+    r"\bvars\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_]*|\[\s*['\"][^'\"]+['\"]\s*\])"
+    r"|"
+    r"\battributes\s*(?:\.\s*uriParams|\[\s*['\"]uriParams['\"]\s*\])"
+    r"\s*(?:\.\s*customerId|\[\s*['\"]customerId['\"]\s*\])"
+    r")"
+)
+_MULE3_EXPRESSION = re.compile(
+    r"#\[[^\]]*\b(?:flowVars|sessionVars|inboundProperties|outboundProperties)\b",
+    re.DOTALL,
+)
+_DATAWEAVE_1_SYNTAX = re.compile(r"(?mi)(?:^[ \t]*%dw[ \t]+1(?:\.0)?\b|^[ \t]*%output\b)")
+_MAVEN_PROJECT_COORDINATE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,255}")
 _MUNIT_LOOPBACK_REQUEST_PATH = re.compile(r"/api/customers/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/status")
 _MUNIT_COMPONENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}")
 _MULE_TARGET_VARIABLE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
@@ -620,6 +635,11 @@ def _validate_munit(
         MuleSoftLocalCheckCode.MUNIT_CONTRACT,
         MULE4_TEST,
     )
+    _require(
+        not _contains_mule3_expression(root),
+        MuleSoftLocalCheckCode.MUNIT_CONTRACT,
+        MULE4_TEST,
+    )
     flow_refs = tuple(element for test in tests for element in test.iter(_tag(CORE, "flow-ref")))
     assertions = tuple(
         element
@@ -785,17 +805,52 @@ def _validate_munit_loopback_http(
 def _validate_pom(root: ElementTree.Element) -> dict[str, str]:
     ns = {"m": MAVEN}
     _require(root.tag == _tag(MAVEN, "project"), MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM)
+    model_version = _direct_maven_scalar(root, "modelVersion")
+    group_id = _direct_maven_scalar(root, "groupId")
+    artifact_id = _direct_maven_scalar(root, "artifactId")
+    project_version = _direct_maven_scalar(root, "version")
+    packaging = _direct_maven_scalar(root, "packaging")
     _require(
-        root.findtext("m:packaging", namespaces=ns) == "mule-application",
+        model_version == "4.0.0"
+        and group_id is not None
+        and artifact_id is not None
+        and project_version is not None
+        and _MAVEN_PROJECT_COORDINATE.fullmatch(group_id) is not None
+        and _MAVEN_PROJECT_COORDINATE.fullmatch(artifact_id) is not None
+        and _MAVEN_PROJECT_COORDINATE.fullmatch(project_version) is not None
+        and packaging == "mule-application"
+        and root.find("m:parent", ns) is None
+        and root.find("m:dependencyManagement", ns) is None
+        and root.find("m:profiles", ns) is None,
         MuleSoftLocalCheckCode.POM_CONTRACT,
         MULE4_POM,
     )
-    properties = root.find("m:properties", ns)
-    _require(properties is not None, MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM)
-    assert properties is not None
-    values = {_local_name(child.tag): child.text or "" for child in properties}
-    plugin_elements = root.findall(".//m:plugin", ns)
-    plugins = {plugin.findtext("m:artifactId", namespaces=ns): plugin for plugin in plugin_elements}
+    property_sections = root.findall("m:properties", ns)
+    _require(len(property_sections) == 1, MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM)
+    properties = property_sections[0]
+    property_names = tuple(_local_name(child.tag) for child in properties)
+    _require(
+        len(set(property_names)) == len(property_names)
+        and all(_namespace(child.tag) == MAVEN and not tuple(child) for child in properties),
+        MuleSoftLocalCheckCode.POM_CONTRACT,
+        MULE4_POM,
+    )
+    values = {_local_name(child.tag): (child.text or "").strip() for child in properties}
+
+    build_sections = root.findall("m:build", ns)
+    _require(len(build_sections) == 1, MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM)
+    build = build_sections[0]
+    plugin_sections = build.findall("m:plugins", ns)
+    _require(
+        len(plugin_sections) == 1 and build.find("m:pluginManagement", ns) is None,
+        MuleSoftLocalCheckCode.POM_CONTRACT,
+        MULE4_POM,
+    )
+    plugin_elements = plugin_sections[0].findall("m:plugin", ns)
+    plugin_artifact_ids = tuple(
+        _direct_maven_scalar(plugin, "artifactId") for plugin in plugin_elements
+    )
+    plugins = dict(zip(plugin_artifact_ids, plugin_elements, strict=True))
     _require(
         len(plugin_elements) == 2
         and len(plugins) == 2
@@ -805,10 +860,21 @@ def _validate_pom(root: ElementTree.Element) -> dict[str, str]:
     )
     mule_plugin = plugins["mule-maven-plugin"]
     munit_plugin = plugins["munit-maven-plugin"]
+    mule_plugin_version = _direct_maven_scalar(mule_plugin, "version")
+    munit_plugin_version = _direct_maven_scalar(munit_plugin, "version")
+    mule_plugin_configurations = mule_plugin.findall("m:configuration", ns)
+    mule_runtime_version = (
+        _direct_maven_scalar(mule_plugin_configurations[0], "runtimeVersion")
+        if len(mule_plugin_configurations) == 1
+        else None
+    )
     _require(
-        mule_plugin.findtext("m:groupId", namespaces=ns) == "org.mule.tools.maven"
-        and mule_plugin.findtext("m:extensions", namespaces=ns) == "true"
-        and munit_plugin.findtext("m:groupId", namespaces=ns) == "com.mulesoft.munit.tools"
+        _direct_maven_scalar(mule_plugin, "groupId") == "org.mule.tools.maven"
+        and _direct_maven_scalar(mule_plugin, "extensions") == "true"
+        and mule_plugin_version is not None
+        and mule_runtime_version is not None
+        and _direct_maven_scalar(munit_plugin, "groupId") == "com.mulesoft.munit.tools"
+        and munit_plugin_version is not None
         and any(
             execution.findtext("m:phase", namespaces=ns) == "test"
             and "test"
@@ -823,23 +889,19 @@ def _validate_pom(root: ElementTree.Element) -> dict[str, str]:
         MULE4_POM,
     )
     _require(
-        _maven_value(mule_plugin.findtext("m:version", namespaces=ns), values)
-        == MULE_MAVEN_PLUGIN_VERSION
-        and _maven_value(
-            mule_plugin.findtext("m:configuration/m:runtimeVersion", namespaces=ns),
-            values,
-        )
-        == MULE4_RUNTIME
-        and _maven_value(munit_plugin.findtext("m:version", namespaces=ns), values)
-        == MUNIT_VERSION,
+        _maven_value(mule_plugin_version, values) == MULE_MAVEN_PLUGIN_VERSION
+        and _maven_value(mule_runtime_version, values) == MULE4_RUNTIME
+        and _maven_value(munit_plugin_version, values) == MUNIT_VERSION,
         MuleSoftLocalCheckCode.VERSION_MISMATCH,
         MULE4_POM,
     )
-    dependency_elements = root.findall(".//m:dependency", ns)
-    dependencies = {
-        dependency.findtext("m:artifactId", namespaces=ns): dependency
-        for dependency in dependency_elements
-    }
+    dependency_sections = root.findall("m:dependencies", ns)
+    _require(len(dependency_sections) == 1, MuleSoftLocalCheckCode.POM_CONTRACT, MULE4_POM)
+    dependency_elements = dependency_sections[0].findall("m:dependency", ns)
+    dependency_artifact_ids = tuple(
+        _direct_maven_scalar(dependency, "artifactId") for dependency in dependency_elements
+    )
+    dependencies = dict(zip(dependency_artifact_ids, dependency_elements, strict=True))
     _require(
         len(dependency_elements) == 3
         and len(dependencies) == 3
@@ -858,29 +920,39 @@ def _validate_pom(root: ElementTree.Element) -> dict[str, str]:
     }
     for artifact_id, (group_id, version, scopes) in expected_dependencies.items():
         dependency = dependencies[artifact_id]
+        dependency_version = _direct_maven_scalar(dependency, "version")
         _require(
-            dependency.findtext("m:groupId", namespaces=ns) == group_id
-            and dependency.findtext("m:classifier", namespaces=ns) == "mule-plugin"
-            and dependency.findtext("m:scope", namespaces=ns) in scopes,
+            _direct_maven_scalar(dependency, "groupId") == group_id
+            and dependency_version is not None
+            and _direct_maven_scalar(dependency, "classifier") == "mule-plugin"
+            and _optional_direct_maven_scalar(dependency, "scope") in scopes,
             MuleSoftLocalCheckCode.POM_CONTRACT,
             MULE4_POM,
         )
         _require(
-            _maven_value(dependency.findtext("m:version", namespaces=ns), values) == version,
+            _maven_value(dependency_version, values) == version,
             MuleSoftLocalCheckCode.VERSION_MISMATCH,
             MULE4_POM,
         )
-    repository_urls = root.findall(".//m:repository/m:url", ns)
-    plugin_repository_urls = root.findall(".//m:pluginRepository/m:url", ns)
+    repository_sections = root.findall("m:repositories", ns)
+    plugin_repository_sections = root.findall("m:pluginRepositories", ns)
     _require(
-        bool(repository_urls)
-        and bool(plugin_repository_urls)
-        and all(
-            _allowed_repository_url(element.text)
-            for element in (*repository_urls, *plugin_repository_urls)
-        )
-        and root.find(".//m:distributionManagement", ns) is None
-        and root.find(".//m:servers", ns) is None,
+        len(repository_sections) == 1 and len(plugin_repository_sections) == 1,
+        MuleSoftLocalCheckCode.POM_CONTRACT,
+        MULE4_POM,
+    )
+    repositories = repository_sections[0].findall("m:repository", ns)
+    plugin_repositories = plugin_repository_sections[0].findall("m:pluginRepository", ns)
+    repository_urls = tuple(_direct_maven_scalar(repo, "url") for repo in repositories)
+    plugin_repository_urls = tuple(
+        _direct_maven_scalar(repo, "url") for repo in plugin_repositories
+    )
+    _require(
+        bool(repositories)
+        and bool(plugin_repositories)
+        and all(_allowed_repository_url(url) for url in (*repository_urls, *plugin_repository_urls))
+        and root.find("m:distributionManagement", ns) is None
+        and root.find("m:servers", ns) is None,
         MuleSoftLocalCheckCode.POM_CONTRACT,
         MULE4_POM,
     )
@@ -923,12 +995,29 @@ def parse_mule_application_properties(text: str) -> dict[str, str]:
 
 def _parse_json(text: str, artifact: str) -> Any:
     try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
+        return json.loads(
+            text,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
         raise MuleSoftLocalCheckFailure(
             MuleSoftLocalCheckCode.MALFORMED_JSON,
             artifact,
         ) from exc
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
 
 
 def _flatten_configuration(value: Any) -> dict[str, str]:
@@ -1067,10 +1156,36 @@ def normalize_http_route(base_path: str | None, listener_path: str | None) -> st
 def _contains_mule3_expression(root: ElementTree.Element) -> bool:
     return any(
         _MULE3_EXPRESSION.search(value) is not None
+        or _DATAWEAVE_1_SYNTAX.search(value) is not None
+        or DW1 in value
         for element in root.iter()
-        for value in element.attrib.values()
-        if "#[" in value
+        for value in (
+            element.tag,
+            *(item for pair in element.attrib.items() for item in pair),
+            element.text or "",
+            element.tail or "",
+        )
     )
+
+
+def _direct_maven_scalar(parent: ElementTree.Element, local_name: str) -> str | None:
+    children = parent.findall(_tag(MAVEN, local_name))
+    if len(children) != 1 or tuple(children[0]):
+        return None
+    value = (children[0].text or "").strip()
+    return value or None
+
+
+def _optional_direct_maven_scalar(
+    parent: ElementTree.Element,
+    local_name: str,
+) -> str | None:
+    children = parent.findall(_tag(MAVEN, local_name))
+    if not children:
+        return None
+    if len(children) != 1 or tuple(children[0]):
+        return ""
+    return (children[0].text or "").strip() or ""
 
 
 def _maven_value(raw: str | None, properties: Mapping[str, str]) -> str | None:

@@ -111,6 +111,11 @@
       "title": "Request Id",
       "type": "string"
     },
+    "requires_graph_regeneration": {
+      "default": false,
+      "title": "Requires Graph Regeneration",
+      "type": "boolean"
+    },
     "requires_new_manifest_approval": {
       "title": "Requires New Manifest Approval",
       "type": "boolean"

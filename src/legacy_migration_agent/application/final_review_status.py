@@ -66,6 +66,14 @@ class FinalReviewRequest(StrictModel):
     validation_report_digest: Sha256Digest
     architect_context_digest: Sha256Digest
     dependency_graph_digest: Sha256Digest
+    graph_assurance_report_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    graph_assurance_status: Literal["assured"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     wiki_trace_digest: Sha256Digest
     scope_policy_digest: Sha256Digest
     architect_run_digest: Sha256Digest
@@ -93,6 +101,12 @@ class FinalReviewRequest(StrictModel):
 
     @model_validator(mode="after")
     def validate_review_boundary(self) -> FinalReviewRequest:
+        if (self.graph_assurance_report_digest is None) is not (
+            self.graph_assurance_status is None
+        ):
+            raise ValueError(
+                "final review graph assurance status and digest must be supplied together"
+            )
         if self.requester == self.designated_reviewer:
             raise ValueError("final review requires an independent designated reviewer")
         if self.expires_at <= self.requested_at:

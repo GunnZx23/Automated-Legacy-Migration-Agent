@@ -1,0 +1,759 @@
+{
+  "schema_version": "2.0",
+  "review_status": "independently_reviewed",
+  "reviewer_id": "bw",
+  "review_evidence_path": "evaluation/benchmark-v2/label-review-evidence.json",
+  "review_evidence_digest": "sha256:b718d6b3c130d1318f27b9911ec223cde650a39b19af39927ab590ccf3aba5c3",
+  "high_impact_definition": {
+    "definition_id": "migration-dependency-impact-v1",
+    "definition": "A dependency is high impact when omitting or mis-migrating it can change runtime reachability, production behavior or data, access-control enforcement, public entry-point wiring, configuration resolution, or the only independent validation of a required migration behavior.",
+    "decision_rules": [
+      "Production code, entry-point, configuration, object, field, and permission dependencies are high impact when loss can alter execution, behavior, data access, or authorization.",
+      "A test-derived dependency is high impact when its loss prevents the only independent validation of a required behavior or security contract.",
+      "A test-derived dependency is low impact only when independent required coverage remains and its omission cannot affect production behavior or authorization.",
+      "Uncertainty is resolved as high impact until an independent reviewer records contrary evidence."
+    ],
+    "basis_outcomes": {
+      "production_runtime": true,
+      "production_data_contract": true,
+      "production_security": true,
+      "sole_required_validation": true,
+      "supporting_test_evidence": false
+    }
+  },
+  "cases": [
+    {
+      "case_id": "mulesoft-customer-status-simple",
+      "source_edge_labels_path": "evaluation/mulesoft-customer-status-api-source-edges.json",
+      "labels": [
+        {
+          "dependency_id": "mule.customer-status.edge-01.http_listener_config_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "http_listener_config_reference",
+            "source": "customer-status-api-flow",
+            "target": "customer-status-http-listener",
+            "symbol": "customer-status-http-listener"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-02.flow_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "flow_reference",
+            "source": "customer-status-api-flow",
+            "target": "build-customer-status-response",
+            "symbol": "build-customer-status-response"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-03.property_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "property_reference",
+            "source": "customer-status-http-listener",
+            "target": "http.host",
+            "symbol": "${http.host}"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-04.property_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "property_reference",
+            "source": "customer-status-http-listener",
+            "target": "http.port",
+            "symbol": "${http.port}"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-05.dataweave_variable_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "dataweave_variable_reference",
+            "source": "build-customer-status-response",
+            "target": "customerId",
+            "symbol": "flowVars.customerId"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-06.dataweave_variable_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "dataweave_variable_reference",
+            "source": "build-customer-status-response",
+            "target": "responseStatus",
+            "symbol": "flowVars.responseStatus"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-07.mule_route_parameter_binding",
+          "high_impact": true,
+          "edge": {
+            "kind": "mule_route_parameter_binding",
+            "source": "customer-status-api-flow",
+            "target": "customerId",
+            "symbol": "{customerId}"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-08.munit_flow_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "munit_flow_reference",
+            "source": "build-customer-status-response-test",
+            "target": "build-customer-status-response",
+            "symbol": "build-customer-status-response"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-09.munit_variable_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "munit_variable_reference",
+            "source": "build-customer-status-response-test",
+            "target": "responseStatus",
+            "symbol": "flowVars.responseStatus"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "mule.customer-status.edge-10.munit_suite_test",
+          "high_impact": false,
+          "edge": {
+            "kind": "munit_suite_test",
+            "source": "customer-status-api-munit",
+            "target": "build-customer-status-response-test",
+            "symbol": "build-customer-status-response-test"
+          },
+          "impact_basis": "supporting_test_evidence"
+        }
+      ]
+    },
+    {
+      "case_id": "salesforce-account-contact-medium",
+      "source_edge_labels_path": "evaluation/salesforce-account-contact-explorer-source-edges.json",
+      "labels": [
+        {
+          "dependency_id": "salesforce.account-contact.edge-01.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Account.Id",
+            "symbol": "Account.Id"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-02.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Account.Name",
+            "symbol": "Account.Name"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-03.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.AccountId",
+            "symbol": "Contact.AccountId"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-04.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.Email",
+            "symbol": "Contact.Email"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-05.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.FirstName",
+            "symbol": "Contact.FirstName"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-06.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.Id",
+            "symbol": "Contact.Id"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-07.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.LastName",
+            "symbol": "Contact.LastName"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-08.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact.Phone",
+            "symbol": "Contact.Phone"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-09.soql_object",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-10.soql_object",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyAccountContactExplorerController",
+            "target": "Contact",
+            "symbol": "Contact"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-11.apex_class_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "apex_class_reference",
+            "source": "LegacyAcctContactExplorerCtrlTest",
+            "target": "LegacyAccountContactExplorerController",
+            "symbol": "LegacyAccountContactExplorerController"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-12.soql_field",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAcctContactExplorerCtrlTest",
+            "target": "Account.Id",
+            "symbol": "Account.Id"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-13.soql_field",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyAcctContactExplorerCtrlTest",
+            "target": "Account.Name",
+            "symbol": "Account.Name"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-14.apex_page_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "apex_page_reference",
+            "source": "LegacyAcctContactExplorerCtrlTest",
+            "target": "LegacyAccountContactExplorer",
+            "symbol": "LegacyAccountContactExplorer"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-15.soql_object",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyAcctContactExplorerCtrlTest",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-16.visualforce_controller",
+          "high_impact": true,
+          "edge": {
+            "kind": "visualforce_controller",
+            "source": "LegacyAccountContactExplorer",
+            "target": "LegacyAccountContactExplorerController",
+            "symbol": "LegacyAccountContactExplorerController"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-17.permission_class_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_class_access",
+            "source": "AccountContactExplorerUser",
+            "target": "LegacyAccountContactExplorerController",
+            "symbol": "LegacyAccountContactExplorerController"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-18.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "AccountContactExplorerUser",
+            "target": "Contact.Email",
+            "symbol": "Contact.Email"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-19.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "AccountContactExplorerUser",
+            "target": "Contact.Phone",
+            "symbol": "Contact.Phone"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-20.permission_page_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_page_access",
+            "source": "AccountContactExplorerUser",
+            "target": "LegacyAccountContactExplorer",
+            "symbol": "LegacyAccountContactExplorer"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-21.permission_object_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_object_access",
+            "source": "AccountContactExplorerUser",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.account-contact.edge-22.permission_object_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_object_access",
+            "source": "AccountContactExplorerUser",
+            "target": "Contact",
+            "symbol": "Contact"
+          },
+          "impact_basis": "production_security"
+        }
+      ]
+    },
+    {
+      "case_id": "salesforce-case-management-complex-risk",
+      "source_edge_labels_path": "evaluation/benchmark-v2/salesforce-case-management-console-source-edges.json",
+      "labels": [
+        {
+          "dependency_id": "salesforce.case-management.edge-01.apex_class_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "apex_class_reference",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "LegacyCaseManagementConsoleController",
+            "symbol": "LegacyCaseManagementConsoleController"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-02.apex_class_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "apex_class_reference",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "LegacyCaseQueryService",
+            "symbol": "LegacyCaseQueryService"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-03.soql_field",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "Account.Id",
+            "symbol": "Account.Id"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-04.soql_field",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "Account.Name",
+            "symbol": "Account.Name"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-05.apex_page_reference",
+          "high_impact": false,
+          "edge": {
+            "kind": "apex_page_reference",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "LegacyCaseManagementConsole",
+            "symbol": "LegacyCaseManagementConsole"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-06.soql_object",
+          "high_impact": false,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyCaseConsoleCtrlTest",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "supporting_test_evidence"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-07.apex_class_reference",
+          "high_impact": true,
+          "edge": {
+            "kind": "apex_class_reference",
+            "source": "LegacyCaseManagementConsoleController",
+            "target": "LegacyCaseQueryService",
+            "symbol": "LegacyCaseQueryService"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-08.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseManagementConsoleController",
+            "target": "Account.Id",
+            "symbol": "Account.Id"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-09.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseManagementConsoleController",
+            "target": "Account.Name",
+            "symbol": "Account.Name"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-10.soql_object",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyCaseManagementConsoleController",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-11.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.AccountId",
+            "symbol": "Case.AccountId"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-12.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.CaseNumber",
+            "symbol": "Case.CaseNumber"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-13.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.ContactId",
+            "symbol": "Case.ContactId"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-14.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.Description",
+            "symbol": "Case.Description"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-15.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.Id",
+            "symbol": "Case.Id"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-16.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.IsClosed",
+            "symbol": "Case.IsClosed"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-17.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.Priority",
+            "symbol": "Case.Priority"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-18.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.Status",
+            "symbol": "Case.Status"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-19.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Case.Subject",
+            "symbol": "Case.Subject"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-20.soql_field",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_field",
+            "source": "LegacyCaseQueryService",
+            "target": "Contact.Name",
+            "symbol": "Contact.Name"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-21.soql_object",
+          "high_impact": true,
+          "edge": {
+            "kind": "soql_object",
+            "source": "LegacyCaseQueryService",
+            "target": "Case",
+            "symbol": "Case"
+          },
+          "impact_basis": "production_data_contract"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-22.visualforce_controller",
+          "high_impact": true,
+          "edge": {
+            "kind": "visualforce_controller",
+            "source": "LegacyCaseManagementConsole",
+            "target": "LegacyCaseManagementConsoleController",
+            "symbol": "LegacyCaseManagementConsoleController"
+          },
+          "impact_basis": "production_runtime"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-23.permission_class_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_class_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "LegacyCaseManagementConsoleController",
+            "symbol": "LegacyCaseManagementConsoleController"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-24.permission_class_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_class_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "LegacyCaseQueryService",
+            "symbol": "LegacyCaseQueryService"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-25.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case.ContactId",
+            "symbol": "Case.ContactId"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-26.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case.Description",
+            "symbol": "Case.Description"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-28.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case.Priority",
+            "symbol": "Case.Priority"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-30.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case.Subject",
+            "symbol": "Case.Subject"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-31.permission_page_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_page_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "LegacyCaseManagementConsole",
+            "symbol": "LegacyCaseManagementConsole"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-32.permission_object_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_object_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Account",
+            "symbol": "Account"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-33.permission_object_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_object_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case",
+            "symbol": "Case"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-34.permission_object_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_object_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Contact",
+            "symbol": "Contact"
+          },
+          "impact_basis": "production_security"
+        },
+        {
+          "dependency_id": "salesforce.case-management.edge-35.permission_field_access",
+          "high_impact": true,
+          "edge": {
+            "kind": "permission_field_access",
+            "source": "CaseManagementConsoleUser",
+            "target": "Case.AccountId",
+            "symbol": "Case.AccountId"
+          },
+          "impact_basis": "production_security"
+        }
+      ]
+    }
+  ]
+}

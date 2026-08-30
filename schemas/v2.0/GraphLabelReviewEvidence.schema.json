@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "description": "Operator-supplied review attestation bound to one graph-label subject.\n\nArtifact loading proves the content binding, not the real-world identity of\nthe named reviewer or the authenticity of the supplied review timestamp.",
+  "properties": {
+    "attestation": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Attestation",
+      "type": "string"
+    },
+    "fixture_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Fixture Id",
+      "type": "string"
+    },
+    "label_subject_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Label Subject Digest",
+      "type": "string"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_method": {
+      "const": "independent_human_review",
+      "default": "independent_human_review",
+      "title": "Review Method",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Reviewer Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "review_id",
+    "fixture_id",
+    "reviewer_id",
+    "reviewed_at",
+    "label_subject_digest",
+    "attestation"
+  ],
+  "title": "GraphLabelReviewEvidence",
+  "type": "object"
+}

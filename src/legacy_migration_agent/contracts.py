@@ -388,6 +388,14 @@ class MigrationManifest(StrictModel):
     transformations: tuple[TransformationStep, ...]
     validation_plan: tuple[ValidationCommand, ...]
     implementation_contract: tuple[str, ...] = Field(default=(), max_length=64)
+    graph_assurance_report_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    graph_assurance_status: Literal["assured"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     risks: tuple[RiskFinding, ...] = ()
     required_approvals: tuple[ApprovalAction, ...] = ()
     status: ManifestStatus = ManifestStatus.PLANNED
@@ -411,6 +419,12 @@ class MigrationManifest(StrictModel):
 
     @model_validator(mode="after")
     def validate_decision_state(self) -> MigrationManifest:
+        if (self.graph_assurance_report_digest is None) is not (
+            self.graph_assurance_status is None
+        ):
+            raise ValueError(
+                "manifest graph assurance status and report digest must be supplied together"
+            )
         check_ids = tuple(check.check_id for check in self.validation_plan)
         if len(check_ids) != len(set(check_ids)):
             raise ValueError("validation_plan check_ids must be unique")

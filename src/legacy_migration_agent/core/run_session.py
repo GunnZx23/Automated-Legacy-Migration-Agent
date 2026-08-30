@@ -52,24 +52,83 @@ _API_KEY_TOKEN = re.compile(r"\b(?:sk|rk|pk)-[A-Za-z0-9_-]{8,}\b")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
 _WINDOWS_ABSOLUTE_ANYWHERE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][^\s\"'<>]*")
-_POSIX_ABSOLUTE_ANYWHERE = re.compile(r"(?<![A-Za-z0-9._~@%+,:=\-/<])/(?:[^\s\"'<>]+)")
-_REMOTE_URL = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>]+", re.IGNORECASE)
-_FILE_URI = re.compile(r"\bfile://", re.IGNORECASE)
-_OPAQUE_TEXT_FIELDS = frozenset(
-    {
-        "content",
-        "implementation_contract",
-        "required_implementation_contract",
-        "selected_content",
-        "unified_diff",
-    }
+_WINDOWS_UNC_ANYWHERE = re.compile(
+    r"(?<![A-Za-z0-9._~@%+\\/\-])\\\\"
+    r"[^\\/\s\"'<>]+[\\/][^\s\"'<>]+"
 )
-_LOCAL_FILESYSTEM_ROOT = re.compile(
-    r"(?<![A-Za-z0-9._~@%+,:=\-/])"
-    r"/(?:Users|home|root|private|tmp|var|etc|opt|usr|System|Library|Volumes|dev)"
-    r"(?:/|\b)",
+_MARKDOWN_WINDOWS_DRIVE_ABSOLUTE_ANYWHERE = re.compile(
+    r"(?<![A-Za-z0-9])`[A-Za-z]:`[\\/]`",
     re.IGNORECASE,
 )
+_MARKDOWN_WINDOWS_UNC_ABSOLUTE_ANYWHERE = re.compile(
+    r"(?<![A-Za-z0-9])`\\\\[^\\`\s/]+`[\\/]`",
+    re.IGNORECASE,
+)
+_QUOTED_FORWARD_UNC_ANYWHERE = re.compile(r"(?P<quote>[\"'])//[^/\\\s\"'<>]+/[^\s\"'<>]+")
+_WINDOWS_ROOT_RELATIVE_ANYWHERE = re.compile(
+    r"(?<![A-Za-z0-9._~@%+\\/\-])\\(?!\\)"
+    r"(?:\$Recycle\.Bin|Documents and Settings|PerfLogs|ProgramData|"
+    r"Program Files(?: \(x86\))?|Recovery|Temp|Users|Windows)"
+    r"(?=[\\/]|$|[\s\"'<>;,\)\]}`])",
+    re.IGNORECASE,
+)
+_STRUCTURED_POSIX_ABSOLUTE_ANYWHERE = re.compile(r"(?<![A-Za-z0-9._~@%+\-/<])/(?:[^\s\"'<>`]+)")
+_OPAQUE_POSIX_ABSOLUTE_ANYWHERE = re.compile(r"(?<![A-Za-z0-9._~@%+*\-/<])/(?:[^\s\"'<>`]+)")
+_NON_FILE_URI = re.compile(
+    r"\b(?!file:)[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+_FILE_URI = re.compile(r"\bfile:/", re.IGNORECASE)
+_QUOTED_URI_ROOT = re.compile(r"(?P<quote>[\"'])/(?P=quote)")
+_ASSIGNED_URI_ROOT = re.compile(r"[=:]\s*/(?=$|[\s,;)])")
+_MARKDOWN_INLINE_CODE_ATOM = r"`[A-Za-z@][A-Za-z0-9_@ .(),=\-]{0,159}`"
+_MARKDOWN_INLINE_CODE_ALTERNATIVES = re.compile(
+    rf"{_MARKDOWN_INLINE_CODE_ATOM}(?:/{_MARKDOWN_INLINE_CODE_ATOM})+"
+)
+_LOCAL_FILESYSTEM_ROOT_NAME = (
+    r"(?:(?:"
+    r"Applications|Library|System|Users|Volumes|bin|dev|etc|mnt|nix|opt|private|"
+    r"proc|root|sbin|secrets|snap|srv|sys|tmp|usr|var|workspace"
+    r")(?=/|$|[\s\"'<>;,\.\)\]}:!?`*_])|home(?=/))"
+)
+_LOCAL_FILESYSTEM_ROOT = re.compile(
+    rf"(?<![A-Za-z0-9._~@%+:\-/<])/{_LOCAL_FILESYSTEM_ROOT_NAME}",
+    re.IGNORECASE,
+)
+_MARKDOWN_UNDERSCORE_LOCAL_FILESYSTEM_ROOT = re.compile(
+    rf"(?<![A-Za-z0-9._~@%+\-/<])_+/{_LOCAL_FILESYSTEM_ROOT_NAME}",
+    re.IGNORECASE,
+)
+_SOURCE_BEARING_TEXT_FIELDS = frozenset({"content", "selected_content", "unified_diff"})
+_OPAQUE_TEXT_FIELDS = frozenset(
+    {
+        "assumptions",
+        "canonical_description",
+        "concerns",
+        "content",
+        "description",
+        "implementation_contract",
+        "public_concerns",
+        "reason",
+        "recommendation",
+        "required_implementation_contract",
+        "selected_content",
+        "summary",
+        "unified_diff",
+        "unresolved_questions",
+    }
+)
+_PORTABLE_ROUTE_SEGMENT = re.compile(r"^[A-Za-z0-9_{}@:+,=.~-]+$")
+_VISUALFORCE_PAGE_ROUTE_SEGMENT = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,79}$")
+_PORTABLE_ROUTE_ROOTS = (
+    "/api",
+    "/force-app",
+    "/lightning",
+    "/resource",
+    "/services/data",
+)
+_PORTABLE_EXACT_ROUTES = frozenset({"/customers/{customerId}/status"})
+_TRAILING_ROUTE_PUNCTUATION = ".,;:)]!?"
 _SECRET_KEYS = frozenset(
     {
         "access_token",
@@ -99,6 +158,29 @@ _RUNTIME_MODEL_OPERATION_FILE = re.compile(
     r"validator-attempt-[12]"
     r")\.json$"
 )
+
+PortableEvidenceCategory = Literal[
+    "absolute_project_or_source_path",
+    "local_absolute_path",
+]
+PortableEvidenceFieldClass = Literal["narrative", "source_bearing", "structured"]
+
+
+class PortableEvidencePolicyViolation(PolicyViolation):
+    """Portable-evidence rejection with content-free diagnostic metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        evidence_category: PortableEvidenceCategory,
+        field_class: PortableEvidenceFieldClass,
+    ) -> None:
+        self.evidence_category = evidence_category
+        self.field_class = field_class
+        super().__init__(message)
+
+
 _RUNTIME_MODEL_CONTROL_FILE = re.compile(r"^correction-request-attempt-[12]\.json$")
 _RUNTIME_MODEL_OPERATION_ROOT = "inflight-model-runs"
 _ROLE_INVOCATION_LEASE_FILE = re.compile(
@@ -882,9 +964,25 @@ def _assert_portable_evidence_value(
     if secret_findings:
         raise PolicyViolation("portable evidence contains an unredacted credential")
     if any(path in value for path in forbidden_absolute_paths):
-        raise PolicyViolation("portable evidence contains an absolute project or source path")
+        raise PortableEvidencePolicyViolation(
+            "portable evidence contains an absolute project or source path",
+            evidence_category="absolute_project_or_source_path",
+            field_class=_portable_evidence_field_class(field_name),
+        )
     if _contains_local_absolute_path(value, field_name=field_name):
-        raise PolicyViolation("portable evidence contains a local absolute path")
+        raise PortableEvidencePolicyViolation(
+            "portable evidence contains a local absolute path",
+            evidence_category="local_absolute_path",
+            field_class=_portable_evidence_field_class(field_name),
+        )
+
+
+def _portable_evidence_field_class(field_name: str | None) -> PortableEvidenceFieldClass:
+    if field_name in _SOURCE_BEARING_TEXT_FIELDS:
+        return "source_bearing"
+    if field_name in _OPAQUE_TEXT_FIELDS:
+        return "narrative"
+    return "structured"
 
 
 def _contains_local_absolute_path(value: str, *, field_name: str | None) -> bool:
@@ -907,19 +1005,93 @@ def _contains_local_absolute_path(value: str, *, field_name: str | None) -> bool
         inspected = "\n".join(inspected_lines)
     if _FILE_URI.search(inspected) is not None:
         return True
-    without_remote_urls = _REMOTE_URL.sub("", inspected)
-    normalized = without_remote_urls.strip()
-    if _WINDOWS_ABSOLUTE_ANYWHERE.search(without_remote_urls) is not None:
+    if any(
+        pattern.search(inspected) is not None
+        for pattern in (
+            _WINDOWS_ABSOLUTE_ANYWHERE,
+            _WINDOWS_UNC_ANYWHERE,
+            _MARKDOWN_WINDOWS_DRIVE_ABSOLUTE_ANYWHERE,
+            _MARKDOWN_WINDOWS_UNC_ABSOLUTE_ANYWHERE,
+            _WINDOWS_ROOT_RELATIVE_ANYWHERE,
+            _QUOTED_FORWARD_UNC_ANYWHERE,
+        )
+    ):
         return True
+    without_remote_urls = _NON_FILE_URI.sub("", inspected)
     if field_name in _OPAQUE_TEXT_FIELDS:
-        # Source, curated prose, and diffs can legitimately contain URI-root
-        # routes such as /api.  Treat only filesystem-root prefixes as local
-        # paths in these opaque authored fields.  Structured routing fields
-        # below retain the stricter any-POSIX-absolute rule.
-        return _LOCAL_FILESYSTEM_ROOT.search(without_remote_urls) is not None
+        # Models often render bounded alternatives as Markdown inline-code
+        # atoms (for example, ``OPEN``/``CLOSED``/``ALL``).  The separator
+        # slash is prose rather than a route.  Neutralize only separators in a
+        # complete sequence of conservative identifier/expression atoms; a
+        # slash inside an atom, a path-shaped atom, or any unbalanced span is
+        # still inspected by the ordinary fail-closed path rules below.
+        without_remote_urls = _MARKDOWN_INLINE_CODE_ALTERNATIVES.sub(
+            lambda match: match.group(0).replace("`/`", "` and `"),
+            without_remote_urls,
+        )
+    if (
+        _LOCAL_FILESYSTEM_ROOT.search(without_remote_urls) is not None
+        or _MARKDOWN_UNDERSCORE_LOCAL_FILESYSTEM_ROOT.search(without_remote_urls) is not None
+    ):
+        return True
+    normalized = without_remote_urls.strip()
+    if field_name in _OPAQUE_TEXT_FIELDS:
+        if field_name in _SOURCE_BEARING_TEXT_FIELDS:
+            # Source text legitimately contains language syntax that starts
+            # with a slash: Apex/JavaScript comments, CSS block comments,
+            # JavaScript regular-expression literals, division, and XML end
+            # tags.  For these fields, retain the unconditional URI,
+            # Windows/UNC, exact project/source, and credential checks above,
+            # then reject only high-confidence local POSIX roots.  Narrative
+            # fields below keep the stricter route-aware token policy.
+            return False
+        # Source, curated prose, and diffs can legitimately contain only the
+        # exact portable route families used by the bounded Salesforce and
+        # Mule slices.  Every other POSIX absolute token remains forbidden.
+        if (
+            normalized == "/"
+            or _QUOTED_URI_ROOT.search(without_remote_urls) is not None
+            or _ASSIGNED_URI_ROOT.search(without_remote_urls) is not None
+        ):
+            return True
+        return any(
+            not _is_portable_route_token(match.group(0))
+            for match in _OPAQUE_POSIX_ABSOLUTE_ANYWHERE.finditer(without_remote_urls)
+        )
     return (
         _looks_absolute(normalized)
-        or _POSIX_ABSOLUTE_ANYWHERE.search(without_remote_urls) is not None
+        or _STRUCTURED_POSIX_ABSOLUTE_ANYWHERE.search(without_remote_urls) is not None
+    )
+
+
+def _is_portable_route_token(value: str) -> bool:
+    token = value.rstrip(_TRAILING_ROUTE_PUNCTUATION)
+    if token in _PORTABLE_EXACT_ROUTES:
+        return True
+    if token == "/apex":
+        return True
+    if token.startswith("/apex/"):
+        page_name = token[len("/apex/") :]
+        return _VISUALFORCE_PAGE_ROUTE_SEGMENT.fullmatch(page_name) is not None
+    root = next(
+        (
+            candidate
+            for candidate in _PORTABLE_ROUTE_ROOTS
+            if token == candidate or token.startswith(f"{candidate}/")
+        ),
+        None,
+    )
+    if root is None:
+        return False
+    if token == root:
+        return True
+    segments = token[len(root) + 1 :].split("/")
+    return bool(segments) and all(
+        segment not in {"", ".", ".."}
+        and "%" not in segment
+        and "\\" not in segment
+        and _PORTABLE_ROUTE_SEGMENT.fullmatch(segment) is not None
+        for segment in segments
     )
 
 
@@ -1228,5 +1400,6 @@ __all__ = [
     "AgentDefinitionDigests",
     "AgentRunContext",
     "AgentRunSession",
+    "PortableEvidencePolicyViolation",
     "RUNTIME_STATE_PATHS",
 ]

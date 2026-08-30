@@ -191,6 +191,11 @@ class CorrectionRequest(StrictModel):
     action: CorrectionAction
     requires_new_manifest_approval: bool
     requires_new_manifest_digest: bool
+    # A PLAN_INVALID result is a planning-boundary failure, never an Engineer
+    # correction.  The next planning cycle must rebuild the graph (which also
+    # produces a fresh controller-owned GraphAssuranceReport) before it can
+    # create a replacement manifest.
+    requires_graph_regeneration: bool = False
     reason: str = Field(min_length=1, max_length=2000)
 
     @model_validator(mode="after")
@@ -215,6 +220,10 @@ class CorrectionRequest(StrictModel):
             raise ValueError("replanning is the only action that requires new manifest approval")
         if self.requires_new_manifest_digest is not self.requires_new_manifest_approval:
             raise ValueError("a new manifest approval must bind a new manifest digest")
+        if self.requires_graph_regeneration and (
+            self.action is not CorrectionAction.REPLAN_WITH_NEW_APPROVAL
+        ):
+            raise ValueError("graph regeneration requires replanning with new approval")
         return self
 
 
@@ -306,10 +315,17 @@ class CorrectionController:
         }:
             action = CorrectionAction.REPLAN_WITH_NEW_APPROVAL
             next_attempt = None
-            reason = (
-                "The current manifest cannot safely authorize another implementation; "
-                "produce and approve a new manifest digest."
-            )
+            if report.disposition is ValidationDisposition.PLAN_INVALID:
+                reason = (
+                    "The dependency plan is invalid; regenerate the dependency graph and "
+                    "controller-owned graph assurance report, then produce and approve a "
+                    "new manifest digest."
+                )
+            else:
+                reason = (
+                    "The current manifest cannot safely authorize another implementation; "
+                    "produce and approve a new manifest digest."
+                )
         elif report.disposition is ValidationDisposition.RECOVERABLE_FAILURE:
             if not implementation_failures:
                 action = CorrectionAction.STOP_ENVIRONMENT
@@ -338,12 +354,14 @@ class CorrectionController:
         else:  # pragma: no cover - enum exhaustiveness guard
             raise AssertionError(f"unhandled disposition: {report.disposition}")
 
+        requires_graph_regeneration = report.disposition is ValidationDisposition.PLAN_INVALID
         material = "\x00".join(
             (
                 report.report_id,
                 artifact_digest(report),
                 action.value,
                 str(report.attempt),
+                str(requires_graph_regeneration).lower(),
             )
         )
         return CorrectionRequest(
@@ -363,6 +381,7 @@ class CorrectionController:
             action=action,
             requires_new_manifest_approval=(action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL),
             requires_new_manifest_digest=(action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL),
+            requires_graph_regeneration=requires_graph_regeneration,
             reason=reason,
         )
 
@@ -381,7 +400,8 @@ class CorrectionController:
         if request.action is not CorrectionAction.RETRY_IMPLEMENTATION:
             if request.action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL:
                 raise PolicyViolation(
-                    "plan-invalid evidence requires a new manifest digest and approval"
+                    "plan-invalid evidence requires graph regeneration, a new manifest digest, "
+                    "and approval"
                 )
             raise PolicyViolation("the correction outcome does not authorize a retry")
         if request.next_attempt is None:

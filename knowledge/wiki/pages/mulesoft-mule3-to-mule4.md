@@ -14,8 +14,15 @@ For the bounded Customer Status API fixture:
   Redesign any cross-flow or transport lifetime explicitly.
 - Map inbound HTTP properties to typed Mule 4 attributes such as
   `attributes.uriParams`, preserving types instead of flattening to strings.
+  The response transform may read `attributes.uriParams.customerId` directly
+  or read a candidate-owned `vars` value populated from that typed attribute;
+  no controller-authored variable name is required.
 - Rewrite DataWeave 1/MEL expressions for DataWeave 2 syntax and semantics;
   changing `%output` to `output` is only one part of that review.
+  Check Mule 4 XML attribute values, element text, and tail text so a legacy
+  `flowVars`, `sessionVars`, inbound/outbound property expression, DataWeave 1
+  header, or DataWeave 1 namespace is not hidden outside the usual processor
+  attributes.
 - Migrate a catch strategy to `on-error-continue` only when treating the owner
   as successful and committing its transaction preserves behavior. A simple
   rollback strategy maps to `on-error-propagate`, which fails the owner and

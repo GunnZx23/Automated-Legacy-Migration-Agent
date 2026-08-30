@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from legacy_migration_agent.agent_runtime.correction import (
+    CorrectionAction,
     CorrectionAttemptEvidence,
     CorrectionController,
     CorrectionRequest,
@@ -33,11 +34,16 @@ from legacy_migration_agent.contracts import (
 )
 from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
+from legacy_migration_agent.platforms.salesforce_result_parsing import (
+    GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,
+)
 from legacy_migration_agent.workflow import (
     ApprovalSelection,
     ManifestApproval,
     WorkflowStatus,
     build_workflow,
+    manifest_decision_request,
+    manifest_digest,
 )
 
 
@@ -237,6 +243,41 @@ class RecoverableThenReadyRoles(DeterministicRoles):
         )
 
 
+class PlanInvalidRoles(DeterministicRoles):
+    def validator(
+        self,
+        migration_request: MigrationRequest,
+        manifest: MigrationManifest,
+        change_set: ChangeSet,
+        *,
+        attempt: int = 1,
+        correction: CorrectionAttemptEvidence | None = None,
+    ) -> ValidationReport:
+        report = super().validator(
+            migration_request,
+            manifest,
+            change_set,
+            attempt=attempt,
+            correction=correction,
+        )
+        result = report.results[0]
+        assert result.receipt is not None
+        failed = result.model_copy(
+            update={
+                "status": CheckStatus.FAILED,
+                "receipt": result.receipt.model_copy(update={"exit_code": 1}),
+                "summary": "Late validation exposed an omitted source dependency.",
+                "diagnostic_ids": (GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,),
+            }
+        )
+        return report.model_copy(
+            update={
+                "results": (failed,),
+                "disposition": ValidationDisposition.PLAN_INVALID,
+            }
+        )
+
+
 class ScopeExpandingRetryRoles(RecoverableThenReadyRoles):
     def engineer(
         self,
@@ -295,6 +336,39 @@ def test_pauses_after_architect_before_engineer() -> None:
     assert roles.architect_calls == ["request-1"]
     assert roles.engineer_calls == []
     assert roles.validator_calls == []
+
+
+def test_manifest_gate_exposes_controller_graph_assurance_binding() -> None:
+    migration_request = request()
+    legacy_manifest = DeterministicRoles().architect(migration_request)
+    report_digest = "sha256:" + "a" * 64
+    manifest = MigrationManifest.model_validate(
+        {
+            **legacy_manifest.model_dump(mode="json"),
+            "graph_assurance_report_digest": report_digest,
+            "graph_assurance_status": "assured",
+        }
+    )
+
+    decision = manifest_decision_request(
+        migration_request,
+        manifest,
+        manifest_digest(manifest),
+    )
+
+    assert "graph_assurance_status=assured" in decision.evidence
+    assert f"graph_assurance_report_digest={report_digest}" in decision.evidence
+
+
+def test_manifest_rejects_partial_graph_assurance_binding() -> None:
+    legacy_manifest = DeterministicRoles().architect(request())
+    with pytest.raises(ValueError, match="must be supplied together"):
+        MigrationManifest.model_validate(
+            {
+                **legacy_manifest.model_dump(mode="json"),
+                "graph_assurance_report_digest": "sha256:" + "a" * 64,
+            }
+        )
 
 
 def test_preflight_intervention_routes_terminal_without_approval_or_implementation() -> None:
@@ -530,6 +604,35 @@ def test_recoverable_report_requires_explicit_bound_attempt_2_and_cannot_replay(
             correction_approval,
             thread_id="bounded-retry",
         )
+
+
+def test_late_dependency_omission_replans_without_engineer_attempt_two() -> None:
+    roles = PlanInvalidRoles()
+    workflow = build_workflow(roles.architect, roles.engineer, roles.validator)
+    paused = workflow.start(request(), thread_id="plan-invalid-dependency")
+
+    result = workflow.resume(
+        approval_from_interrupt(paused),
+        thread_id="plan-invalid-dependency",
+    )
+    correction = CorrectionRequest.model_validate(result.value["correction_request"])
+
+    assert result.value["terminal_disposition"] is ValidationDisposition.PLAN_INVALID
+    assert correction.action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL
+    assert correction.next_attempt is None
+    assert correction.requires_new_manifest_digest is True
+    assert correction.requires_new_manifest_approval is True
+    assert correction.requires_graph_regeneration is True
+    with pytest.raises(
+        PolicyViolation, match="graph regeneration, a new manifest digest, and approval"
+    ):
+        CorrectionController.approve_retry(
+            correction,
+            presented_correction_id=correction.correction_id,
+            reviewer="reviewer-2",
+        )
+    assert roles.engineer_calls == ["request-1"]
+    assert roles.validator_calls == ["request-1"]
 
 
 def test_retry_rejects_tampered_evidence_binding_before_execution() -> None:

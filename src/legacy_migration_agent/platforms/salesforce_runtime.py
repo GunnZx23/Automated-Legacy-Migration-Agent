@@ -826,9 +826,7 @@ class SalesforceLocalValidator:
                     }:
                         assert verified_sandbox is not None
                         self._verify_verified_sandbox(verified_sandbox, candidate_root)
-                controller_jest_spec = resolve_salesforce_controller_jest_spec(
-                    self._scope.unit_id
-                )
+                controller_jest_spec = resolve_salesforce_controller_jest_spec(self._scope.unit_id)
                 controller_test_path = (
                     self._toolchain_root / controller_jest_spec.controller_test_path
                 )

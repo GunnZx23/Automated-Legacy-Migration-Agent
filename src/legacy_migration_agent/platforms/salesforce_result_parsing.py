@@ -46,6 +46,19 @@ SALESFORCE_LWC_JEST_COMMAND_ID: Final = "salesforce-lwc-jest"
 SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID: Final = "salesforce-lwc-controller-jest"
 SALESFORCE_WORKSPACE_FINGERPRINT_COMMAND_ID: Final = "salesforce-workspace-fingerprint"
 
+# These controller-owned diagnostics identify a defect in the approved source
+# dependency plan, not a defect that the Engineer may repair inside the already
+# approved generated-file boundary.  Keep the values platform-neutral so late
+# Salesforce and MuleSoft validators use one exact correction vocabulary.
+GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID: Final = "graph_dependency_omission"
+GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID: Final = "graph_dependency_incorrect"
+_PLAN_INVALID_GRAPH_DIAGNOSTIC_IDS: Final = frozenset(
+    {
+        GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,
+        GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,
+    }
+)
+
 SALESFORCE_MIN_CANDIDATE_LWC_JEST_TESTS: Final = 3
 _MAX_MODEL_FACING_JEST_FAILURE_TITLES: Final = 6
 _MAX_MODEL_FACING_JEST_TITLE_CHARS: Final = 120
@@ -79,9 +92,7 @@ def _summary_parser(
     parsers: Mapping[str, _SummaryParser] = {
         SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID: _candidate_summary,
         SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID: _dependency_summary,
-        SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID: partial(
-            _toolchain_summary, unit_id=unit_id
-        ),
+        SALESFORCE_TOOLCHAIN_CONTRACT_COMMAND_ID: partial(_toolchain_summary, unit_id=unit_id),
         SALESFORCE_LWC_JEST_COMMAND_ID: partial(
             _jest_summary, lwc_test_path=_candidate_lwc_test_path(unit_id)
         ),
@@ -585,9 +596,7 @@ def _controller_jest_failure_evidence(
             failed_titles.append(title)
     if len(failed_titles) != failed_tests:
         raise ValueError("controller Jest failed assertion inventory is inconsistent")
-    diagnostic_ids = tuple(
-        dict.fromkeys(diagnostic_by_title[title] for title in failed_titles)
-    )
+    diagnostic_ids = tuple(dict.fromkeys(diagnostic_by_title[title] for title in failed_titles))
     if not diagnostic_ids:
         diagnostic_ids = (SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,)
     return (
@@ -730,6 +739,12 @@ def _is_sha256(value: str) -> bool:
 
 def _disposition(results: tuple[CheckResult, ...]) -> ValidationDisposition:
     required = tuple(result for result in results if result.required)
+    if any(
+        result.status is CheckStatus.FAILED
+        and not _PLAN_INVALID_GRAPH_DIAGNOSTIC_IDS.isdisjoint(result.diagnostic_ids)
+        for result in required
+    ):
+        return ValidationDisposition.PLAN_INVALID
     if any(result.status is CheckStatus.FAILED for result in required):
         return ValidationDisposition.RECOVERABLE_FAILURE
     if any(result.status is CheckStatus.UNAVAILABLE for result in required):

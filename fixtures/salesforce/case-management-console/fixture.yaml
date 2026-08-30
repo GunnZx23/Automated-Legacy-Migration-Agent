@@ -15,17 +15,20 @@ source:
   root: input
   entrypoint: force-app/main/default/pages/LegacyCaseManagementConsole.page
   controller: force-app/main/default/classes/LegacyCaseManagementConsoleController.cls
+  query_service: force-app/main/default/classes/LegacyCaseQueryService.cls
   unit_test: force-app/main/default/classes/LegacyCaseConsoleCtrlTest.cls
   permission_set: force-app/main/default/permissionsets/CaseManagementConsoleUser.permissionset-meta.xml
 
 behavior:
   accounts:
     maximum: 50
+    retrieval: wired_cacheable
     order_by:
       - Name ASC
     includes_blank_option: true
   cases:
     maximum: 100
+    retrieval: imperative_noncacheable
     order_by:
       - CaseNumber DESC
     status_filter:
@@ -41,6 +44,8 @@ behavior:
       - Priority
       - Contact.Name
   interaction:
+    initial_guidance_before_selection: true
+    initial_guidance_accessibility: role_alert
     explicit_load_button: true
     load_disabled_without_selection: true
     blank_selection_warning: true
@@ -48,7 +53,12 @@ behavior:
     loading_state: true
     controlled_error_state: true
     stale_response_ignored_after_selection_change: true
+    status_change_clears_completed_empty_loading_and_error_state: true
+    stale_response_ignored_after_status_change: true
+    explicit_load_uses_selected_status_filter: true
     clear_selection_resets_results_and_shows_guidance: true
+    account_wire_error_clears_selection_results_loading_and_empty_state: true
+    account_wire_error_invalidates_pending_case_success_and_failure: true
 
 security:
   sharing_model: with_sharing
@@ -58,6 +68,22 @@ security:
     - Contact
     - Case
   permission_set_access: read_only
+  preserved_source_permission_fields:
+    - Case.AccountId
+    - Case.ContactId
+    - Case.Description
+    - Case.Priority
+    - Case.Subject
+  generated_target_permission_fields:
+    - Case.AccountId
+    - Case.ContactId
+    - Case.Description
+    - Case.Priority
+    - Case.Subject
+  non_permissionable_query_fields:
+    - Case.CaseNumber
+    - Case.Status
+    - Case.IsClosed
   dml_allowed: false
   external_calls: false
   secrets: false
@@ -71,7 +97,7 @@ validation:
     - id: controller-lwc-jest
       assertions:
         - Candidate-authored Jest tests execute as required evidence.
-        - The independent controller suite verifies rendered behavior and status-filter handling.
+        - The independent controller suite verifies initial guidance, Account-wire error resets, rendered behavior, immediate status-change reset, stale-response handling, and OPEN, CLOSED, and ALL request values.
       working_directory: isolated generated candidate
       command: controller-owned pinned Jest validation
   org_required_for_deployment_claim:

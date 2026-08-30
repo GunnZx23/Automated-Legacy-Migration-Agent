@@ -1,5 +1,21 @@
 # Capstone Completion Plan: Generalized Bounded Migration Units
 
+> **Historical design checkpoint.** This plan records an earlier expansion proposal and
+> is not the current submission contract. The implemented capstone intentionally exposes
+> three controller-owned bounded scenarios with frozen output inventories; it does not
+> implement the repository-wide dynamic naming, pagination, Case mutation, or detail-loading
+> ideas described below. [`CAPSTONE_SUBMISSION_PLAN.md`](CAPSTONE_SUBMISSION_PLAN.md) is the
+> current implementation north star.
+
+> **Facilitator addendum (2026-08-30).** The current runtime now inserts a
+> controller-owned deterministic `GraphAssuranceReport` between dependency-graph
+> construction and the Architect. This is bounded assurance for the supported
+> capstone scenarios, not a claim of universal static-analysis completeness.
+> Non-assured graphs stop before any model call; a dependency defect discovered
+> later is `PLAN_INVALID` and requires graph-and-assurance regeneration,
+> replanning, a new manifest digest, and new human approval rather than Engineer
+> attempt two.
+
 ## Outcome
 
 The capstone will demonstrate that the Automated Legacy Migration Agent can take
@@ -26,7 +42,9 @@ For the non-trivial slice, the system must:
 
 1. Accept a controller-approved migration-unit definition and selected legacy
    entry point.
-2. Discover and freeze the relevant dependency closure.
+2. Discover and freeze the relevant dependency closure, then produce an
+   `assured` revision- and graph-digest-bound `GraphAssuranceReport` before any
+   planning model call.
 3. Retrieve version-matched LLM Wiki guidance and record the retrieval trace.
 4. Produce a typed Architect proposal and a controller-validated manifest.
 5. Allow exact candidate paths only after the controller has derived them from a
@@ -187,6 +205,9 @@ Acceptance gate:
   permission dependencies.
 - Required-dependency recall is at least 95%, with no missed security-sensitive
   or shared-public-contract dependency.
+- Runtime graph assurance and benchmark dependency labels remain separate:
+  independently reviewed labels are evaluation oracles only and are never
+  exposed to the Architect, Engineer, or Validator.
 
 ### 4. Replace exact output inventories with a gated output policy
 
@@ -334,43 +355,53 @@ Acceptance gate:
   diff, and starts a new chat.
 - Refresh and recovery retain the correct unit and run.
 
-### 9. Replace the duplicated benchmark labels with real cases
+### 9. Complete the frozen benchmark-v2 evaluation
 
-The current evaluation matrix labels simple, medium, and complex cases while
-reusing one source root per platform. Replace those labels with distinct source
-snapshots or genuinely distinct entry points.
+The credible capstone corpus is the fixed 3 × 2 × 3 Wiki ablation in
+`evaluation/benchmark-v2/`: three genuinely distinct source roots, the same
+Claude workflow with and without curated Wiki content, and three repetitions.
+That produces exactly 18 planned live model-bearing cells:
 
-Minimum credible corpus:
+- Mule Customer Status — simple, predeclared `environment_unavailable` while
+  executable Maven/MUnit authority is absent.
+- Salesforce Account/Contact — medium, expected to reach
+  `ready_for_human_review` only when every required local check passes.
+- Salesforce Case Management plus inert risk seed — complex, expected to reach
+  `decision_required` before Engineer execution.
 
-- Salesforce simple: existing Account/Contact explorer.
-- Salesforce medium: new Case Management console.
-- Salesforce complex safety case: a distinct Case variant containing a shared
-  public contract or security-sensitive dependency that must produce
-  `DecisionRequest`.
-- Mule simple: a small, distinct DataWeave/subflow unit.
-- Mule medium: existing Customer Status API.
-- Mule complex safety case: a distinct shared API-contract or security-sensitive
-  variant that must produce `DecisionRequest`.
+The dependency set contains 65 labels. The frozen
+`migration-dependency-impact-v1` policy assigns each label an `impact_basis`;
+51 labels are high impact and 14 are low impact. The Mule
+case contributes 10 labels: seven production-impact dependencies and three
+supporting MUnit-evidence dependencies. Labels may become `reviewed` only through
+an independent, digest-bound `BenchmarkLabelReviewEvidence` artifact that names
+the reviewer and the exact review subject. BW supplied that evidence for the
+frozen subject, and the dependency-label projection and all three registry cases
+are now `independently_reviewed`. The raw source-edge extraction artifacts retain
+their original `initial_label_set` provenance.
 
-Complex safety variants need not be full successful migrations; their purpose is
-to prove intervention behavior. Each case must have a distinct source snapshot
-digest and expected dependency/decision evidence.
-
-Likely files:
-
-- `src/legacy_migration_agent/evaluation.py`
-- `evaluation/`
-- `fixtures/`
-- `tests/test_evaluation.py`
-- `tests/test_graph_evaluation.py`
+The Case intervention contract requires four typed hazards: destructive legacy
+deletion, sharing-boundary weakening, object/field-security (CRUD/FLS)
+weakening, and broad permission-scope expansion. Across six Case cells,
+typed-reason recall has a denominator of 24. Broad risk categories do not earn
+complete reason credit.
 
 Acceptance gate:
 
-- Evaluation rejects duplicate source identity masquerading as different
-  complexity cases.
-- Metrics are reported by platform and complexity.
-- Authorization violations remain zero, ready-state precision remains 100%, and
-  high-risk intervention recall remains 100% in the committed evaluation set.
+- The independently reviewed label artifact validates against all three cases
+  and the frozen high-impact policy.
+- All 18 live cells and their human rubrics are present and digest-bound to one
+  pre-run execution anchor.
+- Expected-outcome conformance is reported only as safe controller
+  disposition/evidence conformance, not migration success.
+- Mule `environment_unavailable` cells are excluded from first-pass and repair
+  rates. Required `runtime_validation_completion` remains `not_evaluated` and
+  blocking until actual MUnit completion is evidenced.
+- Every receipt binds any unavailable required command IDs from the final
+  controller-owned validation report.
+- Authorization violations and escaped high-impact defects are zero; dependency
+  and typed intervention metrics meet the thresholds in
+  `CAPSTONE_SUBMISSION_PLAN.md`.
 
 ## Verification sequence
 
@@ -384,13 +415,16 @@ complete and deterministic focused tests are green.
 4. Run the pinned LWC Jest harness locally.
 5. Run a recorded-model full workflow for both Salesforce units.
 6. Run one browser-driven end-to-end test for the new unit.
-7. Run one live `qwen3.8:latest` end-to-end migration of the new unit, targeting
-   first-pass success; if correction is offered, confirm it is evidence-directed
-   and file-scoped.
-8. If separately authorized, run check-only Salesforce validation against the
-   authenticated dev org and persist the terminal job receipt.
-9. Run the benchmark comparison and repeated nondeterministic trials only after
-   the live workflow is stable.
+7. Capture fresh first-class Claude Account/Contact and Case Management runs;
+   if correction is offered, confirm it is evidence-directed and file-scoped.
+8. Capture a current Mule candidate and independent static evidence. Run MUnit
+   only if the frozen runtime authority is actually available; otherwise retain
+   the required runtime gate as unavailable.
+9. Complete independent label review, freeze the execution anchor, run all 18
+   Wiki/no-Wiki cells with human gates, and derive the aggregate result from
+   verified receipts.
+10. Rerun the complete provider-free suite and 48-schema compatibility checks
+    after the final benchmark-contract changes.
 
 ## Final submission evidence
 
@@ -408,7 +442,8 @@ The final capstone demonstration should show:
 - Optional Salesforce check-only receipt.
 - Validator advisory and controller-owned final disposition.
 - A seeded high-risk case that pauses with `DecisionRequest`.
-- Benchmark results separated by platform and complexity.
+- Benchmark results separated by case, Wiki arm, and repetition, including
+  typed intervention-reason recall and the honest Mule runtime limitation.
 
 Update `README.md` only after behavior is verified so it remains the canonical
 technical description of what the repository actually supports. Update the final
@@ -432,60 +467,128 @@ Stop adding architecture when all of the following are true:
 Anything beyond this boundary is productionization and is not required for the
 capstone submission.
 
-## Completion status (2026-08-28)
+## Completion status (2026-08-30)
 
-All nine design changes are implemented and the harness now resolves three
-scenario units — `salesforce-vf-to-lwc`, `case-management-console`, and
+The bounded design required by the current submission contract is implemented.
+The repository-wide dynamic naming, pagination, Case mutation, and
+detail-loading ideas recorded in this historical plan remain intentionally
+deferred, as the warning above explains. The harness now resolves three scenario
+units — `salesforce-vf-to-lwc`, `case-management-console`, and
 `mulesoft-mule3-to-mule4` — through one shared recipe, analyzer, validator
 factory, and set of Architect/Engineer/Validator prompts. Status against the
 stop condition:
 
-- **Existing Account/Contact migration still works** — verified (full suite
-  green; recorded, live, and org evidence unchanged).
+The current runtime bindings use `architect/v17` at
+`sha256:581db7f4caf415204c464b647a3f6636f104f5ae261caee5dde7d56385d932a5`,
+`engineer/v30` at
+`sha256:38fed22ed93704f208a4813c1954d0d4872de4c8de252b29057e66dffd2beeb0`,
+and `validator/v5` at
+`sha256:e2600215c92fd5bc34768c447788fcf5a20ef6470e85115835afc59f380f39f9`.
+
+- **Existing Account/Contact migration still works** — verified through a
+  fresh first-class Claude product-path run on attempt 1: all seven checks,
+  9/9 candidate-authored Jest tests, and 10/10 controller-owned Jest tests
+  passed. The candidate reached `ready_for_human_review`; independent final
+  review and any fresh Claude org validation remain separate.
 - **Non-trivial Case migration works through the same shared workflow** —
-  verified deterministically: the recorded-model workflow test and a
-  browser-driven run both reach `ready_for_human_review` with all seven required
-  Salesforce local checks passing on the real Jest/sandbox toolchain, and the
-  candidate is accepted and exportable.
+  verified through the first-class Claude product path. An earlier recovery
+  run's attempt 1 passed 17/19 controller Jest tests; the evidence-directed
+  attempt-2 correction changed only `caseManagementConsole.html` and
+  `caseManagementConsole.js`, then passed all seven checks, 11/11 candidate
+  Jest tests, and 19/19 controller Jest tests. That recovery candidate still
+  awaits independent review. A separate final interactive run passed all seven
+  checks, 7/7 candidate Jest tests, and 19/19 controller Jest tests on attempt
+  1; BW independently accepted only that exact candidate, diff, and test
+  evidence. No org result is claimed for either candidate.
 - **No shared runtime or agent prompt requires either fixture's
   class/component names** — verified (design change 6; unit specifics flow
   through typed runtime context and per-unit registries keyed by unit ID that
   fail closed on unknown units).
 - **Candidate validated by behavior, not golden code** — verified (per-unit
-  controller-owned Jest suites: nine behaviors for Account/Contact, twelve for
+  controller-owned Jest suites: ten tests for Account/Contact, nineteen for
   Case Management).
 - **Scenario identity and safety authority bound across UI, persistence,
   correction, export, and review** — verified (per-unit launch contract,
   presets, runtime scopes, closure/profile specs).
-- **Cross-platform Mule slice remains working** — verified.
-- **Honest, reproducible evidence** — verified. Full Python suite: 1328 passed,
-  0 failed. Browser E2E driver: `tooling/e2e/case_browser_e2e.md`.
+- **Cross-platform Mule slice remains structurally supported** — verified at the
+  source-graph and validation-contract level. A fresh first-class Claude run
+  generated the exact six-file candidate on attempt 1: three checks passed,
+  none failed, and the toolchain/MUnit checks were unavailable, so the
+  controller stopped at `environment_unavailable` without retry. Executable
+  MUnit evidence remains outstanding.
+- **Honest, reproducible harness evidence** — the complete current tree passed
+  2,111 tests in 604.41 seconds (0:10:04) on 2026-08-30 with no failures or
+  skips when ephemeral loopback binding was authorized. Ruff format checked 126
+  Python files under `src/` and `tests/`, Ruff lint passed, mypy checked 70
+  source files, and the 60-package lockfile, exactly-three-agent registry,
+  source distribution, and wheel checks passed. The tracked sanitized product-run checkpoint is
+  [`evaluation/submission-evidence/20260830/`](evaluation/submission-evidence/20260830/).
+  This is product/harness evidence, not aggregate
+  benchmark or external platform validation.
 
 ### Verification-sequence outcome
 
-Steps 1–6 pass. **Step 7** (live `qwen3.8:latest` end-to-end for the new unit)
-was attempted and is an honest **negative**: the live Architect (conversation
-and ~303 s manifest proposal) succeeded, but the Engineer's eleven-file output
-failed the typed `EngineerModelOutcome` contract with one schema validation
-error, so the harness fail-closed (`controlled_failure`, non-retry-eligible, no
-candidate written, validation never run). At temperature zero this outcome is
-deterministic, so a plain retry would not change it. The shared Engineer prompt
-was deliberately **not** tuned toward the Case answer — doing so would violate
-design change 6 and risk golden-output leakage. The Account/Contact unit remains
-the only unit with a successful live migration and external platform evidence;
-the Case unit demonstrates the harness's generalization and fail-closed contract
-rather than live model success. **Steps 8–9** (Case org check-only; statistical
-benchmark) remain out of scope / `not_performed` and are not claimed.
+Steps 1–6 produced the frozen provider-free harness evidence described above.
+An earlier live `qwen3.8:latest` Case attempt was an honest negative: Architect
+completed, but Engineer failed the typed `EngineerModelOutcome` contract, so no
+candidate or validation was produced. That historical local-model result is not
+the current submission provider and is not benchmark-v2 evidence. Verification
+step 7 is now complete: fresh first-class Claude Account/Contact and Case runs
+produced durable tracked receipts. BW later accepted only the separate final
+interactive attempt-1 Case candidate (7/7 candidate Jest tests; change-set
+digest
+`sha256:65a155e57d6ea2f993ddd5abe34224474dd311b89bce3bed6129a56a63e0f1b0`).
+Account/Contact and the earlier attempt-2 recovery Case candidate (11/11
+candidate Jest tests) remain outside that attestation and await independent
+review. Step 8 is complete at the honest available boundary:
+the fresh Claude Mule run produced a six-file candidate and static evidence,
+then stopped at `environment_unavailable` because executable Maven/MUnit
+authority remains absent. Neither product run is substituted for a benchmark
+cell.
 
-### Known caveat carried forward
+Step 9 is complete at its honest measured boundary. The first campaign remains quarantined as an
+invalid pilot under archive SHA-256
+`a7d15b41dbab1be18a924457a30ddd636730cfe8ce9514a44f60efae408936f5`.
+BW reviewed the frozen 65-label subject (51 high and 14 low) and all 18
+corrected campaign outputs. The corrected campaign completed 18/18 verified
+terminal bundles: 5 `ready_for_human_review`, 4 `recoverable_failure`, 2
+`environment_unavailable`, 1 `controlled_failure`, and 6 `decision_required`.
+All nine no-Wiki cells cleared the former Architect policy rejection. The
+campaign is bound to anchor
+`sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8`
+and runtime identity
+`sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c`;
+its raw archive is `output/benchmark-v2-corrected-campaign-20260830.tar.gz`
+with SHA-256
+`f6a2e2ac0672a7631c0b6331e41a896574933c8704e2eb7707222ee5eeae1336`.
+The independently checked v2 review-packet archive has SHA-256
+`425fadd39e12b62226041f1a0bb8d95e100c1dd1ae5fc1846ec8b736e4232bae`.
+The bound rubrics record acceptance and semantic conformance for all 18 cells,
+no escaped defects, 390/390 dependency recall, and zero missed high-impact
+dependencies. Assertion-level Wiki support was unavailable. Expected-outcome
+conformance was 13/18 and Mule runtime validation remained unavailable, so the
+measured quality gate is false and no Wiki-benefit conclusion is claimed. The
+campaign predates the current `GraphAssuranceReport` runtime stage and remains
+historical evaluation evidence rather than proof of assurance use. Step 10
+passed at the final checkpoint:
+2,111 tests in 604.41 seconds (0:10:04) plus Ruff format/lint, mypy, the 60-package
+lockfile, exactly-three-agent, and package-build checks passed. The supplied
+course template was filled as the six-page A4 PDF
+`output/pdf/Final Capstone Report Planning - Automated Legacy Migration Agent -
+2026-08-30 interactive-final.pdf`. All 10 canonical fields and widget
+appearances passed form readback, every rendered page passed visual inspection,
+and the tracked submission receipt binds its SHA-256. Its answers include the
+completed BW Case and 18-cell reviews, the historical benchmark boundary, and
+the final quality gate. No publication action has been taken.
 
-The regex-based controller-test null-coverage assertion (`_check_controller_test`)
-matches a call whose entire argument list is exactly `null`, so the synthetic
-Apex test double calls one-argument `getCases(null)` even though the real Case
-service method is two-argument. This mirrors the Account/Contact `getContacts(null)`
-precedent and is acceptable within scope — local checks are regex-based and org
-deployment is explicitly out of scope — but it would need addressing before any
-real Case org-deployment claim.
+### Salesforce environment boundary
+
+The Case candidate factory now uses the signature-correct
+`getCases(null, 'OPEN')` call, avoids assigning the read-only `Case.IsClosed`
+field, and is covered by an arity-aware controller-test contract. Local static,
+Apex-structure, and LWC Jest checks still do not constitute Salesforce org
+compilation, deployment, or user-acceptance evidence; those environment-bound
+layers remain explicitly unperformed.
 
 Not performed by policy: no git commit, push, pull request, deployment, or org
 mutation was made by this work; those remain human-owned actions.

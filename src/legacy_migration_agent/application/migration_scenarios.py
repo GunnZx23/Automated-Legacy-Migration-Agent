@@ -53,7 +53,7 @@ from legacy_migration_agent.platforms.salesforce_runtime import (
     SALESFORCE_TARGET_RUNTIME,
 )
 
-_KNOWLEDGE_AS_OF: Final = date(2026, 8, 27)
+_KNOWLEDGE_AS_OF: Final = date(2026, 8, 29)
 SALESFORCE_RECIPE_ID: Final = "salesforce-visualforce-to-lwc"
 MULESOFT_RECIPE_ID: Final = "mulesoft-mule3-to-mule4"
 SALESFORCE_INITIAL_WIKI_EXACT_IDS: Final = (
@@ -72,18 +72,23 @@ SALESFORCE_INITIAL_WIKI_EXACT_IDS: Final = (
 SALESFORCE_WIKI_QUERY: Final = "Visualforce LWC Apex security Jest migration " + " ".join(
     SALESFORCE_INITIAL_WIKI_EXACT_IDS
 )
-# The Case unit reuses the two shared platform signals but pins only the four
-# Case-specific controller-jest diagnostics (account scoping, status filter,
-# keyed results, and clear action). Requesting the full twelve-id controller
-# vocabulary would exceed the bounded per-page wiki excerpt limit; these six
-# ids resolve across three pages with every excerpt within the content bound.
+# The Case unit pins four Case-specific controller-jest diagnostics plus the
+# shared Account-error/reset, initial-guidance, blank-selection, and
+# plain-JavaScript diagnostics. Requesting the full controller vocabulary would
+# exceed the bounded per-page wiki excerpt limit; these ids resolve exactly the
+# shared VF/LWC, validation, and Case pages. Security remains controller-owned in
+# the fixed implementation contract rather than consuming another retrieval page.
 CASE_INITIAL_WIKI_EXACT_IDS: Final = (
     "controller_jest_status_default",
     "controller_jest_case_results",
     "controller_jest_cases_error",
     "controller_jest_clear_selection",
     "salesforce_lwc_javascript_contract",
-    "apex_public_interface_annotation_mismatch",
+    "controller_jest_account_error",
+    "controller_jest_initial_guidance",
+    "controller_jest_account_error_reset",
+    "controller_jest_account_error_stale_response",
+    "controller_jest_blank_selection",
 )
 CASE_WIKI_QUERY: Final = "Visualforce LWC Apex security Jest migration " + " ".join(
     CASE_INITIAL_WIKI_EXACT_IDS
@@ -324,6 +329,7 @@ _UNITS: Final[tuple[MigrationScenario, ...]] = (
             "LegacyAccountContactExplorerController.cls) to an additive Lightning Web "
             "Component and Apex implementation. Preserve account selection, an explicit "
             "contact-loading action, visible loading, empty, and safe-error states, "
+            "clear prior contact state and invalidate pending work whenever the account changes, "
             "stale-response protection, sharing "
             "and field-security controls, and include Apex and LWC Jest tests."
         ),
@@ -362,8 +368,12 @@ _UNITS: Final[tuple[MigrationScenario, ...]] = (
             "(LegacyCaseManagementConsole.page, LegacyCaseManagementConsoleController.cls and "
             "LegacyCaseQueryService.cls) to an additive Lightning Web Component and Apex "
             "implementation. Preserve account selection, a status filter defaulting to Open, an "
-            "explicit case-loading action, keyed case results, visible loading, empty, and "
-            "safe-error states, stale-response protection, an explicit clear action, sharing and "
+            "explicit case-loading action with OPEN, CLOSED, and ALL behavior, keyed case results, "
+            "initial selection guidance, visible loading, empty, and safe-error states, clear "
+            "prior case state and invalidate pending work whenever the account or status changes, "
+            "reset selection and Case state and invalidate pending work if the Account wire "
+            "transitions to error, stale-response protection, an "
+            "explicit clear action, sharing and "
             "field-security controls, and include Apex and LWC Jest tests."
         ),
         display_source_artifacts=(
@@ -399,7 +409,9 @@ _UNITS: Final[tuple[MigrationScenario, ...]] = (
         title="Mule 3 to Mule 4",
         canonical_description=(
             "Migrate the bounded Mule 3 customer-status API slice to an additive Mule 4 "
-            "application with a controller-owned validation boundary."
+            "application. Preserve GET /api/customers/{customerId}/status behavior, use "
+            "DataWeave 2, standalone Maven configuration, and target MUnit tests, retain the "
+            "controller-owned validation boundary, and preserve the Mule 3 source."
         ),
         display_source_artifacts=("customer-status-api.xml", "customer-status-api-test.xml"),
         target_summary=(
@@ -462,9 +474,7 @@ def migration_scenarios() -> tuple[MigrationScenario, ...]:
 def migration_units_for_platform(platform: Platform) -> tuple[MigrationScenario, ...]:
     """Return every registered unit for ``platform`` in display order."""
 
-    return tuple(
-        scenario for scenario in _SCENARIOS.values() if scenario.platform is platform
-    )
+    return tuple(scenario for scenario in _SCENARIOS.values() if scenario.platform is platform)
 
 
 def migration_scenario(platform: Platform) -> MigrationScenario:

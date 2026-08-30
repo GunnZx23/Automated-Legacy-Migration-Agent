@@ -488,6 +488,60 @@ describe('controller-owned account contact explorer behavior', () => {
         expect(loadingIndicator(element)).toBeUndefined();
     });
 
+    it('controller: resets completed and error state on nonblank account change', async () => {
+        arrangeAccountsSuccess();
+        getContacts
+            .mockResolvedValueOnce(CONTACTS)
+            .mockResolvedValueOnce([])
+            .mockRejectedValueOnce(new Error('SELECT Id FROM Contact'));
+        const element = createComponent();
+        getAccounts.emit(ACCOUNTS);
+        await flushPromises();
+
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+        loadContacts(element);
+        await flushPromises();
+        await flushPromises();
+        expect(hasContactResults(element)).toBe(true);
+
+        selectAccount(element, ACCOUNTS[1].Id);
+        await flushPromises();
+        expect(hasContactResults(element)).toBe(false);
+        expect(contactResult(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(alertText(element)).toBe('');
+        expect(getContacts).toHaveBeenCalledTimes(1);
+
+        loadContacts(element);
+        await flushPromises();
+        await flushPromises();
+        expect(emptyStateVisible(element)).toBe(true);
+
+        selectAccount(element, ACCOUNTS[0].Id);
+        await flushPromises();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(contactResult(element)).toBeUndefined();
+        expect(alertText(element)).toBe('');
+        expect(getContacts).toHaveBeenCalledTimes(2);
+
+        loadContacts(element);
+        await flushPromises();
+        await flushPromises();
+        expect(alertText(element)).not.toBe('');
+        expect(alertText(element)).not.toContain('SELECT Id FROM Contact');
+
+        selectAccount(element, ACCOUNTS[1].Id);
+        await flushPromises();
+        expect(hasContactResults(element)).toBe(false);
+        expect(contactResult(element)).toBeUndefined();
+        expect(emptyStateVisible(element)).toBe(false);
+        expect(loadingIndicator(element)).toBeUndefined();
+        expect(alertText(element)).toBe('');
+        expect(getContacts).toHaveBeenCalledTimes(3);
+    });
+
     it('controller: clears results and disables Load for blank selection', async () => {
         arrangeAccountsSuccess();
         getContacts.mockResolvedValue(CONTACTS);

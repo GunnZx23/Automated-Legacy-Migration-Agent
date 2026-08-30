@@ -101,6 +101,11 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
           "title": "Request Id",
           "type": "string"
+        },
+        "requires_graph_regeneration": {
+          "default": false,
+          "title": "Requires Graph Regeneration",
+          "type": "boolean"
         }
       },
       "required": [
@@ -204,6 +209,7 @@
                 "workspace_scope_mismatch",
                 "workspace_not_clean",
                 "attempt_two_scope_expansion_invalid",
+                "output_evidence_local_path",
                 "policy_rejected",
                 "provider_timeout",
                 "provider_unavailable",
@@ -329,6 +335,32 @@
           "title": "Decision Id",
           "type": "string"
         },
+        "graph_assurance_report_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Report Digest"
+        },
+        "graph_assurance_status": {
+          "anyOf": [
+            {
+              "const": "assured",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Status"
+        },
         "kind": {
           "const": "manifest_approval",
           "default": "manifest_approval",
@@ -450,6 +482,36 @@
         }
       ],
       "default": null
+    },
+    "graph_assurance_report_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Assurance Report Digest"
+    },
+    "graph_assurance_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "assured",
+            "review_required",
+            "blocked"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Assurance Status"
     },
     "interrupt": {
       "anyOf": [

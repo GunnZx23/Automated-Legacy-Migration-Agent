@@ -63,6 +63,10 @@ from legacy_migration_agent.platforms.local_checks import (
     SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,
     SALESFORCE_IMPLEMENTATION_CONTRACT,
 )
+from legacy_migration_agent.platforms.salesforce_result_parsing import (
+    GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,
+    GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,
+)
 from legacy_migration_agent.platforms.salesforce_runtime import (
     SALESFORCE_API_RUNTIME,
     SALESFORCE_CANDIDATE_CONTRACT_COMMAND_ID,
@@ -1396,7 +1400,7 @@ def test_real_pinned_jest_runs_under_resolved_node_sandbox(tmp_path: Path) -> No
         assert jest.receipt is not None and jest.receipt.exit_code == 0
         assert "tests=10 evidence-role=supplemental" in jest.summary
         assert controller_jest.receipt is not None and controller_jest.receipt.exit_code == 0
-        assert "tests=9 independent-of-candidate-tests=true" in controller_jest.summary
+        assert "tests=10 independent-of-candidate-tests=true" in controller_jest.summary
         assert validator._probe_python == Path(validator._controller_python_binding.resolved_path)
         assert Path(validator._node_binding.resolved_path) == validator._node_executable
         assert not (case.workspace.root / "package.json").exists()
@@ -1481,7 +1485,7 @@ def test_real_pinned_jest_accepts_alternate_private_state_markup_and_safe_copy(
         assert "tests=10 evidence-role=supplemental" in jest.summary
         assert controller_jest.status is CheckStatus.PASSED
         assert controller_jest.receipt is not None and controller_jest.receipt.exit_code == 0
-        assert "tests=9 independent-of-candidate-tests=true" in controller_jest.summary
+        assert "tests=10 independent-of-candidate-tests=true" in controller_jest.summary
         assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
 
 
@@ -1514,7 +1518,7 @@ def test_real_pinned_jest_accepts_aria_listbox_and_accessible_contact_cards(
         assert candidate_jest.status is CheckStatus.PASSED
         assert "tests=3 evidence-role=supplemental" in candidate_jest.summary
         assert controller_jest.status is CheckStatus.PASSED
-        assert "tests=9 independent-of-candidate-tests=true" in controller_jest.summary
+        assert "tests=10 independent-of-candidate-tests=true" in controller_jest.summary
         assert report.disposition is ValidationDisposition.READY_FOR_HUMAN_REVIEW
 
 
@@ -1581,7 +1585,7 @@ def test_controller_jest_harness_accepts_aria_listbox_and_accessible_contact_car
     assert controller_completed.returncode == 0, (
         controller_completed.stdout + controller_completed.stderr
     )
-    assert "9 passed" in controller_completed.stderr
+    assert "10 passed" in controller_completed.stderr
 
 
 def _run_controller_jest_harness(
@@ -1629,7 +1633,7 @@ def test_controller_jest_harness_accepts_disabled_pending_load_and_unique_row_ke
     completed = _run_controller_jest_harness(tmp_path, salesforce_candidate_outputs())
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "9 passed" in completed.stderr
+    assert "10 passed" in completed.stderr
 
 
 def test_controller_jest_harness_accepts_enabled_pending_load_with_stale_guard(
@@ -1649,7 +1653,7 @@ def test_controller_jest_harness_accepts_enabled_pending_load_with_stale_guard(
     completed = _run_controller_jest_harness(tmp_path, outputs)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "9 passed" in completed.stderr
+    assert "10 passed" in completed.stderr
 
 
 def test_controller_jest_harness_rejects_duplicate_datatable_row_keys(
@@ -2059,7 +2063,7 @@ def test_controller_owned_jest_success_is_bound_to_immutable_suite(
 
     summary = _controller_jest_summary(execution, candidate, controller_test)
 
-    assert "tests=9 independent-of-candidate-tests=true" in summary
+    assert "tests=10 independent-of-candidate-tests=true" in summary
     assert all(title not in summary for title in SALESFORCE_CONTROLLER_LWC_BEHAVIOR_TITLES)
 
 
@@ -2188,6 +2192,50 @@ def test_controller_jest_failure_remains_authoritative_after_candidate_false_gre
     assert salesforce_runtime._disposition((candidate_result, controller_result)) is (
         ValidationDisposition.RECOVERABLE_FAILURE
     )
+
+
+@pytest.mark.parametrize(
+    ("command_id", "diagnostic_ids", "expected"),
+    (
+        (
+            SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID,
+            (GRAPH_DEPENDENCY_OMISSION_DIAGNOSTIC_ID,),
+            ValidationDisposition.PLAN_INVALID,
+        ),
+        (
+            SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID,
+            (GRAPH_DEPENDENCY_INCORRECT_DIAGNOSTIC_ID,),
+            ValidationDisposition.PLAN_INVALID,
+        ),
+        (
+            SALESFORCE_DEPENDENCY_CLOSURE_COMMAND_ID,
+            (),
+            ValidationDisposition.RECOVERABLE_FAILURE,
+        ),
+        (
+            SALESFORCE_CONTROLLER_LWC_JEST_COMMAND_ID,
+            (SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID,),
+            ValidationDisposition.RECOVERABLE_FAILURE,
+        ),
+    ),
+)
+def test_salesforce_disposition_reserves_plan_invalid_for_exact_graph_diagnostics(
+    command_id: str,
+    diagnostic_ids: tuple[str, ...],
+    expected: ValidationDisposition,
+) -> None:
+    execution = _jest_execution("{}", exit_code=1, tool_id=command_id)
+    failed = CheckResult(
+        check_id=command_id,
+        command_id=command_id,
+        required=True,
+        status=CheckStatus.FAILED,
+        receipt=execution.receipt,
+        summary="Controller-observed terminal validation failure.",
+        diagnostic_ids=diagnostic_ids,
+    )
+
+    assert salesforce_runtime._disposition((failed,)) is expected
 
 
 def test_controller_owned_jest_rejects_candidate_suite_path_substitution(

@@ -54,6 +54,17 @@ class LiveModelApproval(StrictModel):
     allow_live_api: Literal[True]
     allow_prompt_data_sharing: Literal[True]
     approved_by: str = Field(min_length=1, max_length=160)
+    approved_remote_provider_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[^\x00\r\n]+$",
+        exclude_if=lambda value: value is None,
+        description=(
+            "Authenticated remote provider explicitly approved by the operator. "
+            "Required by provider-managed CLI adapters before source is sent."
+        ),
+    )
 
 
 class StructuredModelClient(Protocol):
@@ -106,7 +117,12 @@ class ModelUsageEvidence(StrictModel):
 
 
 class ModelCallRecord(StrictModel):
-    """Digest-only public evidence for one structured model invocation."""
+    """Digest-only public evidence for one structured model invocation.
+
+    ``output_digest`` commits to the provider's schema-valid structured response.
+    It does not claim that controller-owned secret, scope, or policy checks accepted
+    that response as a role artifact.
+    """
 
     provider: str = Field(min_length=1, max_length=160)
     model_id: str = Field(min_length=1, max_length=300)
@@ -135,7 +151,8 @@ class ModelCallRecord(StrictModel):
         exclude_if=lambda value: value is None,
         description=(
             "Digest binding the configured runtime identity. For a remote CLI this covers "
-            "the executable version, model alias, and authenticated provider, not model weights."
+            "the canonical executable path and bytes, CLI version, model alias, retained "
+            "routing environment, and authenticated provider, not model weights."
         ),
     )
     live_approval: LiveModelApproval | None = None
@@ -302,6 +319,59 @@ def verify_model_call_record(
     remote runtimes retain their separately validated approval and boundary facts.
     """
 
+    mismatches = _model_call_input_mismatches(
+        record,
+        agent_version=agent_version,
+        agent_definition_digest=agent_definition_digest,
+        system_prompt=system_prompt,
+        input_value=input_value,
+    )
+    if record.output_digest != artifact_digest(output_value):
+        mismatches.append("output")
+    if mismatches:
+        raise ModelEvidenceError(
+            "model-call evidence does not match the replay boundary: " + ", ".join(mismatches)
+        )
+
+
+def verify_model_call_record_input(
+    record: ModelCallRecord,
+    *,
+    agent_version: str,
+    agent_definition_digest: Sha256Digest,
+    system_prompt: str,
+    input_value: BaseModel,
+) -> None:
+    """Verify invocation identity and input without asserting output acceptance.
+
+    This is the replay boundary for a schema-valid provider response that was
+    subsequently rejected by controller policy. Its ``output_digest`` remains an
+    immutable commitment, but the rejected output is deliberately not persisted.
+    """
+
+    mismatches = _model_call_input_mismatches(
+        record,
+        agent_version=agent_version,
+        agent_definition_digest=agent_definition_digest,
+        system_prompt=system_prompt,
+        input_value=input_value,
+    )
+    if mismatches:
+        raise ModelEvidenceError(
+            "model-call evidence does not match the replay boundary: " + ", ".join(mismatches)
+        )
+
+
+def _model_call_input_mismatches(
+    record: ModelCallRecord,
+    *,
+    agent_version: str,
+    agent_definition_digest: Sha256Digest,
+    system_prompt: str,
+    input_value: BaseModel,
+) -> list[str]:
+    """Return fixed mismatch labels for the input side of one model call."""
+
     mismatches: list[str] = []
     if record.agent_version != agent_version:
         mismatches.append("agent version")
@@ -311,14 +381,9 @@ def verify_model_call_record(
         mismatches.append("system prompt")
     if record.input_digest != artifact_digest(input_value):
         mismatches.append("input")
-    if record.output_digest != artifact_digest(output_value):
-        mismatches.append("output")
     if record.resolved_execution_boundary == "remote_no_store" and not record.store_false_sent:
         mismatches.append("live provider storage control")
-    if mismatches:
-        raise ModelEvidenceError(
-            "model-call evidence does not match the replay boundary: " + ", ".join(mismatches)
-        )
+    return mismatches
 
 
 class OpenAIResponsesModelClient:

@@ -1,0 +1,29 @@
+{
+  "schema_version": "2.0",
+  "registry_id": "legacy-migration-benchmark-v2",
+  "protocol_status": "predeclared_not_executed",
+  "case_count": 3,
+  "configuration_count": 2,
+  "repetitions_per_case_configuration": 3,
+  "planned_live_cells": 18,
+  "cases": [
+    "mulesoft-customer-status-simple",
+    "salesforce-account-contact-medium",
+    "salesforce-case-management-complex-risk"
+  ],
+  "configurations": [
+    "full-agent-wiki",
+    "full-agent-no-wiki"
+  ],
+  "source_snapshots_path": "evaluation/benchmark-v2/source-snapshots.json",
+  "source_snapshots_digest": "sha256:2fbcdabc3f0b7230955a2d21ec2d616cfc2b62ba2d1ed87af33bf8d8ab5a7c74",
+  "runtime_bindings_path": "evaluation/benchmark-v2/runtime-bindings.json",
+  "runtime_bindings_digest": "sha256:f7634ea7c3bd3cd84dc2192ee45a6e4a607ad556964475dba0b5ac2f8cc28fda",
+  "dependency_labels_path": "evaluation/benchmark-v2/dependency-labels.json",
+  "dependency_labels_digest": "sha256:080e9c860b9dc9c2bf01391b28e8b231edf99ff7a485d305e01f6733d8e42d62",
+  "risk_seed_path": "evaluation/benchmark-v2/risk-seed.json",
+  "risk_seed_digest": "sha256:839c50fd107a2e813a0c1b083d68ad32f022994d560898a362224ee7e7359455",
+  "result_receipts_status": "not_performed",
+  "result_receipts": [],
+  "claim_boundary": "One synthetic case per complexity stratum; no population-level or production generalization is permitted."
+}

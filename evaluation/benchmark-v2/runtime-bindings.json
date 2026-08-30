@@ -1,0 +1,84 @@
+{
+  "schema_version": "2.0",
+  "provider_id": "claude-cli",
+  "model_id": "claude-sonnet-5",
+  "agent_definitions": {
+    "architect": {
+      "version": "architect/v17",
+      "definition_digest": "sha256:581db7f4caf415204c464b647a3f6636f104f5ae261caee5dde7d56385d932a5"
+    },
+    "engineer": {
+      "version": "engineer/v30",
+      "definition_digest": "sha256:38fed22ed93704f208a4813c1954d0d4872de4c8de252b29057e66dffd2beeb0"
+    },
+    "validator": {
+      "version": "validator/v5",
+      "definition_digest": "sha256:e2600215c92fd5bc34768c447788fcf5a20ef6470e85115835afc59f380f39f9"
+    }
+  },
+  "prompt_policy": {
+    "agent_definition_digests": {
+      "architect": "sha256:581db7f4caf415204c464b647a3f6636f104f5ae261caee5dde7d56385d932a5",
+      "engineer": "sha256:38fed22ed93704f208a4813c1954d0d4872de4c8de252b29057e66dffd2beeb0",
+      "validator": "sha256:e2600215c92fd5bc34768c447788fcf5a20ef6470e85115835afc59f380f39f9"
+    },
+    "scenario_definition_digests": {
+      "mulesoft-mule3-to-mule4": "sha256:97e1a041470b4e0e04c6fa35462c6e2fa2b89705afe78e934e351abe0252302c",
+      "salesforce-vf-to-lwc": "sha256:82651fe4c8cd75ccd4a35302135840861f6caffac33a384e62aea2b913545889",
+      "case-management-console": "sha256:3fcca20a77bdfdeb48528190b781f1d7295b81d5ab574370dbfad0dbd20855d2"
+    },
+    "wiki_catalog_file_digest": "sha256:50e01f0c7395cd528b52b7f1ab511783a8f45c13ac907d2d3a4cbde8ad8453de",
+    "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+  },
+  "validation_policy": {
+    "scenarios": {
+      "mulesoft-mule3-to-mule4": {
+        "definition_digest": "sha256:97e1a041470b4e0e04c6fa35462c6e2fa2b89705afe78e934e351abe0252302c",
+        "scope_policy_digest": "sha256:e9e361498109797c655aad121a2f8e663bd03956908930013338d1b4096f4793",
+        "allowed_validation_command_ids": [
+          "mulesoft-candidate-contract",
+          "mulesoft-dependency-closure",
+          "mulesoft-toolchain-contract",
+          "mulesoft-munit",
+          "mulesoft-workspace-fingerprint"
+        ]
+      },
+      "salesforce-vf-to-lwc": {
+        "definition_digest": "sha256:82651fe4c8cd75ccd4a35302135840861f6caffac33a384e62aea2b913545889",
+        "scope_policy_digest": "sha256:2fa243e6d70ac7a3574efcec42cb29f3c610f160aec357a2382198a322c7bc28",
+        "allowed_validation_command_ids": [
+          "salesforce-candidate-contract",
+          "salesforce-dependency-closure",
+          "salesforce-toolchain-contract",
+          "salesforce-jest-sandbox-probe",
+          "salesforce-lwc-jest",
+          "salesforce-lwc-controller-jest",
+          "salesforce-workspace-fingerprint"
+        ]
+      },
+      "case-management-console": {
+        "definition_digest": "sha256:3fcca20a77bdfdeb48528190b781f1d7295b81d5ab574370dbfad0dbd20855d2",
+        "scope_policy_digest": "sha256:c03ed7fd80f0649da70b9bbd3a5557fbd95d48d2289ee14bf7b7838dbf79a378",
+        "allowed_validation_command_ids": [
+          "salesforce-candidate-contract",
+          "salesforce-dependency-closure",
+          "salesforce-toolchain-contract",
+          "salesforce-jest-sandbox-probe",
+          "salesforce-lwc-jest",
+          "salesforce-lwc-controller-jest",
+          "salesforce-workspace-fingerprint"
+        ]
+      }
+    }
+  },
+  "environment_conditions": [
+    {
+      "case_id": "mulesoft-customer-status-simple",
+      "evidence_path": "tooling/mulesoft-runtime/authority.json",
+      "evidence_file_digest": "sha256:144e2b59c917c6703bb167d2d5514a1d8c73612854fa72a025c1b59172db3b90",
+      "capability": "mule_runtime_maven_munit",
+      "observed_availability": "unavailable",
+      "expected_disposition": "environment_unavailable"
+    }
+  ]
+}

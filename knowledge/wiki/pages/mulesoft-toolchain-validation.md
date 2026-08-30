@@ -6,6 +6,27 @@ Mule Maven Plugin 4.10.1 and MUnit 3.7.3 both document Maven 3.9.0–3.9.15;
 remain inside that intersection and record the resolved Maven executable and
 version. Keep `pom.xml` and `mule-artifact.json` aligned with the pins.
 
+The generated POM must be a standalone active project model: declare direct
+`modelVersion`, `groupId`, `artifactId`, and `version` values on the project,
+then declare the allowlisted dependencies under the direct project
+`dependencies`, the allowlisted plugins under direct `build/plugins`, and the
+MuleSoft release URLs under direct `repositories` and `pluginRepositories`.
+The direct `mule-maven-plugin` declaration must activate the pinned runtime
+through exactly one configuration binding:
+
+```xml
+<configuration>
+    <runtimeVersion>${app.runtime}</runtimeVersion>
+</configuration>
+```
+
+The direct `app.runtime` property must resolve to Mule runtime 4.9.20. Merely
+declaring the property without binding it to the active plugin does not pin the
+build runtime.
+Do not inherit target coordinates from a parent or move build inputs into
+dependency management, plugin management, or profiles. Those sections are not
+accepted as a substitute for the active project model.
+
 Evidence is layered:
 
 - Static checks prove bounded inventory, XML structure, exact coordinates,
@@ -36,9 +57,18 @@ setup values, and assertion style remain candidate choices.
 
 Project correction signal `mulesoft_candidate.pom_contract.pom_xml`: repair
 only the generated `pom.xml`. Restore the approved Mule application packaging,
-version compatibility set, allowlisted plugins and dependencies, and MuleSoft
-release repository restriction. Do not add credentials, extra build
-capabilities, or change non-POM artifacts without a separate diagnostic.
+direct standalone project coordinates, active allowlisted plugins and
+dependencies, and MuleSoft release repository restriction. The direct
+`mule-maven-plugin` must contain exactly one direct `configuration` whose
+`runtimeVersion` resolves through the direct `app.runtime` property to 4.9.20.
+Do not add a parent, management or profile indirection, credentials, extra
+build capabilities, or change non-POM artifacts without a separate diagnostic.
+
+Project correction signal `mulesoft_candidate.version_mismatch.pom_xml`:
+repair only the generated `pom.xml`. Align only the direct active POM runtime,
+Mule Maven Plugin, MUnit, and HTTP Connector versions with the approved
+compatibility set. Do not edit `mule-artifact.json`, Mule XML, DataWeave, or
+MUnit without a separate artifact-specific diagnostic.
 
 When MUnit exercises the public HTTP listener, use
 `munit:enable-flow-source` for that exact generated listener flow, a loopback
@@ -81,7 +111,8 @@ Descriptor parsing signals
 `mulesoft_candidate.malformed_yaml.application_yaml` and
 `mulesoft_candidate.malformed_json.mule_artifact_json` repair only their named
 generated descriptor. YAML must remain a bounded scalar mapping without graph
-features; JSON must remain a valid Mule application descriptor object.
+features; JSON must remain a strict Mule application descriptor object with
+unique keys and no `NaN`, positive infinity, or negative infinity values.
 
 Application contract signals
 `mulesoft_candidate.mule4_contract.application_xml` and
@@ -114,4 +145,7 @@ or controller-owned tests without their own diagnostic.
 
 The checked-in capstone runtime authority is intentionally disabled, so its
 honest ceiling is static fixture-contract evidence until a reviewed immutable
-runtime and dependencies are authorized.
+runtime and dependencies are authorized. A future enabled authority must bind
+its immutable image labels and toolchain probe to Java 17, Mule runtime 4.9.20,
+Mule Maven Plugin 4.10.1, MUnit 3.7.3, and a concrete Maven version from 3.9.0
+through 3.9.15; self-consistent but different version labels are not authority.

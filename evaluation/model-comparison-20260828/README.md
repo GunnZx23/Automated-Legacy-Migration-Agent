@@ -1,5 +1,10 @@
 # Local Engineer model comparison — 2026-08-28
 
+> **Historical local-model experiment.** These results remain valid for the bounded run
+> recorded here, but they no longer select the submission provider. The first-class capstone
+> path now uses the explicitly approved Claude CLI through Bedrock; Ollama/Qwen remains an
+> optional compatibility path only.
+
 ## Decision
 
 Keep `qwen3.8:latest` for the capstone's local Engineer role and pin the tested

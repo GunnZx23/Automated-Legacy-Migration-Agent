@@ -146,6 +146,17 @@ class ArchitectConversationLaunchIntent(StrictModel):
         return value
 
 
+class _LegacyArchitectConversationLaunchRecord(StrictModel):
+    """Retired pre-scenario launch receipt retained for historical readback."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    handle: str = Field(pattern=r"^[0-9a-f]{24}$")
+    selected_platform: Platform
+    refined_request_digest: Sha256Digest
+    model_revision: Sha256Digest
+    launch_token: Sha256Digest
+
+
 class _ArchitectConversationLaunchBinding(StrictModel):
     """Exact controller-owned readiness state covered by the browser token."""
 
@@ -307,6 +318,59 @@ class ArchitectConversationStore:
         return ArchitectConversationSnapshot(header=header, exchanges=())
 
     def load(self, conversation_id: str) -> ArchitectConversationSnapshot:
+        header, exchanges, launch_intent, launch = self._load_artifacts(conversation_id)
+        return ArchitectConversationSnapshot(
+            header=header,
+            exchanges=exchanges,
+            launch_intent=launch_intent,
+            launch=launch,
+        )
+
+    def _load_artifacts(
+        self,
+        conversation_id: str,
+    ) -> tuple[
+        ArchitectConversationHeader,
+        tuple[ArchitectConversationExchange, ...],
+        ArchitectConversationLaunchIntent | None,
+        ArchitectConversationLaunchReceipt | None,
+    ]:
+        names, exchange_indexes = self._artifact_inventory(conversation_id)
+
+        header = ArchitectConversationHeader.model_validate(
+            self._store.read_json(f"{conversation_id}/header.json")
+        )
+        if header.conversation_id != conversation_id:
+            raise PolicyViolation("conversation header identity mismatch")
+        loaded_exchanges: list[ArchitectConversationExchange] = []
+        for exchange_index in exchange_indexes:
+            raw_exchange = self._store.read_json(
+                f"{conversation_id}/exchange-{exchange_index:04d}.json"
+            )
+            exchange = ArchitectConversationExchange.model_validate(raw_exchange)
+            assert_no_request_secrets(
+                exchange,
+                boundary="conversation exchange",
+            )
+            loaded_exchanges.append(exchange)
+        exchanges = tuple(loaded_exchanges)
+        launch_intent = (
+            ArchitectConversationLaunchIntent.model_validate(
+                self._store.read_json(f"{conversation_id}/launch-intent.json")
+            )
+            if "launch-intent.json" in names
+            else None
+        )
+        launch = (
+            ArchitectConversationLaunchReceipt.model_validate(
+                self._store.read_json(f"{conversation_id}/launch.json")
+            )
+            if "launch.json" in names
+            else None
+        )
+        return header, exchanges, launch_intent, launch
+
+    def _artifact_inventory(self, conversation_id: str) -> tuple[tuple[str, ...], list[int]]:
         _validate_conversation_id(conversation_id)
         directory = self.root / conversation_id
         try:
@@ -331,45 +395,9 @@ class ArchitectConversationStore:
                 raise PolicyViolation("conversation contains an unexpected artifact")
         if "header.json" not in names:
             raise PolicyViolation("conversation header is missing")
-
-        header = ArchitectConversationHeader.model_validate(
-            self._store.read_json(f"{conversation_id}/header.json")
-        )
-        if header.conversation_id != conversation_id:
-            raise PolicyViolation("conversation header identity mismatch")
         if exchange_indexes != list(range(1, len(exchange_indexes) + 1)):
             raise PolicyViolation("conversation exchange sequence is incomplete")
-        loaded_exchanges: list[ArchitectConversationExchange] = []
-        for exchange_index in exchange_indexes:
-            exchange = ArchitectConversationExchange.model_validate(
-                self._store.read_json(f"{conversation_id}/exchange-{exchange_index:04d}.json")
-            )
-            assert_no_request_secrets(
-                exchange,
-                boundary="conversation exchange",
-            )
-            loaded_exchanges.append(exchange)
-        exchanges = tuple(loaded_exchanges)
-        launch_intent = (
-            ArchitectConversationLaunchIntent.model_validate(
-                self._store.read_json(f"{conversation_id}/launch-intent.json")
-            )
-            if "launch-intent.json" in names
-            else None
-        )
-        launch = (
-            ArchitectConversationLaunchReceipt.model_validate(
-                self._store.read_json(f"{conversation_id}/launch.json")
-            )
-            if "launch.json" in names
-            else None
-        )
-        return ArchitectConversationSnapshot(
-            header=header,
-            exchanges=exchanges,
-            launch_intent=launch_intent,
-            launch=launch,
-        )
+        return names, exchange_indexes
 
     def append_exchange(
         self,
@@ -582,7 +610,45 @@ class ArchitectConversationStore:
             launch=receipt,
         )
 
+    def _has_verified_launch_receipt(self, conversation_id: str) -> bool:
+        """Verify a current or retired immutable launch pair without replaying history."""
+
+        names, exchange_indexes = self._artifact_inventory(conversation_id)
+        header = ArchitectConversationHeader.model_validate(
+            self._store.read_json(f"{conversation_id}/header.json")
+        )
+        if header.conversation_id != conversation_id:
+            raise PolicyViolation("conversation header identity mismatch")
+        if "launch.json" not in names:
+            return False
+        if "launch-intent.json" not in names or not exchange_indexes:
+            raise PolicyViolation("launched conversation is incomplete")
+        raw_intent = self._store.read_json(f"{conversation_id}/launch-intent.json")
+        raw_launch = self._store.read_json(f"{conversation_id}/launch.json")
+        if raw_launch != raw_intent:
+            raise PolicyViolation("launch receipt does not match its immutable intent")
+        try:
+            ArchitectConversationLaunchIntent.model_validate(raw_intent)
+            ArchitectConversationLaunchReceipt.model_validate(raw_launch)
+        except ValueError:
+            _LegacyArchitectConversationLaunchRecord.model_validate(raw_intent)
+            _LegacyArchitectConversationLaunchRecord.model_validate(raw_launch)
+        for exchange_index in exchange_indexes:
+            raw_exchange = self._store.read_json(
+                f"{conversation_id}/exchange-{exchange_index:04d}.json"
+            )
+            if (
+                not isinstance(raw_exchange, dict)
+                or raw_exchange.get("schema_version") != "1.0"
+                or raw_exchange.get("exchange") != exchange_index
+            ):
+                raise PolicyViolation("conversation exchange sequence is incomplete")
+            assert_no_request_secrets(raw_exchange, boundary="conversation exchange")
+        return True
+
     def conversation_count(self) -> int:
+        """Count all owned conversation entries retained as durable history."""
+
         count = 0
         for entry in self.root.iterdir():
             if _CONVERSATION_ID_PATTERN.fullmatch(entry.name) is None:
@@ -596,6 +662,30 @@ class ArchitectConversationStore:
                 count += 1
                 continue
             count += 1
+        return count
+
+    def unlaunched_conversation_count(self) -> int:
+        """Count intake entries that have not published a verified launch receipt.
+
+        Historical launched conversations are append-only evidence and do not
+        consume intake capacity. Any owned entry that cannot be intrinsically
+        verified counts toward the limit, so corruption never opens capacity.
+        Current scenario definitions are deliberately excluded from this
+        classification because immutable historical contracts may legitimately
+        differ from today's catalog.
+        """
+
+        count = 0
+        for entry in self.root.iterdir():
+            if _CONVERSATION_ID_PATTERN.fullmatch(entry.name) is None:
+                continue
+            try:
+                launched = self._has_verified_launch_receipt(entry.name)
+            except Exception:
+                count += 1
+                continue
+            if not launched:
+                count += 1
         return count
 
 
@@ -732,9 +822,7 @@ def architect_conversation_launch_token(
         return None
     latest = snapshot.exchanges[-1]
     reply = latest.architect_run.reply
-    runtime_identity_digest = (
-        latest.architect_run.model_call.resolved_runtime_identity_digest
-    )
+    runtime_identity_digest = latest.architect_run.model_call.resolved_runtime_identity_digest
     if (
         latest.selected_platform is None
         or latest.scenario_id is None

@@ -1,30 +1,13 @@
-"""Serve the Agent UI with a **live Claude** model provider for the demo.
+"""Deprecated false-provenance Claude/Ollama server shim.
 
-This boots the same production UI server (``serve_ui``) but swaps the loopback
-Ollama client for :class:`ClaudeCliStructuredModelClient`, so a full migration
-can be driven end-to-end through the real browser UI against a live,
-Bedrock-backed Claude model. The Architect / Engineer / Validator outputs are
-generated live; the local validation toolchain (Jest, sfdx-scanner, etc.) still
-runs for real.
+This historical executable is retained for traceability but intentionally
+fails closed before parsing runtime options, importing a provider client, or
+starting a server. It previously presented remote Claude calls as
+``ollama`` / ``local_loopback``, which cannot produce truthful evidence. Use
+``legacy-migration-agent ui --claude-model ...`` instead.
 
-Run it under a debugger (see ``.vscode/launch.json``) to set breakpoints in the
-UI service, the agent run pipeline, or ``ClaudeCliStructuredModelClient.parse``
-and watch a live generation step by step.
-
-Honesty note: the UI's provider badge and the durable model-call records will
-still read as the ``ollama`` / ``local_loopback`` runtime, because this client
-is injected at that seam unchanged. The ``claude`` CLI actually reaches a remote
-model — the label describes the injection seam, not the network path. See
-``claude_cli_client.py`` for the full rationale.
-
-Usage:
-    python tooling/e2e/live_claude_serve.py --port 8899
-    python tooling/e2e/live_claude_serve.py --model-id claude-sonnet-5 --open-browser
-
-Env var fallbacks (used only when the matching CLI flag is omitted):
-    LIVE_CLAUDE_PORT, LIVE_CLAUDE_MODEL_ID, LIVE_CLAUDE_PROJECT_ROOT,
-    LIVE_CLAUDE_TIMEOUT_SECONDS
-    LIVE_CLAUDE_CLI_PATH — explicit path to the ``claude`` executable.
+Invoking this file with any options exits nonzero with the replacement command.
+The argument parser remains importable only so historical imports do not break.
 """
 
 from __future__ import annotations
@@ -77,41 +60,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv)
-    project_root = args.project_root.resolve()
-
-    from claude_cli_client import ClaudeCliStructuredModelClient
-
-    # Monkeypatch the exact seam the UI resolves models through:
-    #   AgentUiService._local_models -> build_local_ollama_model_clients
-    #   -> legacy_migration_agent.application.agent_run.OllamaStructuredModelClient
-    # The UI passes timeout_seconds=<serve_ui ollama_timeout_seconds>, i.e. the
-    # same --timeout-seconds value below, straight through to the client.
-    import legacy_migration_agent.application.agent_run as agent_run_module
-
-    agent_run_module.OllamaStructuredModelClient = ClaudeCliStructuredModelClient
-
-    from legacy_migration_agent.ui.server import serve_ui
-
+    del argv
     print(
-        f"[live_claude_serve] LIVE Claude provider active · model_id={args.model_id!r} "
-        f"timeout={args.timeout_seconds}s project_root={project_root}",
+        "[live_claude_serve] Disabled: this historical Claude/Ollama compatibility "
+        "shim would record false provider provenance. Use the truthful first-class "
+        "command `legacy-migration-agent ui --claude-model ...` instead.",
+        file=sys.stderr,
         flush=True,
     )
-    print(
-        "[live_claude_serve] NOTE: the UI badge / model-call records read as "
-        "'ollama'/'local_loopback' (the injection seam); the claude CLI reaches a "
-        "remote Bedrock-backed model. This is a demo hook, not a production boundary.",
-        flush=True,
-    )
-    serve_ui(
-        project_root,
-        port=args.port,
-        open_browser=args.open_browser,
-        ollama_model_id=args.model_id,
-        ollama_timeout_seconds=args.timeout_seconds,
-    )
-    return 0
+    return 2
 
 
 if __name__ == "__main__":

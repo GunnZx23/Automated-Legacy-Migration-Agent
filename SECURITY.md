@@ -22,9 +22,11 @@ production credentials, deployment, or autonomous Git actions.
 - Remote model use requires explicit API and selected-context sharing
   approval. Local Ollama use must be enabled by the server operator with an
   exact model alias and is fixed to `127.0.0.1:11434`; the browser cannot
-  provide a model endpoint or credential. The checked-in benchmark package
-  contains provider-free static results only; every agent route is explicitly
-  `not_performed`, and no provider key is stored.
+  provide a model endpoint or credential. The checked-in benchmark protocol and
+  derived output-review summary contain no provider credential or raw provider
+  transcript. The live 18-cell `.runs` tree and its archive remain ignored and
+  are referenced only by digest. Independent output rubrics, cell receipts, and
+  aggregate results remain pending; no provider key is stored.
 - Provider and controller failures cross a typed sanitization boundary before
   checkpoint or artifact persistence; raw SDK errors and stack traces are not
   public run evidence.

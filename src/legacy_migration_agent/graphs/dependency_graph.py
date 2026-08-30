@@ -36,7 +36,7 @@ from legacy_migration_agent.graphs.graph_contracts import (
     WarningCode,
 )
 
-SALESFORCE_ANALYZER_VERSION = "salesforce-static-v1"
+SALESFORCE_ANALYZER_VERSION = "salesforce-static-v2"
 
 
 @dataclass(frozen=True)
@@ -220,6 +220,12 @@ _SOQL_KEYWORDS = {
     "where",
     "with",
 }
+
+_SOQL_FIELD_PROJECTION_PARSER = "apex_soql_projection"
+_SOQL_FIELD_PREDICATE_PARSER = "apex_soql_predicate"
+_SOQL_FIELD_ORDERING_PARSER = "apex_soql_ordering"
+_SOQL_FIELD_GROUPING_PARSER = "apex_soql_grouping"
+_SOQL_FIELD_OTHER_PARSER = "apex_soql_other"
 
 
 def _identifier(prefix: str, name: str) -> str:
@@ -1059,6 +1065,63 @@ class _SalesforceGraphBuilder:
             return None
         return max(candidates, key=lambda scope: (len(scope.select.parents), scope.select.start))
 
+    @staticmethod
+    def _soql_field_parser(
+        token: _SoqlToken,
+        scope: _SoqlScope,
+        tokens: tuple[_SoqlToken, ...],
+    ) -> str:
+        """Return the bounded clause role for one field occurrence.
+
+        Clause boundaries are taken only from tokens at the SELECT scope's
+        direct parenthesis depth.  Function arguments remain in their owning
+        query, while tokens from nested relationship queries are classified by
+        the nested SELECT scope instead.
+        """
+
+        if scope.from_token is None:
+            return _SOQL_FIELD_OTHER_PARSER
+        if token.start < scope.from_token.start:
+            return _SOQL_FIELD_PROJECTION_PARSER
+
+        direct_tokens = tuple(
+            candidate
+            for candidate in tokens
+            if scope.from_token.end <= candidate.start < scope.end
+            and candidate.parents == scope.select.parents
+        )
+        parser = _SOQL_FIELD_OTHER_PARSER
+        for index, candidate in enumerate(direct_tokens):
+            if candidate.start > token.start:
+                break
+            keyword = candidate.value.casefold()
+            next_keyword = (
+                direct_tokens[index + 1].value.casefold()
+                if index + 1 < len(direct_tokens)
+                else None
+            )
+            if keyword in {"where", "having"}:
+                parser = _SOQL_FIELD_PREDICATE_PARSER
+            elif keyword == "order" and next_keyword == "by":
+                parser = _SOQL_FIELD_ORDERING_PARSER
+            elif keyword == "group" and next_keyword == "by":
+                parser = _SOQL_FIELD_GROUPING_PARSER
+            elif keyword in {"limit", "offset", "with", "for"}:
+                parser = _SOQL_FIELD_OTHER_PARSER
+        return parser
+
+    @staticmethod
+    def _is_soql_bind_reference(body: str, token: _SoqlToken) -> bool:
+        """Exclude bounded direct or dotted Apex binds from field provenance."""
+
+        return (
+            re.search(
+                r":\s*[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*\Z",
+                body[: token.end],
+            )
+            is not None
+        )
+
     def _warn_soql_issue(
         self,
         file: _File,
@@ -1169,12 +1232,19 @@ class _SalesforceGraphBuilder:
                         continue
                     if token.start in object_positions:
                         continue
+                    if self._is_soql_bind_reference(body, token):
+                        continue
                     canonical_field = known_fields.get(token.value.casefold())
                     if canonical_field is None or token.value.casefold() in _SOQL_KEYWORDS:
                         continue
                     start = body_start + token.start
                     end = body_start + token.end
-                    provenance = _provenance(file, start, end, "apex_soql")
+                    provenance = _provenance(
+                        file,
+                        start,
+                        end,
+                        self._soql_field_parser(token, scope, tokens),
+                    )
                     field_target, resolved = self._resolve_field(
                         scope_object,
                         canonical_field,
@@ -1210,6 +1280,11 @@ class _SalesforceGraphBuilder:
                 )
                 if object_token is None or field_token is None:
                     continue
+                if self._is_soql_bind_reference(body, field_token):
+                    continue
+                scope = self._owning_soql_scope(field_token, scopes)
+                if scope is None:
+                    continue
                 object_name = dotted.group("object")
                 if object_name.casefold() not in self.objects and not any(
                     value.casefold() == object_name.casefold() for value in _STANDARD_SCHEMA
@@ -1217,7 +1292,12 @@ class _SalesforceGraphBuilder:
                     continue
                 start = body_start + dotted.start()
                 end = body_start + dotted.end()
-                provenance = _provenance(file, start, end, "apex_soql")
+                provenance = _provenance(
+                    file,
+                    start,
+                    end,
+                    self._soql_field_parser(field_token, scope, tokens),
+                )
                 field_target, resolved = self._resolve_field(
                     object_name,
                     dotted.group("field"),

@@ -47,6 +47,21 @@ _PROPERTY_REFERENCE = re.compile(r"\$\{\s*([^{}]+?)\s*\}")
 _VARIABLE_REFERENCE = re.compile(
     r"\b(?:flowVars|vars)\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['\"]([^'\"]+)['\"]\s*\])"
 )
+_HTTP_ROUTE_PARAMETER = re.compile(r"(?<!\$)\{\s*([A-Za-z_]\w*)\s*\}")
+_URI_PARAMETER_REFERENCE = re.compile(
+    r"""
+    (?:
+        (?:message\s*\.\s*)?inboundProperties\s*
+        (?:
+            \.\s*['\"]http\.uri\.params['\"]
+            | \[\s*['\"]http\.uri\.params['\"]\s*\]
+        )
+        | attributes\s*\.\s*uriParams
+    )
+    \s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['\"]([^'\"]+)['\"]\s*\])
+    """,
+    re.VERBOSE,
+)
 _DATAWEAVE_IMPORT = re.compile(r"(?m)^\s*import\b[^\n]*?\bfrom\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)+)")
 _DYNAMIC_EXPRESSION = re.compile(r"#\[|\$\{")
 _MAX_TEXT_BYTES = 5 * 1024 * 1024
@@ -710,6 +725,8 @@ class _MuleSoftGraphBuilder:
         munit: bool,
     ) -> None:
         application_scope = self._scope_for_path(file.relative_path)
+        if not munit:
+            self._parse_route_parameter_bindings(source_id, file, element)
         for child in element.iter():
             local = _local_name(child.tag)
             if local == "flow-ref" or (munit and local == "enable-flow-source"):
@@ -780,7 +797,67 @@ class _MuleSoftGraphBuilder:
                 )
             text = self._element_text(child)
             self._parse_property_references(source_id, file, text)
-            self._parse_dataweave(source_id, file, text)
+            self._parse_dataweave(
+                source_id,
+                file,
+                text,
+                variable_edge_kind=(
+                    EdgeKind.MUNIT_VARIABLE_REFERENCE
+                    if munit
+                    else EdgeKind.DATAWEAVE_VARIABLE_REFERENCE
+                ),
+            )
+
+    def _parse_route_parameter_bindings(
+        self,
+        source_id: str,
+        file: _File,
+        element: ElementTree.Element,
+    ) -> None:
+        """Connect declared HTTP route parameters to flow-variable assignments."""
+
+        application_scope = self._scope_for_path(file.relative_path)
+        route_parameters: dict[str, tuple[str, str]] = {}
+        for child in element.iter():
+            if not (
+                _namespace(child.tag).casefold().endswith("/http")
+                and _local_name(child.tag) == "listener"
+            ):
+                continue
+            path = child.attrib.get("path", "")
+            for match in _HTTP_ROUTE_PARAMETER.finditer(path):
+                name = match.group(1)
+                route_parameters.setdefault(name.casefold(), (name, match.group(0)))
+        if not route_parameters:
+            return
+
+        for child in element.iter():
+            if _local_name(child.tag) != "set-variable":
+                continue
+            variable_name = child.attrib.get("variableName", "").strip()
+            value = child.attrib.get("value", "")
+            if not variable_name or _DYNAMIC_EXPRESSION.search(variable_name):
+                continue
+            target_id = self.variables.get((application_scope, variable_name.casefold()))
+            if target_id is None:
+                continue
+            for match in _URI_PARAMETER_REFERENCE.finditer(value):
+                parameter_name = match.group(1) or match.group(2)
+                route_parameter = route_parameters.get(parameter_name.casefold())
+                if route_parameter is None:
+                    continue
+                _, route_symbol = route_parameter
+                for provenance in (
+                    _provenance(file, route_symbol, "mule_http_route"),
+                    _provenance(file, match.group(0), "mule_expression"),
+                ):
+                    self._add_edge(
+                        source_id,
+                        target_id,
+                        EdgeKind.MULE_ROUTE_PARAMETER_BINDING,
+                        provenance,
+                        symbol=route_symbol,
+                    )
 
     def _parse_property_references(self, source_id: str, file: _File, text: str) -> None:
         application_scope = self._scope_for_path(file.relative_path)
@@ -806,24 +883,37 @@ class _MuleSoftGraphBuilder:
                 resolved=resolved,
             )
 
-    def _parse_dataweave(self, source_id: str, file: _File, text: str) -> None:
+    def _parse_dataweave(
+        self,
+        source_id: str,
+        file: _File,
+        text: str,
+        *,
+        variable_edge_kind: EdgeKind = EdgeKind.DATAWEAVE_VARIABLE_REFERENCE,
+    ) -> None:
         application_scope = self._scope_for_path(file.relative_path)
+        variable_parser = (
+            "munit" if variable_edge_kind is EdgeKind.MUNIT_VARIABLE_REFERENCE else "dataweave"
+        )
+        variable_reference_label = (
+            "MUnit" if variable_edge_kind is EdgeKind.MUNIT_VARIABLE_REFERENCE else "DataWeave"
+        )
         for match in _VARIABLE_REFERENCE.finditer(text):
             name = match.group(1) or match.group(2)
-            provenance = _provenance(file, match.group(0), "dataweave")
+            provenance = _provenance(file, match.group(0), variable_parser)
             target_id = self.variables.get((application_scope, name.casefold()))
             resolved = target_id is not None and self.nodes[target_id].resolved
             if target_id is None:
                 target_id = self._unresolved_node("variable", name, application_scope)
                 self._warn(
                     WarningCode.UNRESOLVED_REFERENCE,
-                    f"DataWeave variable reference could not be resolved: {name}",
+                    f"{variable_reference_label} variable reference could not be resolved: {name}",
                     provenance,
                 )
             self._add_edge(
                 source_id,
                 target_id,
-                EdgeKind.DATAWEAVE_VARIABLE_REFERENCE,
+                variable_edge_kind,
                 provenance,
                 symbol=match.group(0),
                 resolved=resolved,

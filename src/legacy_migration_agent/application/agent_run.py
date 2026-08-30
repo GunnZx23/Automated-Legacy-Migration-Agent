@@ -82,6 +82,7 @@ from legacy_migration_agent.application.agent_run_contracts import (
     AgentRunInterruptSummary,
     AgentRunOperation,
     AgentRunStatus,
+    VerifiedAgentRunEvidence,
     agent_run_failure_explanation,
 )
 from legacy_migration_agent.application.agent_run_contracts import (
@@ -170,7 +171,11 @@ from legacy_migration_agent.core.workspace import (
     snapshot_tree,
 )
 from legacy_migration_agent.graphs.graph_store import GraphSnapshotKey, GraphSnapshotStore
-from legacy_migration_agent.knowledge.wiki import EXACT_DIAGNOSTIC_ID_PATTERN, LlmWiki
+from legacy_migration_agent.knowledge.wiki import (
+    EXACT_DIAGNOSTIC_ID_PATTERN,
+    BenchmarkKnowledgeBinding,
+    LlmWiki,
+)
 from legacy_migration_agent.platforms.mulesoft_local_checks import MULE3_APP
 from legacy_migration_agent.platforms.mulesoft_runtime import (
     MULESOFT_PLATFORM_ADAPTER,
@@ -202,6 +207,7 @@ from legacy_migration_agent.workflow import (
 )
 
 _ORACLE_PATH_SEGMENTS = frozenset({"expected", "golden", "oracle"})
+_BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND = "benchmark-knowledge-binding"
 _ROLE_INVOCATION_LEASE_PATH = re.compile(
     r"^model-runs/(?P<request_id>[A-Za-z0-9][A-Za-z0-9._:-]{0,159})/"
     r"(?P<role>engineer|validator)-invocation-lease-attempt-(?P<attempt>[12])\.json$"
@@ -320,6 +326,49 @@ def start_agent_run(
     )
 
 
+def _start_benchmark_agent_run(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id: str,
+    thread_id: str,
+    launch_contract: MigrationLaunchContract,
+    request: MigrationRequest | Mapping[str, Any],
+    models: AgentRunModelClients,
+    knowledge_binding: BenchmarkKnowledgeBinding,
+    trusted_validator: DeterministicValidator | None = None,
+) -> AgentRunStatus:
+    """Start one measured cell through a benchmark-only knowledge-arm seam."""
+
+    prepared = _prepare_agent_run_start(
+        project_root,
+        run_dir,
+        launch_contract=launch_contract,
+        request=request,
+        models=models,
+        benchmark_knowledge_binding=knowledge_binding,
+    )
+    session = AgentRunSession.initialize(
+        prepared.root,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        slice_id=prepared.contract.scenario_id,
+        source_root=prepared.contract.source_root,
+        request_digest=artifact_digest(prepared.request),
+        agent_definition_digests=prepared.definition_digests,
+        provider_id=prepared.provider_id,
+        model_id=prepared.model_id,
+    )
+    _bind_benchmark_knowledge_anchor(session, prepared)
+    return _complete_agent_run_start(
+        session,
+        prepared,
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+
+
 def recover_incomplete_agent_run_start(
     project_root: Path,
     run_dir: Path,
@@ -346,6 +395,43 @@ def recover_incomplete_agent_run_start(
         launch_contract=launch_contract,
         request=request,
         models=models,
+    )
+    session = AgentRunSession.load(prepared.root, run_dir)
+    _verify_incomplete_start_session(
+        session,
+        prepared,
+        run_id=run_id,
+        thread_id=thread_id,
+    )
+    return _complete_agent_run_start(
+        session,
+        prepared,
+        models=models,
+        trusted_validator=trusted_validator,
+    )
+
+
+def _recover_incomplete_benchmark_agent_run_start(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id: str,
+    thread_id: str,
+    launch_contract: MigrationLaunchContract,
+    request: MigrationRequest | Mapping[str, Any],
+    models: AgentRunModelClients,
+    knowledge_binding: BenchmarkKnowledgeBinding,
+    trusted_validator: DeterministicValidator | None = None,
+) -> AgentRunStatus:
+    """Recover one bootstrap bound to the exact measured knowledge-arm cell."""
+
+    prepared = _prepare_agent_run_start(
+        project_root,
+        run_dir,
+        launch_contract=launch_contract,
+        request=request,
+        models=models,
+        benchmark_knowledge_binding=knowledge_binding,
     )
     session = AgentRunSession.load(prepared.root, run_dir)
     _verify_incomplete_start_session(
@@ -564,6 +650,98 @@ def get_agent_run_status(
     return _status_from_components(components)
 
 
+def get_historical_terminal_agent_run_status(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id: str,
+    thread_id: str,
+) -> AgentRunStatus:
+    """Read one terminal run after its shipped agent prompts have evolved.
+
+    This provider-free accessor deliberately omits comparisons with the
+    repository's *current* Markdown definitions and launch-contract constants.
+    It still requires the current source revision, the internally consistent
+    stored request/config/launch binding, lifecycle index, runtime anchor,
+    authorization evidence, checkpoint, and terminal projection. It is
+    therefore suitable for historical UI readback and export, never for
+    resume, retry, or provider dispatch.
+    """
+
+    root = _safe_project_root(project_root)
+    session = AgentRunSession.load_historical_evidence(root, run_dir)
+    if session.context.run_id != run_id:
+        raise PolicyViolation("run_id does not match the loaded run session")
+    if session.context.thread_id != thread_id:
+        raise PolicyViolation("thread_id does not match the loaded run session")
+    session.verify_source_revision()
+    request, _, _ = _verify_historical_run_evidence(session)
+    status = _verified_terminal_history_status(session, request)
+    if status is None:
+        raise PolicyViolation("agent run has no verified terminal lifecycle")
+    return status
+
+
+def get_verified_agent_run_evidence(
+    project_root: Path,
+    run_dir: Path,
+    *,
+    run_id: str,
+    thread_id: str,
+) -> VerifiedAgentRunEvidence:
+    """Return one current, runtime-anchored terminal benchmark projection.
+
+    Unlike historical capacity classification, this reader requires the
+    current source bytes, agent definitions, canonical launch contract, full
+    latest lifecycle index, and its independent runtime anchor to remain valid.
+    """
+
+    components = _load_components(
+        project_root,
+        run_dir,
+        run_id=run_id,
+        thread_id=thread_id,
+        models=None,
+        request=None,
+        trusted_validator=None,
+        read_only=True,
+    )
+    session = components.session
+    request, config, contract = _verify_run_evidence(session)
+    binding = config.benchmark_knowledge_binding
+    if binding is None:
+        raise PolicyViolation("verified benchmark evidence requires a benchmark binding")
+    lifecycle = _verify_latest_operation_evidence(
+        session,
+        request,
+        pending_authorization=None,
+    )
+    status = lifecycle.status
+    if (
+        lifecycle.kind not in _TERMINAL_OPERATION_LIFECYCLES
+        or status.status not in _TERMINAL_AGENT_RUN_STATUSES
+        or status.pending_nodes
+        or status.interrupt is not None
+    ):
+        raise PolicyViolation("benchmark run has no verified terminal lifecycle")
+    index_payload = session.store.read_json(f"indexes/{lifecycle.kind}.json")
+    return VerifiedAgentRunEvidence(
+        run_id=session.context.run_id,
+        thread_id=session.context.thread_id,
+        status=status,
+        run_context_digest=artifact_digest(session.context),
+        request_digest=artifact_digest(request),
+        config_digest=artifact_digest(config),
+        launch_contract_digest=artifact_digest(contract),
+        terminal_lifecycle_kind=lifecycle.kind,
+        terminal_lifecycle_index_digest=artifact_digest(index_payload),
+        terminal_status_digest=artifact_digest(status),
+        terminal_checkpoint_digest=artifact_digest(lifecycle.checkpoint),
+        benchmark_binding_digest=artifact_digest(binding),
+        source_revision=session.context.source_revision,
+    )
+
+
 def has_verified_terminal_agent_run_history(
     project_root: Path,
     run_dir: Path,
@@ -593,21 +771,26 @@ def has_verified_terminal_agent_run_history(
     if session.context.thread_id != thread_id:
         raise PolicyViolation("thread_id does not match the loaded run session")
     request, _, _ = _verify_historical_run_evidence(session)
-    lifecycle = _verify_latest_operation_evidence(
-        session,
-        request,
-        pending_authorization=None,
-    )
+    return _verified_terminal_history_status(session, request) is not None
+
+
+def _verified_terminal_history_status(
+    session: AgentRunSession,
+    request: MigrationRequest,
+) -> AgentRunStatus | None:
+    """Return a fully verified terminal projection or ``None`` if incomplete."""
+
+    lifecycle = _verify_latest_operation_evidence(session, request, pending_authorization=None)
 
     # Authorization snapshots are durable transaction boundaries, not a
     # completed operation.  Their projected status may equal the prior
     # terminal status while an authorized resume/retry remains unfinished.
     if lifecycle.kind not in _TERMINAL_OPERATION_LIFECYCLES:
-        return False
+        return None
 
     status = lifecycle.status
     if status.status not in _TERMINAL_AGENT_RUN_STATUSES:
-        return False
+        return None
     if status.pending_nodes or status.interrupt is not None:
         raise PolicyViolation("terminal run history contains pending workflow work")
 
@@ -619,7 +802,7 @@ def has_verified_terminal_agent_run_history(
             or status.failure != lifecycle.failure
         ):
             raise PolicyViolation("terminal failure history is internally inconsistent")
-        return True
+        return status
 
     if (
         lifecycle.failure is not None
@@ -630,7 +813,7 @@ def has_verified_terminal_agent_run_history(
         or lifecycle.checkpoint.tasks
     ):
         raise PolicyViolation("terminal run history is internally inconsistent")
-    return True
+    return status
 
 
 @dataclass(frozen=True)
@@ -668,6 +851,7 @@ def _prepare_agent_run_start(
     launch_contract: MigrationLaunchContract,
     request: MigrationRequest | Mapping[str, Any],
     models: AgentRunModelClients,
+    benchmark_knowledge_binding: BenchmarkKnowledgeBinding | None = None,
 ) -> _AgentRunStart:
     """Validate every external binding before creating or recovering a run."""
 
@@ -683,7 +867,23 @@ def _prepare_agent_run_start(
     source = _safe_source_root(root, contract.source_root)
     if snapshot_tree(source).revision != parsed_request.base_revision:
         raise PolicyViolation("migration request revision does not match current source bytes")
-    _preflight_wiki(root, parsed_request, preset, contract.wiki_as_of)
+    frozen_benchmark_binding = (
+        None
+        if benchmark_knowledge_binding is None
+        else BenchmarkKnowledgeBinding.model_validate(
+            benchmark_knowledge_binding.model_dump(mode="python")
+        )
+    )
+    if frozen_benchmark_binding is not None:
+        frozen_benchmark_binding.require_request(
+            parsed_request,
+            scenario_id=contract.scenario_id,
+        )
+    if (
+        frozen_benchmark_binding is None
+        or frozen_benchmark_binding.knowledge_arm == "full_agent_wiki"
+    ):
+        _preflight_wiki(root, parsed_request, preset, contract.wiki_as_of)
 
     # Accessing bundle properties validates provider/model identity before the
     # first fresh-run filesystem mutation or recovery decision.
@@ -701,8 +901,19 @@ def _prepare_agent_run_start(
         config=AgentRunConfig(
             preset_id=contract.scenario_id,
             wiki_as_of=contract.wiki_as_of,
+            benchmark_knowledge_binding=frozen_benchmark_binding,
         ),
     )
+
+
+def _bind_benchmark_knowledge_anchor(
+    session: AgentRunSession,
+    prepared: _AgentRunStart,
+) -> None:
+    binding = prepared.config.benchmark_knowledge_binding
+    if binding is None:
+        raise PolicyViolation("benchmark start requires a knowledge-arm binding")
+    session.bind_runtime_anchor(_BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND, binding)
 
 
 def _verify_incomplete_start_session(
@@ -764,9 +975,22 @@ def _verify_incomplete_start_session(
     state_files = frozenset(entry.path for entry in state.entries)
     base_state_files = frozenset({"checkpoints.sqlite3", "runtime.json"})
     initialized_anchor = f"anchors/{AGENT_RUN_EVIDENCE_KIND}.json"
-    allowed_state_files = {base_state_files, base_state_files | {initialized_anchor}}
+    benchmark_anchor = f"anchors/{_BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND}.json"
+    knowledge_binding = prepared.config.benchmark_knowledge_binding
+    required_state_files = base_state_files
+    if knowledge_binding is not None:
+        required_state_files |= {benchmark_anchor}
+    allowed_state_files = {
+        required_state_files,
+        required_state_files | {initialized_anchor},
+    }
     if state_files not in allowed_state_files or state.directories != ("anchors",):
         raise PolicyViolation("incomplete run bootstrap has unexpected runtime state")
+    if knowledge_binding is not None:
+        session.verify_runtime_anchor(
+            _BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND,
+            knowledge_binding,
+        )
     checkpoint = state.by_path()["checkpoints.sqlite3"]
     if checkpoint.content:
         raise PolicyViolation("incomplete run bootstrap checkpoint already advanced")
@@ -1461,6 +1685,7 @@ def _write_run_evidence(
     config: AgentRunConfig,
     launch_contract: MigrationLaunchContract,
 ) -> None:
+    _verify_benchmark_knowledge_anchor(session, config.benchmark_knowledge_binding)
     session.store.write_json(AGENT_RUN_REQUEST_PATH, request)
     session.store.write_json(AGENT_RUN_CONFIG_PATH, config)
     session.store.write_json(AGENT_RUN_LAUNCH_CONTRACT_PATH, launch_contract)
@@ -1501,6 +1726,12 @@ def _verify_run_evidence(
         raise PolicyViolation("agent-run preset differs from the run session")
     if config.wiki_as_of != canonical_contract.wiki_as_of:
         raise PolicyViolation("agent-run Wiki cutoff differs from the launch contract")
+    _verify_benchmark_knowledge_anchor(session, config.benchmark_knowledge_binding)
+    if config.benchmark_knowledge_binding is not None:
+        config.benchmark_knowledge_binding.require_request(
+            request,
+            scenario_id=canonical_contract.scenario_id,
+        )
     if session.context.source_root != canonical_contract.source_root:
         raise PolicyViolation("agent-run source root differs from the launch contract")
     index_payload = session.store.read_json(f"indexes/{AGENT_RUN_EVIDENCE_KIND}.json")
@@ -1532,6 +1763,12 @@ def _verify_historical_run_evidence(
         raise PolicyViolation("historical scenario binding is inconsistent")
     if config.wiki_as_of != launch_contract.wiki_as_of:
         raise PolicyViolation("historical Wiki cutoff binding is inconsistent")
+    _verify_benchmark_knowledge_anchor(session, config.benchmark_knowledge_binding)
+    if config.benchmark_knowledge_binding is not None:
+        config.benchmark_knowledge_binding.require_request(
+            request,
+            scenario_id=launch_contract.scenario_id,
+        )
     if not (request.repository == launch_contract.source_root == session.context.source_root):
         raise PolicyViolation("historical source-root binding is inconsistent")
     if request.base_revision != session.context.source_revision:
@@ -1563,6 +1800,20 @@ def _verify_historical_run_evidence(
         _evidence_anchor(session, request, config, index_payload),
     )
     return request, config, launch_contract
+
+
+def _verify_benchmark_knowledge_anchor(
+    session: AgentRunSession,
+    binding: BenchmarkKnowledgeBinding | None,
+) -> None:
+    has_anchor = session.has_runtime_anchor(_BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND)
+    if binding is None:
+        if has_anchor:
+            raise PolicyViolation("normal agent run cannot contain a benchmark knowledge binding")
+        return
+    if not has_anchor:
+        raise PolicyViolation("benchmark agent run is missing its knowledge binding anchor")
+    session.verify_runtime_anchor(_BENCHMARK_KNOWLEDGE_BINDING_ANCHOR_KIND, binding)
 
 
 def _evidence_anchor(
@@ -1873,6 +2124,7 @@ def _compose(
         wiki_as_of=config.wiki_as_of,
         wiki_max_primary_hits=preset.wiki_max_primary_hits,
         platform_adapter=preset.adapter,
+        benchmark_knowledge_binding=config.benchmark_knowledge_binding,
     )
     if read_only or disable_execution:
         validator: DeterministicValidator = _NeverValidate()
@@ -2713,6 +2965,8 @@ __all__ = [
     "build_claude_cli_model_clients",
     "build_live_openai_model_clients",
     "get_agent_run_status",
+    "get_historical_terminal_agent_run_status",
+    "get_verified_agent_run_evidence",
     "has_verified_terminal_agent_run_history",
     "assert_agent_request_secret_free",
     "prepare_agent_run_request",

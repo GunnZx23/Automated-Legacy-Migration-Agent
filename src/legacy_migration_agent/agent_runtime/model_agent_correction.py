@@ -117,6 +117,13 @@ _ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
         "from a request made stale by a later account selection, including success, failure, and "
         "loading completion. The stale-request mechanism is an implementation choice."
     ),
+    "controller_jest_account_change_reset": (
+        "Repair the component implementation, not either Jest suite. When the user selects a "
+        "different nonblank account, immediately invalidate pending contact work and clear prior "
+        "contact rows, completed or empty state, loading state, and contact-load error state. Do "
+        "not call getContacts until the next explicit Load action. State fields, reset order, and "
+        "the invalidation mechanism remain candidate-owned."
+    ),
     "controller_jest_blank_selection": (
         "Repair the component implementation, not either Jest suite. Clearing the selection "
         "must invalidate pending work, hide results and loading, disable Load, and render the "
@@ -135,17 +142,104 @@ _ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
         "results markup are candidate-owned."
     ),
 }
-# Case Management Console owns four behaviors the account/contact console does not:
-# a defaulted status filter, a keyed case datatable, a safe getCases failure, and an
-# explicit clear action. Only these Case-unique signals carry Case-specific guidance;
-# the eight shared controller signals keep the account/contact wording via the
-# flattened last-wins merge below, preserving account/contact byte-identity.
+# Case guidance is complete rather than inheriting Account/Contact wording. Shared
+# diagnostic ids still describe the same outcome category, but their model-facing
+# instructions must name getCases, case state, and the accountId/statusFilter call.
 _CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
+    "controller_jest_initial_guidance": (
+        "Repair the component implementation, not either Jest suite. Before an account is "
+        "selected, render nonempty safe guidance through a visible role=alert region, keep Load "
+        "disabled, and render no Case result, loading, or empty state. Exact guidance wording, "
+        "element choice, and internal state are candidate-owned."
+    ),
+    "controller_jest_account_options": (
+        "Repair the component implementation, not either Jest suite. The accessible account "
+        "selection control must include a blank choice and every account returned by the "
+        "getAccounts wire adapter. Control type, choice order, internal state, and mapping "
+        "helpers remain implementation choices."
+    ),
+    "controller_jest_account_error": (
+        "Repair the component implementation, not either Jest suite. On a getAccounts wire "
+        "error, render a nonempty accessible safe alert and do not expose the supplied error, "
+        "query text, or other technical details. Exact safe wording is candidate-owned."
+    ),
+    "controller_jest_account_error_reset": (
+        "Repair the component implementation, not either Jest suite. If getAccounts changes "
+        "from data to error, invalidate Case work, clear the selected account, completed Case "
+        "rows, loaded or empty state, and loading, disable Load, and retain only a safe Account "
+        "alert. State fields and reset order are candidate-owned."
+    ),
+    "controller_jest_account_error_stale_response": (
+        "Repair the component implementation, not either Jest suite. A getAccounts wire error "
+        "must invalidate the pending getCases request so neither its late success nor late "
+        "failure can replace the Account alert, restore Case rows, or change loading or empty "
+        "state. The request token mechanism is candidate-owned."
+    ),
+    "controller_jest_selection_gate": (
+        "Repair the component implementation, not either Jest suite. Keep Load disabled for a "
+        "blank account and enabled after a nonblank account is selected. Whether Load is also "
+        "disabled while work is pending is an internal UX choice."
+    ),
+    "controller_jest_explicit_load": (
+        "Repair the component implementation, not either Jest suite. Do not call getCases during "
+        "account or status selection; call it exactly after the explicit load action with the "
+        "selected { accountId, statusFilter }, then render the returned cases in an accessible "
+        "candidate-owned presentation."
+    ),
+    "controller_jest_loading_state": (
+        "Repair the component implementation, not either Jest suite. While the current getCases "
+        "request is pending, render an accessible loading or busy state and remove that state "
+        "only when the current request settles or is invalidated. Whether Load remains enabled "
+        "is candidate-owned."
+    ),
+    "controller_jest_stale_response": (
+        "Repair the component implementation, not either Jest suite. Ignore every state update "
+        "from a getCases request made stale by a later account or status selection, including "
+        "success, failure, and loading completion. The stale-request mechanism is an "
+        "implementation choice."
+    ),
+    "controller_jest_blank_selection": (
+        "Repair the component implementation, not either Jest suite. A blank account selection "
+        "must invalidate pending case work, hide case results and loading, disable Load, and "
+        "render safe selection guidance. Exact wording, internal fields, and reset order are "
+        "candidate-owned."
+    ),
+    "controller_jest_empty_state": (
+        "Repair the component implementation, not either Jest suite. Render an accessible empty "
+        "state only after the current getCases call succeeds with an empty result, and render no "
+        "case rows for that result. Markup and wording are candidate-owned."
+    ),
     "controller_jest_status_default": (
         "Repair the component implementation, not either Jest suite. The accessible status "
         "filter must offer every supported status choice and default to Open, and the explicit "
         "getCases load must pass that selected statusFilter alongside the accountId. Control "
         "type, choice order, and the internal status-value encoding remain candidate-owned."
+    ),
+    "controller_jest_status_closed": (
+        "Repair the component implementation, not either Jest suite. Selecting Closed must not "
+        "invoke getCases by itself; the next explicit Load must call getCases with the selected "
+        "accountId and statusFilter value CLOSED. Control type, event handling, and internal state "
+        "remain candidate-owned."
+    ),
+    "controller_jest_status_all": (
+        "Repair the component implementation, not either Jest suite. Selecting All must not "
+        "invoke getCases by itself; the next explicit Load must call getCases with the selected "
+        "accountId and statusFilter value ALL. Control type, event handling, and internal state "
+        "remain candidate-owned."
+    ),
+    "controller_jest_status_change_reset": (
+        "Repair the component implementation, not either Jest suite. When the selected status "
+        "changes, immediately invalidate pending getCases work and clear prior case rows, "
+        "completed or empty state, loading state, and case-load error state. Do not call getCases "
+        "until the next explicit Load action. State fields, reset order, and invalidation mechanism "
+        "remain candidate-owned."
+    ),
+    "controller_jest_status_change_stale_response": (
+        "Repair the component implementation, not either Jest suite. A getCases request started "
+        "under an earlier status selection must become stale immediately when the status changes. "
+        "Ignore its success, failure, and loading-completion updates; the next explicit Load must "
+        "use the newly selected statusFilter. Request tokens, captured state, and stale-response "
+        "control flow remain candidate-owned."
     ),
     "controller_jest_case_results": (
         "Repair the component implementation, not either Jest suite. Render the cases returned "
@@ -175,9 +269,14 @@ _CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE_BY_UNIT: Final[dict[str, dict[str, str]]] =
     CASE_MANAGEMENT_CONSOLE_UNIT_ID: _CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
 }
 _CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE: Final[dict[str, str]] = {
-    diagnostic_id: guidance
-    for unit_guidance in _CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE_BY_UNIT.values()
-    for diagnostic_id, guidance in unit_guidance.items()
+    **_ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+    **{
+        diagnostic_id: guidance
+        for diagnostic_id, guidance in (
+            _CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE.items()
+        )
+        if diagnostic_id not in _ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE
+    },
 }
 _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
     **{
@@ -211,10 +310,22 @@ _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
         "or Profile records, or run as an assumed profile. Test names, helper structure, record "
         "values, and assertion forms remain candidate-owned."
     ),
+    "salesforce_apex_controller_contract": (
+        "Change only the approved Apex controller class. Filtering fields need not be selected "
+        "when they are used only in predicates; only behavior-required return fields may be "
+        "selected. Candidate-owned branch-specific static SOQL queries are "
+        "allowed, including separate queries for supported filter branches, when every branch "
+        "independently satisfies the same security, deterministic ordering, bounded limit, "
+        "required filtering, and safe-error contract. Query grouping, helper structure, and "
+        "branch layout remain candidate-owned; do not copy a reference candidate or change "
+        "unrelated files."
+    ),
     APEX_PUBLIC_INTERFACE_ANNOTATION_DIAGNOSTIC_ID: (
-        "Change only the approved Apex controller class. Preserve its public interface and put "
-        "the exact @AuraEnabled(cacheable=true) annotation on each public read method; do not "
-        "supply a golden implementation or change unrelated files."
+        "Change only the approved Apex controller class. Preserve its public interface and the "
+        "method-specific cache policy from manifest.implementation_contract: the read consumed "
+        "by @wire requires @AuraEnabled(cacheable=true), while the explicit dependent read "
+        "requires bare @AuraEnabled or @AuraEnabled(cacheable=false) and must not use "
+        "cacheable=true. Do not supply a golden implementation or change unrelated files."
     ),
     APEX_CONTROLLED_QUERY_ERROR_MISSING_DIAGNOSTIC_ID: (
         "Change only the approved Apex controller class. Both generated query methods must "
@@ -237,8 +348,12 @@ _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
     ),
     LWC_TEMPLATE_BINDING_INVALID_DIAGNOSTIC_ID: (
         "Change only the approved LWC HTML and, when a computed value is needed, its JavaScript "
-        "controller. Replace template operators or expressions with a simple property binding "
-        "and compute the value in a JavaScript getter."
+        "controller. Ensure every manifest-declared data-role and data-state semantic hook is "
+        "present with a valid literal or simple property binding. Replace template operators or "
+        "complex expressions with a simple property binding and compute derived values in a "
+        "JavaScript getter. Hook placement, markup structure, and property or getter names remain "
+        "candidate-owned within the approved behavior; do not invent undeclared semantic hooks "
+        "or change unrelated files."
     ),
     "lwc_forbidden_runtime_capability": (
         "Remove unapproved runtime capabilities from the component while preserving its public "
@@ -261,8 +376,11 @@ _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
         "in the intended order. Assert Salesforce base-component stubs through their supported "
         "public properties (for example, lightning-datatable.data), not their internal rendered "
         "text. Statically import createElement from lwc and the used Jest APIs, retain the virtual "
-        "Apex mock contract with __esModule: true and { virtual: true }, and await bounded microtask "
-        "plus LWC rerender turns. Query component-rendered template elements through "
+        "Apex mock contract with __esModule: true and { virtual: true }. After either a resolved "
+        "or rejected imperative Apex Promise settles, drain at least three bounded microtask "
+        "turns plus the resulting LWC rerender before DOM assertions; two turns are insufficient "
+        "for a rejection handler that schedules a render. Query component-rendered template "
+        "elements through "
         "element.shadowRoot.querySelector or element.shadowRoot.querySelectorAll after rendering; "
         "host element.querySelector calls inspect light DOM and do not cross the LWC shadow "
         "boundary. Do not edit or imitate the "
@@ -282,6 +400,80 @@ _REPAIR_GUIDANCE_BY_SIGNAL: Final[dict[str, str]] = {
         "suite."
     ),
     **_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+}
+
+_SALESFORCE_REPAIR_GUIDANCE_OVERRIDES_BY_UNIT: Final[dict[str, dict[str, str]]] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: {
+        "salesforce_apex_controller_contract": (
+            "Change only the approved AccountContactExplorerController class. Keep exactly one "
+            "static Account query in getAccounts and exactly one static Contact query in "
+            "getContacts. Filtering fields used only in predicates need not be selected; select "
+            "only behavior-required return fields. Each query must independently preserve user "
+            "mode, its required account filter when applicable, deterministic ascending order, "
+            "bounded limit, and fixed safe error translation. Constants, helpers, and control flow "
+            "remain candidate-owned; do not copy a reference candidate or add branch queries."
+        ),
+        "salesforce_apex_test_contract": (
+            "Change only the approved AccountContactExplorerControllerTest class. Exercise "
+            "getAccounts and getContacts(accountId) with isolated synthetic Account and Contact "
+            "records created by the test's own DML. Cover account results, a selected account with "
+            "contacts, a selected account without contacts, and a null selection with meaningful "
+            "assertions. Do not use SeeAllData, rely on a fabricated Id, create User or Profile "
+            "records, or run as an assumed profile. Names, helper structure, record values, and "
+            "assertion forms remain candidate-owned."
+        ),
+        SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: (
+            "Zero immutable controller-owned assertions ran, so no Account/Contact behavior was "
+            "proven. Repair only the generated accountContactExplorer JavaScript, HTML, and CSS so "
+            "the bundle loads and executes account options, explicit getContacts loading, loading, "
+            "empty, safe-error, account-change reset, and stale-response outcomes. Keep plain "
+            "JavaScript, consume getAccounts through a supported adapter, retain the datatable "
+            "key-field in stable row keys, and expose no unapproved @api state. Internal fields and "
+            "markup remain candidate-owned. Do not edit either Jest suite."
+        ),
+        **_ACCOUNT_CONTACT_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+    },
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: {
+        "salesforce_permission_set_contract": (
+            "Change only the approved CaseManagementConsoleUser permission set. Preserve exactly "
+            "the existing readable, noneditable Case.AccountId, Case.ContactId, Case.Description, "
+            "Case.Priority and Case.Subject field permissions. Do not add Case.CaseNumber, "
+            "Case.Status or Case.IsClosed fieldPermissions because those standard fields are not "
+            "permissionable in the pinned API contract. Keep Account, Contact and Case read-only "
+            "object access, the three approved Apex class accesses, and the single legacy "
+            "Visualforce page access; grant no create, edit, delete, view-all, modify-all, "
+            "view-all-fields, user, administrative or unrelated capability."
+        ),
+        "salesforce_apex_controller_contract": (
+            "Change only the approved CaseManagementConsoleController class. Keep exactly one "
+            "static Account query and use one to three candidate-owned static Case queries that "
+            "truthfully map OPEN to nonclosed cases, CLOSED to closed cases, and ALL to both. "
+            "Filtering fields used only in predicates need not be selected; select only the "
+            "behavior-required Case return fields. Every branch must preserve accountId scoping, "
+            "WITH USER_MODE, CaseNumber DESC order, a limit of at most 100, and fixed safe error "
+            "translation. Query grouping, filter-state representation, helpers, and branch layout "
+            "remain candidate-owned; do not copy a reference candidate."
+        ),
+        "salesforce_apex_test_contract": (
+            "Change only the approved CaseManagementConsoleControllerTest class. Exercise "
+            "getAccounts and getCases(accountId, statusFilter) with isolated synthetic Account, "
+            "Contact, and Case records created by the test's own DML. Cover OPEN, CLOSED, and ALL, "
+            "a selected account with and without matching cases, and a null account with meaningful "
+            "assertions. Do not use SeeAllData, fabricate an Id, create User or Profile records, or "
+            "run as an assumed profile. Names, helper structure, record values, and assertion forms "
+            "remain candidate-owned."
+        ),
+        SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID: (
+            "Zero immutable controller-owned assertions ran, so no Case Management behavior was "
+            "proven. Repair only the generated caseManagementConsole JavaScript, HTML, and CSS so "
+            "the bundle loads and executes account options, OPEN/CLOSED/ALL status selection, "
+            "explicit getCases loading with { accountId, statusFilter }, loading, empty, safe-error, "
+            "selection reset, and stale-response outcomes. Keep plain JavaScript, supported "
+            "getAccounts consumption, stable row keys, and no unapproved @api state. Internal fields "
+            "and markup remain candidate-owned. Do not edit either Jest suite."
+        ),
+        **_CASE_MANAGEMENT_CONSOLE_CONTROLLER_BEHAVIOR_REPAIR_GUIDANCE,
+    },
 }
 
 _UNSUPPORTED_REPAIR_GUIDANCE = frozenset(_REPAIR_GUIDANCE_BY_SIGNAL) - (
@@ -312,6 +504,21 @@ _CONTROLLER_BEHAVIOR_CORRECTION_PATHS_BY_UNIT: Final[dict[str, tuple[str, ...]]]
     SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: (LWC_JAVASCRIPT_PATH, LWC_HTML_PATH),
     CASE_MANAGEMENT_CONSOLE_UNIT_ID: (CASE_LWC_JAVASCRIPT_PATH, CASE_LWC_HTML_PATH),
 }
+_CONTROLLER_BEHAVIOR_CORRECTION_PATH_OVERRIDES_BY_UNIT: Final[
+    dict[str, dict[str, tuple[str, ...]]]
+] = {
+    SALESFORCE_ACCOUNT_CONTACT_UNIT_ID: {
+        "controller_jest_account_change_reset": (LWC_JAVASCRIPT_PATH,),
+    },
+    CASE_MANAGEMENT_CONSOLE_UNIT_ID: {
+        "controller_jest_account_error_reset": (CASE_LWC_JAVASCRIPT_PATH,),
+        "controller_jest_account_error_stale_response": (CASE_LWC_JAVASCRIPT_PATH,),
+        "controller_jest_status_closed": (CASE_LWC_JAVASCRIPT_PATH,),
+        "controller_jest_status_all": (CASE_LWC_JAVASCRIPT_PATH,),
+        "controller_jest_status_change_reset": (CASE_LWC_JAVASCRIPT_PATH,),
+        "controller_jest_status_change_stale_response": (CASE_LWC_JAVASCRIPT_PATH,),
+    },
+}
 
 
 def _merged_controller_correction_paths() -> dict[str, tuple[str, ...]]:
@@ -324,11 +531,12 @@ def _merged_controller_correction_paths() -> dict[str, tuple[str, ...]]:
     merged: dict[str, list[str]] = {}
     for unit_id, diagnostic_ids in SALESFORCE_CONTROLLER_LWC_DIAGNOSTIC_IDS_BY_UNIT.items():
         unit_paths = _CONTROLLER_BEHAVIOR_CORRECTION_PATHS_BY_UNIT[unit_id]
+        path_overrides = _CONTROLLER_BEHAVIOR_CORRECTION_PATH_OVERRIDES_BY_UNIT[unit_id]
         for signal_id in diagnostic_ids:
             if signal_id == SALESFORCE_CONTROLLER_LWC_EXECUTION_FAILURE_DIAGNOSTIC_ID:
                 continue
             paths = merged.setdefault(signal_id, [])
-            for path in unit_paths:
+            for path in path_overrides.get(signal_id, unit_paths):
                 if path not in paths:
                     paths.append(path)
     return {signal_id: tuple(paths) for signal_id, paths in merged.items()}
@@ -424,7 +632,17 @@ ENGINEER_INSTRUCTION = (
     "manifest, frozen source, and architect_wiki_trace as evidence; the implementation contract "
     "defines outcomes and safety, not reference source text. Approved target files are expected "
     "to be new, so derive bounded internal choices and generated tests without requesting a "
-    "decision. Never return patches, commands, validation claims, or private chain-of-thought. "
+    "decision. Apply one common knowledge-arm contract without changing this instruction between "
+    "benchmark arms. If architect_wiki_trace.retrieval_strategy is benchmark_no_wiki_control, "
+    "its sole hit is arm-binding metadata and not migration guidance; on attempt one derive the "
+    "work from the exact source, approved manifest, and implementation contract. On attempt two, "
+    "if correction.correction_wiki_trace.retrieval_strategy is benchmark_no_wiki_control, use its "
+    "controller diagnostic IDs and repair directives but not its marker content as migration "
+    "guidance. Otherwise, normal curated Wiki behavior applies. Never return patches, commands, "
+    "validation claims, or private chain-of-thought. "
+    "Keep every public assumption as portable prose with no forward slash or backslash; name "
+    "repository paths and API routes in words instead of restating path notation, and never "
+    "include a host-local filesystem location. "
     "For attempt two, preserve the exact scope and prior plan, follow every controller-owned "
     "repair directive using correction.correction_wiki_trace, and return complete content only "
     "for approved files that actually change."
@@ -845,6 +1063,22 @@ def _allowed_correction_paths(
     return allowed
 
 
+def _salesforce_unit_id_for_prior_paths(prior_paths: set[str]) -> str | None:
+    """Resolve a Salesforce unit from paths unique to one registered candidate."""
+
+    marker_paths = {
+        unit_id: {path for paths in signal_paths.values() for path in paths}
+        for unit_id, signal_paths in _STAGE_CORRECTION_PATHS_BY_UNIT.items()
+    }
+    common_paths = set.intersection(*(set(paths) for paths in marker_paths.values()))
+    matched = tuple(
+        unit_id for unit_id, paths in marker_paths.items() if prior_paths & (paths - common_paths)
+    )
+    if len(matched) > 1:
+        raise AgentRuntimeError("Engineer prior file plan mixes Salesforce migration units")
+    return matched[0] if matched else None
+
+
 def _implementation_failure_summaries(report: ValidationReport) -> tuple[str, ...]:
     """Project only bounded public summaries for failed Engineer-owned checks."""
 
@@ -921,11 +1155,15 @@ def _expected_repair_directives(
     """Bind each signal to its exact approved paths and code-owned guidance."""
 
     prior_paths = {update.path for update in prior_file_plan.updates}
+    unit_id = _salesforce_unit_id_for_prior_paths(prior_paths)
+    guidance_overrides = (
+        _SALESFORCE_REPAIR_GUIDANCE_OVERRIDES_BY_UNIT[unit_id] if unit_id is not None else {}
+    )
     return tuple(
         EngineerRepairDirective(
             signal_id=signal_id,
             allowed_paths=tuple(path for path in repair_specs[signal_id][0] if path in prior_paths),
-            instruction=repair_specs[signal_id][1],
+            instruction=guidance_overrides.get(signal_id, repair_specs[signal_id][1]),
         )
         for signal_id in repair_signal_ids
     )

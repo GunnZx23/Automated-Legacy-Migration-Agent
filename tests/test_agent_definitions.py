@@ -27,16 +27,70 @@ def test_project_registry_contains_exactly_three_versioned_domain_agents() -> No
 
     assert tuple(definition.role for definition in registry.definitions) == tuple(AgentRole)
     assert tuple(definition.version for definition in registry.definitions) == (
-        "architect/v8",
-        "engineer/v23",
+        "architect/v17",
+        "engineer/v30",
         "validator/v5",
     )
     assert all("Visualforce" in definition.system_prompt for definition in registry.definitions)
     assert all("Mule 3" in definition.system_prompt for definition in registry.definitions)
     assert registry.get("engineer").header.permissions.isolated_workspace_write is True
     assert registry.get("engineer").header.output_contract == "EngineerModelOutcome"
+    assert registry.get("engineer").header.input_contracts == (
+        "EngineerWorkspaceContext",
+        "EngineerCorrectionProviderContext",
+    )
     assert "element.shadowRoot.querySelector" in registry.get("engineer").system_prompt
+    assert "createApexTestWireAdapter(jest.fn())" in registry.get("engineer").system_prompt
+    assert (
+        "with `require('@salesforce/sfdx-lwc-jest')` inside that factory"
+        in registry.get("engineer").system_prompt
+    )
+    assert (
+        "Emit wired data or error only after the component is appended"
+        in registry.get("engineer").system_prompt
+    )
+    assert "Mock each imperative dependent-read method" in registry.get("engineer").system_prompt
+    assert "only on the parent read consumed with `@wire`" in registry.get("engineer").system_prompt
+    assert (
+        "never mark that dependent read `cacheable=true`" in registry.get("engineer").system_prompt
+    )
+    assert "at least three consecutive microtask turns" in registry.get("engineer").system_prompt
+    assert (
+        "Never render `error.message`, `error.body.message`"
+        in registry.get("engineer").system_prompt
+    )
+    assert "predicate-only fields in `WHERE`" in registry.get("engineer").system_prompt
+    assert (
+        "update count and path set MUST equal `manifest.approved_paths`"
+        in registry.get("engineer").system_prompt
+    )
+    engineer_prompt = registry.get("engineer").system_prompt
+    assert "without changing this prompt between benchmark arms" in engineer_prompt
+    assert (
+        "`architect_wiki_trace.retrieval_strategy` is `benchmark_no_wiki_control`"
+        in engineer_prompt
+    )
+    assert "its sole hit is arm-binding metadata and not migration guidance" in engineer_prompt
+    assert (
+        "`correction.correction_wiki_trace.retrieval_strategy` is "
+        "`benchmark_no_wiki_control`" in engineer_prompt
+    )
+    assert "use its controller diagnostic IDs and repair directives" in engineer_prompt
+    assert "Otherwise, normal curated Wiki behavior applies" in engineer_prompt
     assert registry.get("architect").header.permissions.isolated_workspace_write is False
+    assert (
+        "independently launchable bounded-stretch slice" in registry.get("architect").system_prompt
+    )
+    assert (
+        "do not require evidence of a prior Salesforce run"
+        in registry.get("architect").system_prompt
+    )
+    assert "after the Salesforce core is green" not in registry.get("architect").system_prompt
+    assert "object/field" not in registry.get("architect").system_prompt
+    assert "CRUD/FLS" not in registry.get("architect").system_prompt
+    assert "src/main/mule" not in registry.get("architect").system_prompt
+    assert "src/main/resources" not in registry.get("architect").system_prompt
+    assert "src/test/munit" not in registry.get("architect").system_prompt
     assert registry.get("architect").header.input_contracts == (
         "ArchitectModelContext",
         "ArchitectConversationContext",
@@ -44,6 +98,23 @@ def test_project_registry_contains_exactly_three_versioned_domain_agents() -> No
     assert registry.get("architect").header.output_contract == (
         "ArchitectManifestProposal|ArchitectConversationReply"
     )
+    assert (
+        "No role by itself authorizes a target projection"
+        in registry.get("architect").system_prompt
+    )
+    architect_prompt = registry.get("architect").system_prompt
+    assert "must be portable prose" in architect_prompt
+    assert "cannot contain a forward slash or backslash anywhere" in architect_prompt
+    assert "name API concepts without route notation" in architect_prompt
+    assert "Repository paths are controller-owned" in architect_prompt
+    assert "without changing this prompt between benchmark arms" in architect_prompt
+    assert "must contain exactly the sole control hit `page_id`" in architect_prompt
+    assert (
+        "Never put that control ID in `semantic_decisions[].evidence_ids` or "
+        "`risk_observations[].evidence_ids`" in architect_prompt
+    )
+    assert "remains usable only for risks" in architect_prompt
+    assert "For every other retrieval strategy" in architect_prompt
     assert registry.get("validator").header.permissions.command_execution is False
     assert registry.get("validator").header.output_contract == "ValidatorModelAdvisory"
     assert all(

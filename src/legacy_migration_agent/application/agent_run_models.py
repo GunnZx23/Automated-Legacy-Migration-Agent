@@ -209,6 +209,24 @@ class AgentRunModelClients:
             return
         raise ModelConfigurationError("runtime cannot bind the recorded identity")
 
+    def resolve_runtime_identity(self) -> Sha256Digest:
+        """Resolve one shared live runtime identity before source-bearing work begins."""
+
+        if self.execution_boundary != "remote_provider_managed":
+            raise ModelConfigurationError(
+                "only a provider-managed remote runtime has a benchmark identity preflight"
+            )
+        resolver = getattr(self.architect, "resolve_runtime_identity", None)
+        if not callable(resolver):
+            raise ModelConfigurationError("remote runtime cannot resolve its identity")
+        value = resolver()
+        if not isinstance(value, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+            raise ModelConfigurationError("remote runtime returned an invalid identity")
+        for client in (self.architect, self.engineer, self.validator):
+            if client is not self.architect:
+                raise ModelConfigurationError("runtime roles do not share one client identity")
+        return value
+
 
 class _SanitizedModelClient:
     """Prevent provider exceptions from crossing into durable state verbatim."""
@@ -311,8 +329,7 @@ class _SanitizedModelClient:
         try:
             raw = getattr(self._client, "runtime_identity_digest", None)
             if raw is not None and (
-                not isinstance(raw, str)
-                or re.fullmatch(r"sha256:[0-9a-f]{64}", raw) is None
+                not isinstance(raw, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", raw) is None
             ):
                 raise TypeError("runtime identity evidence has an invalid type")
             identity = raw
@@ -344,6 +361,7 @@ class _SanitizedModelClient:
         )
         category: AgentRunFailureCategory | None = None
         reason_code: AgentRunFailureReason | None = None
+        error_type: str | None = None
         parsed: OutputModel | None = None
         try:
             raw = self._client.parse(
@@ -355,6 +373,7 @@ class _SanitizedModelClient:
         except Exception as error:
             category = _classify_model_exception(error)
             reason_code = _model_failure_reason(error, category)
+            error_type = type(error).__name__
         if category is not None:
             lifecycle_event(
                 "model.call.failed",
@@ -362,6 +381,7 @@ class _SanitizedModelClient:
                 role=self._role,
                 category=category,
                 reason_code=reason_code,
+                error_type=error_type,
                 attempt=self._seam_tracker.attempt,
                 elapsed_ms=_elapsed_milliseconds(started_ns),
             )
@@ -537,7 +557,11 @@ def _model_failure_reason(
     if (
         category == "provider_unavailable"
         and isinstance(error, ModelRuntimeError)
-        and str(error) == "local Ollama request exceeded its deadline"
+        and str(error)
+        in {
+            "local Ollama request exceeded its deadline",
+            "Claude request exceeded its deadline",
+        }
     ):
         return "provider_timeout"
     if isinstance(error, ModelOutputError):
@@ -548,6 +572,7 @@ def _model_failure_reason(
             return "model_inventory_invalid"
         if (
             message == "model structured output failed schema validation"
+            or message == "Claude structured output failed schema validation"
             or message.startswith("local Ollama structured output")
             or message.startswith("local Ollama structured text")
             or message == "local Ollama response did not contain structured text"

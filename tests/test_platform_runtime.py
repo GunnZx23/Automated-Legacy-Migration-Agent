@@ -18,6 +18,9 @@ from legacy_migration_agent.agent_runtime.agent_definitions import (
     AgentRole,
     load_agent_registry,
 )
+from legacy_migration_agent.agent_runtime.model_agent_correction import (
+    EngineerCorrectionContext,
+)
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectContext,
     ArchitectManifestProposal,
@@ -25,6 +28,7 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectSemanticDecision,
 )
 from legacy_migration_agent.agent_runtime.model_workflow import ModelAgentWorkflowRoles
+from legacy_migration_agent.agent_runtime.run_artifact_paths import RunArtifactPaths
 from legacy_migration_agent.contracts import (
     ApprovalAction,
     MigrationRequest,
@@ -44,12 +48,24 @@ from legacy_migration_agent.graphs.dependency_graph import (
     SALESFORCE_ANALYZER_VERSION,
     build_salesforce_dependency_graph,
 )
-from legacy_migration_agent.graphs.graph_contracts import DependencyGraph
+from legacy_migration_agent.graphs.graph_assurance import (
+    GraphAssuranceReport,
+    GraphAssuranceStatus,
+    _report_id,
+)
+from legacy_migration_agent.graphs.graph_contracts import (
+    DependencyGraph,
+    EdgeKind,
+    ParserWarning,
+    SourceProvenance,
+    WarningCode,
+)
 from legacy_migration_agent.graphs.graph_store import GraphSnapshotStore
 from legacy_migration_agent.graphs.mulesoft_dependency_graph import (
     MULESOFT_ANALYZER_VERSION,
     build_mulesoft_dependency_graph,
 )
+from legacy_migration_agent.knowledge.wiki import BenchmarkKnowledgeBinding
 from legacy_migration_agent.platforms.mulesoft_runtime import MULESOFT_PLATFORM_ADAPTER
 from legacy_migration_agent.platforms.platform_runtime import (
     PlatformGraphBuilder,
@@ -67,7 +83,7 @@ from legacy_migration_agent.workflow import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WIKI_ROOT = PROJECT_ROOT / "knowledge/wiki"
 AGENTS_ROOT = PROJECT_ROOT / "agents"
-AS_OF = date(2026, 8, 27)
+AS_OF = date(2026, 8, 29)
 SF_FIXTURE = PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input"
 SF_ENTRY = "force-app/main/default/pages/LegacyAccountContactExplorer.page"
 MULE_FIXTURE = PROJECT_ROOT / "fixtures/mulesoft/customer-status-api/input"
@@ -140,7 +156,7 @@ class ArchitectManifestModel:
         output_type: type[BaseModel],
     ) -> BaseModel:
         self.calls.append(output_type.__name__)
-        if output_type is not ArchitectManifestProposal:
+        if not issubclass(output_type, ArchitectManifestProposal):
             raise AssertionError("Engineer and Validator must remain unreachable")
         context = ArchitectModelContext.model_validate(input_value)
         return ArchitectManifestProposal(
@@ -252,6 +268,7 @@ def _factory(
     graph_store: GraphSnapshotStore | None = None,
     wiki_root: Path = WIKI_ROOT,
     wiki_max_primary_hits: int = 3,
+    benchmark_knowledge_binding: BenchmarkKnowledgeBinding | None = None,
 ) -> RevisionBoundArchitectContextFactory:
     return RevisionBoundArchitectContextFactory.for_session(
         case.session,
@@ -265,6 +282,45 @@ def _factory(
         wiki_as_of=AS_OF,
         platform_adapter=case.adapter,
         wiki_max_primary_hits=wiki_max_primary_hits,
+        benchmark_knowledge_binding=benchmark_knowledge_binding,
+    )
+
+
+def _no_wiki_binding(case: RuntimeCase) -> BenchmarkKnowledgeBinding:
+    case_id = f"{case.request.platform.value}-runtime-case"
+    return BenchmarkKnowledgeBinding(
+        benchmark_id="measured-v2",
+        benchmark_definition_digest="sha256:" + "2" * 64,
+        benchmark_registry_digest="sha256:" + "3" * 64,
+        configuration_digest="sha256:" + "4" * 64,
+        provider_id="claude-cli",
+        model_id="claude-sonnet-5",
+        cell_id=f"{case_id}--full-agent-no-wiki--r1",
+        case_id=case_id,
+        scenario_id=case.session.context.slice_id,
+        knowledge_arm="full_agent_no_wiki",
+        request_digest=artifact_digest(case.request),
+        source_revision=case.request.base_revision,
+        wiki_tree_revision="sha256:" + "5" * 64,
+    )
+
+
+def _wiki_binding(case: RuntimeCase, wiki_root: Path) -> BenchmarkKnowledgeBinding:
+    case_id = f"{case.request.platform.value}-runtime-case"
+    return BenchmarkKnowledgeBinding(
+        benchmark_id="measured-v2",
+        benchmark_definition_digest="sha256:" + "2" * 64,
+        benchmark_registry_digest="sha256:" + "3" * 64,
+        configuration_digest="sha256:" + "4" * 64,
+        provider_id="claude-cli",
+        model_id="claude-sonnet-5",
+        cell_id=f"{case_id}--full-agent-wiki--r1",
+        case_id=case_id,
+        scenario_id=case.session.context.slice_id,
+        knowledge_arm="full_agent_wiki",
+        request_digest=artifact_digest(case.request),
+        source_revision=case.request.base_revision,
+        wiki_tree_revision=content_revision(wiki_root),
     )
 
 
@@ -331,7 +387,11 @@ def test_both_platforms_reuse_exact_cache_and_invalidate_on_analyzer_change(
         f"sha256:{hashlib.sha256(source_bytes).hexdigest()}"
     )
     assert first.wiki_trace.hits
-    assert tuple(case.session.evidence_dir.glob("indexes/graph-*.json"))
+    assert tuple(
+        path
+        for path in case.session.evidence_dir.glob("indexes/graph-*.json")
+        if not path.name.startswith("graph-assurance-")
+    )
 
     changed_counter = CountingBuilder(case.runtime.graph_builder)
     changed_runtime = PlatformRuntimeConfig(
@@ -342,7 +402,78 @@ def test_both_platforms_reuse_exact_cache_and_invalidate_on_analyzer_change(
     changed = _factory(case, runtime=changed_runtime)(case.request)
     assert isinstance(changed, ArchitectContext)
     assert changed_counter.calls == 1
-    assert len(tuple(case.session.evidence_dir.glob("indexes/graph-*.json"))) == 2
+    assert (
+        len(
+            tuple(
+                path
+                for path in case.session.evidence_dir.glob("indexes/graph-*.json")
+                if not path.name.startswith("graph-assurance-")
+            )
+        )
+        == 2
+    )
+
+
+def test_benchmark_no_wiki_factory_never_loads_wiki_and_keeps_correction_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path, Platform.SALESFORCE)
+    normal_context = _factory(case)(case.request)
+    assert isinstance(normal_context, ArchitectContext)
+
+    def fail_if_wiki_loads(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no-Wiki benchmark arm must never load the Wiki")
+
+    monkeypatch.setattr(
+        "legacy_migration_agent.platforms.platform_runtime.LlmWiki.load",
+        fail_if_wiki_loads,
+    )
+    factory = _factory(
+        case,
+        wiki_root=case.project / "wiki-path-that-does-not-exist",
+        benchmark_knowledge_binding=_no_wiki_binding(case),
+    )
+
+    context = factory(case.request)
+    correction_query = "controller_jest_case_results salesforce correction validation"
+    correction_trace = factory.retrieve_correction_wiki(case.request, correction_query)
+
+    assert isinstance(context, ArchitectContext)
+    assert context.wiki_trace.query == normal_context.wiki_trace.query == case.query
+    assert context.instruction == normal_context.instruction
+    assert context.dependency_graph == normal_context.dependency_graph
+    assert context.wiki_trace.retrieval_strategy == "benchmark_no_wiki_control"
+    assert context.wiki_trace.hits[0].sources == ()
+    assert context.wiki_trace.hits[0].selected_content.endswith("No Wiki guidance was retrieved.")
+    assert correction_trace.retrieval_strategy == "benchmark_no_wiki_control"
+    assert correction_trace.query == correction_query
+    assert correction_trace.hits[0].sources == ()
+    EngineerCorrectionContext.require_wiki_signal_coverage(
+        correction_trace,
+        ("controller_jest_case_results",),
+    )
+
+
+def test_benchmark_wiki_revision_is_rechecked_before_correction_retrieval(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path, Platform.SALESFORCE)
+    copied_wiki = tmp_path / "copied-wiki"
+    shutil.copytree(WIKI_ROOT, copied_wiki)
+    factory = _factory(
+        case,
+        wiki_root=copied_wiki,
+        benchmark_knowledge_binding=_wiki_binding(case, copied_wiki),
+    )
+    page = copied_wiki / "pages/salesforce-validation.md"
+    page.write_text(page.read_text(encoding="utf-8") + "\nUnfrozen edit.\n", encoding="utf-8")
+
+    with pytest.raises(PolicyViolation, match="Wiki tree drifted"):
+        factory.retrieve_correction_wiki(
+            case.request,
+            "salesforce_lwc_javascript_contract salesforce correction validation",
+        )
 
 
 @pytest.mark.parametrize(
@@ -514,6 +645,119 @@ def test_unresolved_graph_stops_workflow_before_wiki_or_model(
 
     assert isinstance(result.value["planning_intervention"], PlanningIntervention)
     assert model.calls == 0
+    report = GraphAssuranceReport.model_validate_json(
+        next(case.session.evidence_dir.glob("graphs/graph-assurance-*.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report.status is GraphAssuranceStatus.REVIEW_REQUIRED
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_status"),
+    (
+        ("malformed", GraphAssuranceStatus.BLOCKED),
+        ("dynamic", GraphAssuranceStatus.REVIEW_REQUIRED),
+        ("incomplete", GraphAssuranceStatus.BLOCKED),
+        ("discrepant", GraphAssuranceStatus.BLOCKED),
+    ),
+)
+def test_non_assured_graph_variants_stop_before_wiki_or_any_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    expected_status: GraphAssuranceStatus,
+) -> None:
+    case = _case(tmp_path, Platform.SALESFORCE)
+
+    def non_assured_builder(
+        repository_root: Path | str,
+        entry_paths: Iterable[str],
+        base_revision: str,
+    ) -> DependencyGraph:
+        graph = build_salesforce_dependency_graph(repository_root, entry_paths, base_revision)
+        payload = graph.model_dump(mode="python")
+        if mutation in {"malformed", "dynamic"}:
+            payload["warnings"] = [
+                ParserWarning(
+                    code=(
+                        WarningCode.MALFORMED_SOURCE
+                        if mutation == "malformed"
+                        else WarningCode.DYNAMIC_SOQL
+                    ),
+                    message=f"Synthetic {mutation} construct for assurance preflight.",
+                    provenance=SourceProvenance(
+                        path=case.entry,
+                        line=1,
+                        excerpt=f"synthetic-{mutation}",
+                        parser="assurance-test",
+                    ),
+                )
+            ]
+        elif mutation == "incomplete":
+            payload["source_digests"] = [
+                item for item in payload["source_digests"] if item["path"] != case.entry
+            ]
+        elif mutation == "discrepant":
+            payload["edges"] = [
+                item for item in payload["edges"] if item["kind"] is not EdgeKind.VF_CONTROLLER
+            ]
+        else:  # pragma: no cover - the parameter set is closed
+            raise AssertionError(f"unknown mutation: {mutation}")
+        return DependencyGraph.model_validate(payload)
+
+    runtime = PlatformRuntimeConfig(
+        Platform.SALESFORCE,
+        f"{SALESFORCE_ANALYZER_VERSION}.{mutation}",
+        non_assured_builder,
+    )
+    factory = _factory(case, runtime=runtime)
+    monkeypatch.setattr(
+        "legacy_migration_agent.platforms.platform_runtime.LlmWiki.load",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("non-assured graphs must stop before Wiki retrieval")
+        ),
+    )
+    model = NeverModel()
+
+    def unreachable(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("Engineer and Validator must remain unreachable")
+
+    roles = ModelAgentWorkflowRoles(
+        case.registry,
+        architect_model=model,
+        engineer_model=model,
+        validator_model=model,
+        architect_context_factory=factory,
+        workspace_factory=unreachable,
+        deterministic_validator=unreachable,
+        artifact_store=case.session.store,
+    )
+
+    result = (
+        factory.bind_workflow_roles(roles)
+        .build()
+        .start(case.request, thread_id=case.session.context.thread_id)
+    )
+
+    intervention = result.value["planning_intervention"]
+    assert isinstance(intervention, PlanningIntervention)
+    assert model.calls == 0
+    report = GraphAssuranceReport.model_validate_json(
+        next(case.session.evidence_dir.glob("graphs/graph-assurance-*.json")).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report.status is expected_status
+    assert intervention.evidence[0].source_digest == artifact_digest(report)
+    assert (
+        GraphAssuranceReport.model_validate(
+            case.session.store.read_json(
+                RunArtifactPaths(case.request.request_id).graph_assurance_report
+            )
+        )
+        == report
+    )
 
 
 def test_session_bound_roles_reject_altered_executing_architect_definition(
@@ -927,4 +1171,30 @@ def test_runtime_anchor_detects_fully_recomputed_portable_graph_chain(
 
     assert tuple(case.session.runtime_anchors_dir.glob("graph-*.json"))
     with pytest.raises(PolicyViolation, match="runtime evidence anchor digest mismatch"):
+        factory(case.request)
+
+
+@pytest.mark.parametrize("mutation", ("tampered", "stale"))
+def test_session_graph_assurance_rejects_tampered_or_stale_report(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    case = _case(tmp_path, Platform.SALESFORCE)
+    factory = _factory(case)
+    assert isinstance(factory(case.request), ArchitectContext)
+    report_path = next(case.session.evidence_dir.glob("graphs/graph-assurance-*.json"))
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    if mutation == "tampered":
+        payload["dependency_graph_digest"] = "sha256:" + "0" * 64
+    else:
+        payload["source_revision"] = "sha256:" + "0" * 64
+        payload["report_id"] = _report_id(
+            {key: value for key, value in payload.items() if key != "report_id"}
+        )
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        PolicyViolation,
+        match="lifecycle evidence is malformed|differs from current reconciliation",
+    ):
         factory(case.request)

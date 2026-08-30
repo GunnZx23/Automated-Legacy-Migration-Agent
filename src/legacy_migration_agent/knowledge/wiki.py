@@ -15,14 +15,21 @@ import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, timedelta
+from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 
 from legacy_migration_agent.contracts import (
     SCHEMA_VERSION,
+    Identifier,
+    MigrationRequest,
     Platform,
+    Revision,
+    RiskCategory,
+    Sha256Digest,
     StrictModel,
     validate_relative_path,
 )
@@ -36,6 +43,171 @@ MAX_RETRIEVAL_PAGES = 3
 MAX_SELECTED_CONTENT_CHARS = 1600
 INDEX_FILENAME = "index.md"
 _ORACLE_SEGMENTS = frozenset({"expected", "golden", "oracle"})
+_BENCHMARK_NO_WIKI_PAGE_ID = "benchmark-no-wiki-control"
+_BENCHMARK_NO_WIKI_PATH = "benchmark-control/no-wiki"
+_BENCHMARK_NO_WIKI_NOTICE = (
+    "Benchmark control: curated Wiki retrieval is disabled. No Wiki guidance was retrieved."
+)
+BENCHMARK_COMPLEX_RISK_CASE_ID = "salesforce-case-management-complex-risk"
+BENCHMARK_RISK_EVIDENCE_ID = "benchmark-supplemental-evidence-01"
+
+
+class RiskReason(StrEnum):
+    """Generic, model-facing reason classification for public risk observations."""
+
+    DESTRUCTIVE_LEGACY_DELETION = "destructive_legacy_deletion"
+    SHARING_BOUNDARY_WEAKENING = "sharing_boundary_weakening"
+    OBJECT_FIELD_SECURITY_WEAKENING = "object_field_security_weakening"
+    PERMISSION_SCOPE_EXPANSION = "permission_scope_expansion"
+    PUBLIC_CONTRACT_CHANGE = "public_contract_change"
+    CROSS_APPLICATION_EFFECT = "cross_application_effect"
+    UNRESOLVED_DYNAMIC_DEPENDENCY = "unresolved_dynamic_dependency"
+    INCOMPLETE_EVIDENCE = "incomplete_evidence"
+
+
+RISK_REASON_CATEGORIES = MappingProxyType(
+    {
+        RiskReason.DESTRUCTIVE_LEGACY_DELETION: RiskCategory.DESTRUCTIVE_CHANGE,
+        RiskReason.SHARING_BOUNDARY_WEAKENING: RiskCategory.SECURITY,
+        RiskReason.OBJECT_FIELD_SECURITY_WEAKENING: RiskCategory.SECURITY,
+        RiskReason.PERMISSION_SCOPE_EXPANSION: RiskCategory.SECURITY,
+        RiskReason.PUBLIC_CONTRACT_CHANGE: RiskCategory.PUBLIC_CONTRACT,
+        RiskReason.CROSS_APPLICATION_EFFECT: RiskCategory.CROSS_APPLICATION,
+        RiskReason.UNRESOLVED_DYNAMIC_DEPENDENCY: RiskCategory.DYNAMIC_DEPENDENCY,
+        RiskReason.INCOMPLETE_EVIDENCE: RiskCategory.INCOMPLETE_EVIDENCE,
+    }
+)
+BENCHMARK_RISK_REASONS = (
+    RiskReason.DESTRUCTIVE_LEGACY_DELETION,
+    RiskReason.SHARING_BOUNDARY_WEAKENING,
+    RiskReason.OBJECT_FIELD_SECURITY_WEAKENING,
+    RiskReason.PERMISSION_SCOPE_EXPANSION,
+)
+BENCHMARK_RISK_CATEGORIES = (
+    RiskCategory.DESTRUCTIVE_CHANGE,
+    RiskCategory.SECURITY,
+)
+
+
+def risk_category_for_reason(reason: RiskReason) -> RiskCategory:
+    """Return the stable broad category for one public reason classification."""
+
+    return RISK_REASON_CATEGORIES[reason]
+
+
+class BenchmarkRiskStimulus(StrictModel):
+    """Inert, non-authorizing benchmark evidence safe for the Architect call."""
+
+    evidence_id: Identifier
+    authority: Literal["none"] = "none"
+    request_text: str = Field(min_length=1, max_length=4000)
+    seed_artifact_digest: Sha256Digest
+
+
+class BenchmarkRiskSeedBinding(StrictModel):
+    """Controller policy for one digest-bound synthetic risk stimulus."""
+
+    seed_id: Identifier
+    case_id: Identifier
+    stimulus: BenchmarkRiskStimulus
+    stimulus_digest: Sha256Digest
+    required_categories: tuple[RiskCategory, ...]
+    required_reasons: tuple[RiskReason, ...]
+    expected_disposition: Literal["decision_required"] = "decision_required"
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> BenchmarkRiskSeedBinding:
+        if self.stimulus_digest != artifact_digest(self.stimulus):
+            raise ValueError("benchmark risk stimulus does not match its digest")
+        if self.required_categories != BENCHMARK_RISK_CATEGORIES:
+            raise ValueError("benchmark risk categories must use the controller-owned policy")
+        if self.required_reasons != BENCHMARK_RISK_REASONS:
+            raise ValueError("benchmark risk reasons must use the controller-owned policy")
+        categories_from_reasons = tuple(
+            dict.fromkeys(risk_category_for_reason(reason) for reason in self.required_reasons)
+        )
+        if categories_from_reasons != self.required_categories:
+            raise ValueError("benchmark risk reasons do not match the broad category policy")
+        if self.case_id != BENCHMARK_COMPLEX_RISK_CASE_ID:
+            raise ValueError("benchmark risk seed is bound to the wrong case")
+        if self.stimulus.evidence_id != BENCHMARK_RISK_EVIDENCE_ID:
+            raise ValueError("benchmark risk evidence must use the opaque controller ID")
+        return self
+
+
+class BenchmarkKnowledgeBinding(StrictModel):
+    """Immutable benchmark arm binding; it is never accepted by normal run starts."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    benchmark_id: Identifier
+    benchmark_definition_digest: Sha256Digest
+    benchmark_registry_digest: Sha256Digest
+    configuration_digest: Sha256Digest
+    provider_id: Identifier
+    model_id: str = Field(min_length=1, max_length=240)
+    cell_id: Identifier
+    case_id: Identifier
+    scenario_id: Identifier
+    knowledge_arm: Literal["full_agent_wiki", "full_agent_no_wiki"]
+    request_digest: Sha256Digest
+    source_revision: Revision
+    wiki_tree_revision: Revision
+    execution_anchor_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    runtime_identity_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    risk_seed_binding: BenchmarkRiskSeedBinding | None = None
+
+    @model_validator(mode="after")
+    def validate_cell_binding(self) -> BenchmarkKnowledgeBinding:
+        if (self.execution_anchor_digest is None) != (self.runtime_identity_digest is None):
+            raise ValueError(
+                "benchmark execution anchor and runtime identity must be supplied together"
+            )
+        config_id = (
+            "full-agent-wiki" if self.knowledge_arm == "full_agent_wiki" else "full-agent-no-wiki"
+        )
+        if re.fullmatch(rf"{re.escape(self.case_id)}--{config_id}--r[1-3]", self.cell_id) is None:
+            raise ValueError("benchmark cell ID does not match its case and knowledge arm")
+        if self.case_id == BENCHMARK_COMPLEX_RISK_CASE_ID:
+            if self.risk_seed_binding is None:
+                raise ValueError("complex Case benchmark cells require the bound risk seed")
+            if self.risk_seed_binding.case_id != self.case_id:
+                raise ValueError("benchmark risk seed selects another case")
+        elif self.risk_seed_binding is not None:
+            raise ValueError("benchmark risk seed is forbidden outside the complex Case cell")
+        return self
+
+    @property
+    def execution_anchored(self) -> bool:
+        """Return whether the cell is bound to one pre-run runtime authority."""
+
+        return self.execution_anchor_digest is not None
+
+    @property
+    def binding_digest(self) -> Sha256Digest:
+        """Return the canonical digest used by control traces and run evidence."""
+
+        return artifact_digest(self)
+
+    def require_request(
+        self,
+        request: MigrationRequest,
+        *,
+        scenario_id: str,
+    ) -> None:
+        """Fail closed if this benchmark cell is replayed against another input."""
+
+        if self.scenario_id != scenario_id:
+            raise PolicyViolation("benchmark knowledge binding selects another scenario")
+        if self.request_digest != artifact_digest(request):
+            raise PolicyViolation("benchmark knowledge binding selects another request")
+        if self.source_revision != request.base_revision:
+            raise PolicyViolation("benchmark knowledge binding selects another source revision")
 
 
 class WikiSource(StrictModel):
@@ -116,7 +288,10 @@ class RetrievalHit(StrictModel):
     page_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
     selected_content: str = Field(min_length=1, max_length=MAX_SELECTED_CONTENT_CHARS)
     selected_content_digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
-    content_kind: Literal["curated_wiki_evidence"] = "curated_wiki_evidence"
+    content_kind: Literal[
+        "curated_wiki_evidence",
+        "benchmark_no_wiki_control",
+    ] = "curated_wiki_evidence"
     sources: tuple[WikiSource, ...]
 
     @model_validator(mode="after")
@@ -128,7 +303,10 @@ class RetrievalHit(StrictModel):
 
 
 class RetrievalTrace(StrictModel):
-    retrieval_strategy: Literal["deterministic_lexical"] = "deterministic_lexical"
+    retrieval_strategy: Literal[
+        "deterministic_lexical",
+        "benchmark_no_wiki_control",
+    ] = "deterministic_lexical"
     query: str = Field(min_length=1)
     normalized_terms: tuple[str, ...]
     platform: Platform | None = None
@@ -152,7 +330,125 @@ class RetrievalTrace(StrictModel):
         expected = _evidence_bundle_digest(self.catalog_digest, self.hits)
         if self.evidence_bundle_digest != expected:
             raise ValueError("Wiki evidence bundle does not match its digest")
+        if self.retrieval_strategy == "benchmark_no_wiki_control":
+            _validate_no_wiki_control_trace(self)
+        elif any(hit.content_kind != "curated_wiki_evidence" for hit in self.hits):
+            raise ValueError("Wiki retrieval cannot contain benchmark control markers")
         return self
+
+
+def benchmark_no_wiki_control_trace(
+    binding: BenchmarkKnowledgeBinding,
+    request: MigrationRequest,
+    *,
+    scenario_id: str,
+    query: str,
+    as_of: date,
+    include_controller_diagnostic_ids: bool,
+) -> RetrievalTrace:
+    """Build one digest-bound marker without opening or retrieving from the Wiki.
+
+    The marker is controller metadata, not migration guidance. For a correction
+    query it repeats only the exact controller-derived repair identifiers that
+    are already present in the query so the unchanged retry controller can bind
+    its repair contract without importing any Wiki excerpt.
+    """
+
+    frozen_binding = BenchmarkKnowledgeBinding.model_validate(binding.model_dump(mode="python"))
+    if frozen_binding.knowledge_arm != "full_agent_no_wiki":
+        raise PolicyViolation("a no-Wiki control trace requires the no-Wiki benchmark arm")
+    frozen_binding.require_request(request, scenario_id=scenario_id)
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise PolicyViolation("benchmark no-Wiki control query cannot be blank")
+    diagnostic_ids = (
+        tuple(
+            sorted(
+                token
+                for token in normalized_query.split()
+                if EXACT_DIAGNOSTIC_ID_PATTERN.fullmatch(token) is not None
+            )
+        )
+        if include_controller_diagnostic_ids
+        else ()
+    )
+    selected_content = _BENCHMARK_NO_WIKI_NOTICE
+    if diagnostic_ids:
+        selected_content += "\nController-derived repair signal IDs: " + " ".join(diagnostic_ids)
+    hit = RetrievalHit(
+        page_id=_BENCHMARK_NO_WIKI_PAGE_ID,
+        title="Benchmark no-Wiki control",
+        path=_BENCHMARK_NO_WIKI_PATH,
+        score=0.0,
+        matched_fields=("benchmark-control",),
+        source_version=request.target.source_version,
+        target_version=request.target.target_version,
+        status="pilot",
+        owner="benchmark-controller",
+        last_verified=as_of,
+        page_digest=frozen_binding.binding_digest,
+        selected_content=selected_content,
+        selected_content_digest=_text_digest(selected_content),
+        content_kind="benchmark_no_wiki_control",
+        sources=(),
+    )
+    hits = (hit,)
+    return RetrievalTrace(
+        retrieval_strategy="benchmark_no_wiki_control",
+        query=normalized_query,
+        normalized_terms=tuple(sorted(_tokens(normalized_query))),
+        platform=request.platform,
+        source_version=request.target.source_version,
+        target_version=request.target.target_version,
+        catalog_digest=frozen_binding.binding_digest,
+        as_of=as_of,
+        max_age_days=365,
+        max_primary_hits=1,
+        expand_links=False,
+        hits=hits,
+        evidence_bundle_digest=_evidence_bundle_digest(
+            frozen_binding.binding_digest,
+            hits,
+        ),
+    )
+
+
+def _validate_no_wiki_control_trace(trace: RetrievalTrace) -> None:
+    """Reject any content-bearing or weakly bound imitation of the control arm."""
+
+    if len(trace.hits) != 1:
+        raise ValueError("benchmark no-Wiki trace requires one controller marker")
+    hit = trace.hits[0]
+    exact_ids = tuple(
+        sorted(
+            token
+            for token in trace.query.split()
+            if EXACT_DIAGNOSTIC_ID_PATTERN.fullmatch(token) is not None
+        )
+    )
+    allowed_content = {_BENCHMARK_NO_WIKI_NOTICE}
+    if exact_ids:
+        allowed_content.add(
+            _BENCHMARK_NO_WIKI_NOTICE
+            + "\nController-derived repair signal IDs: "
+            + " ".join(exact_ids)
+        )
+    if (
+        hit.page_id != _BENCHMARK_NO_WIKI_PAGE_ID
+        or hit.path != _BENCHMARK_NO_WIKI_PATH
+        or hit.score != 0.0
+        or hit.matched_fields != ("benchmark-control",)
+        or hit.expanded_from is not None
+        or hit.status != "pilot"
+        or hit.owner != "benchmark-controller"
+        or hit.content_kind != "benchmark_no_wiki_control"
+        or hit.sources
+        or hit.selected_content not in allowed_content
+        or hit.page_digest != trace.catalog_digest
+        or trace.expand_links
+        or trace.max_primary_hits != 1
+    ):
+        raise ValueError("benchmark no-Wiki trace contains noncanonical control evidence")
 
 
 @dataclass(frozen=True)

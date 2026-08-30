@@ -166,6 +166,14 @@ def manifest_decision_request(
     if manifest.status is not ManifestStatus.PLANNED:
         raise PolicyViolation("only a planned manifest can request implementation approval")
     digest_token = digest.removeprefix("sha256:")[:24]
+    assurance_evidence = (
+        ()
+        if manifest.graph_assurance_report_digest is None
+        else (
+            f"graph_assurance_status={manifest.graph_assurance_status}",
+            f"graph_assurance_report_digest={manifest.graph_assurance_report_digest}",
+        )
+    )
     return DecisionRequest(
         decision_id=f"manifest-approval-{digest_token}",
         request_id=request.request_id,
@@ -179,6 +187,7 @@ def manifest_decision_request(
             f"manifest_id={manifest.manifest_id}",
             f"manifest_digest={digest}",
             f"base_revision={manifest.base_revision}",
+            *assurance_evidence,
         ),
         options=(
             ApprovalSelection.APPROVE,
@@ -349,6 +358,13 @@ def decision_required_manifest_request(
         f"manifest_digest={digest}",
         f"base_revision={manifest.base_revision}",
     ]
+    if manifest.graph_assurance_report_digest is not None:
+        evidence.extend(
+            (
+                f"graph_assurance_status={manifest.graph_assurance_status}",
+                f"graph_assurance_report_digest={manifest.graph_assurance_report_digest}",
+            )
+        )
     evidence.extend(
         f"unresolved_dependency={dependency.path}:{dependency.relation}"
         for dependency in manifest.dependencies
@@ -967,7 +983,8 @@ class MigrationWorkflow:
         if request.action is not CorrectionAction.RETRY_IMPLEMENTATION:
             if request.action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL:
                 raise PolicyViolation(
-                    "plan-invalid evidence requires a new manifest digest and approval"
+                    "plan-invalid evidence requires graph regeneration, a new manifest digest, "
+                    "and approval"
                 )
             raise PolicyViolation("terminal evidence does not authorize a correction retry")
         expected = {

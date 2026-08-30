@@ -21,13 +21,13 @@ correction gate** appears.
 - The controller-pinned Jest install present at `tooling/lwc-jest/node_modules`
   (the `salesforce-lwc-jest` / `salesforce-lwc-controller-jest` checks need it).
 - `uv` for launching the server; `npx` for the Playwright CLI wrapper.
-- Playwright CLI wrapper at
-  `/Users/gurleen.singh/.codex/skills/playwright/scripts/playwright_cli.sh`.
+- An installed Playwright CLI wrapper. This repository does not bundle it; set
+  `PLAYWRIGHT_CLI` to its absolute path before running the commands below.
 
 ## 1. Boot the record-mode server (background)
 
 ```bash
-cd /Users/gurleen.singh/Documents/Codex/2026-07-30/thi/repo
+cd /path/to/Automated-Legacy-Migration-Agent
 uv run python tooling/e2e/record_mode_serve.py \
     --scenario-id case-management-console --port 8901
 ```
@@ -35,7 +35,7 @@ uv run python tooling/e2e/record_mode_serve.py \
 Wait until it prints (pick another port if 8901 is busy):
 
 ```
-[record_mode_serve] scenario_id='case-management-console' model_id='qwen3:8b' ... (recorded double active; no live model, no network)
+[record_mode_serve] scenario_id='case-management-console' model_id='recorded-e2e-model' ... (recorded double active; no live model, no network)
 event=ui.server.ready host="127.0.0.1" port=8901
 Agent UI available at http://127.0.0.1:8901/
 ```
@@ -52,7 +52,7 @@ curl -s http://127.0.0.1:8901/api/scenarios | jq '.scenarios[].scenario_id'
 All commands are prefixed with:
 
 ```bash
-PW=/Users/gurleen.singh/.codex/skills/playwright/scripts/playwright_cli.sh
+PLAYWRIGHT_CLI=/path/to/playwright_cli.sh
 SES="--session capstone-case-e2e"
 ```
 
@@ -63,22 +63,19 @@ The CLI `click`/`fill` `<target>` is an **element ref taken from the latest
 
 | # | Command | Real control label (getByRole locator the CLI ran) |
 |---|---------|-----------------------------------------------------|
-| 1 | `$PW $SES open http://127.0.0.1:8901/` | navigate |
-| 2 | `$PW $SES snapshot` | confirm scenario buttons rendered from `GET /api/scenarios` |
-| 3 | `$PW $SES click e52` | button **"SF Case Management Console"** → `getByRole('button', { name: 'SF Case Management Console' })`. Textbox auto-fills with the Case canonical request; `state.selectedScenarioId = case-management-console`. |
-| 4 | `$PW $SES fill e56 "The Case Management Console scope looks right. I'm ready for the Controller's canonical launch gate."` | textbox **"Message for the local Architect model"** → `getByRole('textbox', { name: 'Message for the local' })` |
-| 5 | `$PW $SES click e60` | button **"Send"** → `getByRole('button', { name: 'Send' })`. Opens the **"Start this migration?"** launch gate bound to *Case Management Console* (Source: `LegacyCaseManagementConsole.page + LegacyCaseManagementConsoleController.cls + LegacyCaseQueryService.cls`). |
-| 6 | `$PW $SES click e161` | button **"Start migration"** → `getByRole('button', { name: 'Start migration' })`. Opens the manifest approval gate: 11-path manifest, 7 required local checks, reviewer ID pre-filled `capstone-author`. |
-| 7 | `$PW $SES click e328` | button **"Approve & create candidate"** → `getByRole('button', { name: 'Approve & create candidate' })`. Runs the Engineer recorded output + the **real** local validator (all 7 checks). Takes several seconds. |
-| 8 | `$PW $SES snapshot` | assert terminal disposition (see assertions below) — **no correction gate must appear** |
-| 9 | `$PW $SES click e473` | button **"Request final review"** → `getByRole('button', { name: 'Request final review' })`. Opens the final-review decision gate, reviewer pre-filled `independent-reviewer`. |
-| 10 | `$PW $SES click e679` | button **"Accept candidate"** → `getByRole('button', { name: 'Accept candidate' })` |
-| 11 | `$PW $SES snapshot` | capture the accepted terminal state |
+| 1 | `$PLAYWRIGHT_CLI $SES open http://127.0.0.1:8901/` | navigate |
+| 2 | `$PLAYWRIGHT_CLI $SES snapshot` | confirm scenario buttons rendered from `GET /api/scenarios` |
+| 3 | `$PLAYWRIGHT_CLI $SES click e52` | button **"SF Case Management Console"** → `getByRole('button', { name: 'SF Case Management Console' })`. Textbox auto-fills with the Case canonical request; `state.selectedScenarioId = case-management-console`. |
+| 4 | `$PLAYWRIGHT_CLI $SES fill e56 "The Case Management Console scope looks right. I'm ready for the Controller's canonical launch gate."` | textbox **"Message for the local Architect model"** → `getByRole('textbox', { name: 'Message for the local' })` |
+| 5 | `$PLAYWRIGHT_CLI $SES click e60` | button **"Send"** → `getByRole('button', { name: 'Send' })`. Opens the **"Start this migration?"** launch gate bound to *Case Management Console* (Source: `LegacyCaseManagementConsole.page + LegacyCaseManagementConsoleController.cls + LegacyCaseQueryService.cls`). |
+| 6 | `$PLAYWRIGHT_CLI $SES click e161` | button **"Start migration"** → `getByRole('button', { name: 'Start migration' })`. Opens the manifest approval gate: 11-path manifest, 7 required local checks, reviewer ID pre-filled `capstone-author`. |
+| 7 | `$PLAYWRIGHT_CLI $SES click e328` | button **"Approve & create candidate"** → `getByRole('button', { name: 'Approve & create candidate' })`. Runs the Engineer recorded output + the **real** local validator (all 7 checks). Takes several seconds. |
+| 8 | `$PLAYWRIGHT_CLI $SES snapshot` | assert terminal disposition (see assertions below) — **no correction gate must appear** |
+| 9 | `$PLAYWRIGHT_CLI $SES click e473` | button **"Request final review"** → `getByRole('button', { name: 'Request final review' })`. Opens the final-review decision gate, reviewer pre-filled `independent-reviewer`. |
+| 10 | `$PLAYWRIGHT_CLI $SES snapshot` | capture the `awaiting final review` state, then stop. An actual designated human may inspect and decide separately. |
 
-> Note on `aria-pressed`: both Salesforce scenario buttons show `[pressed]` after
-> selecting either one — `app.js` sets `aria-pressed` by *platform*, not scenario.
-> The actually-selected scenario is confirmed by the textbox content and by the
-> launch/manifest gates naming *Case Management Console*.
+Only the exact selected scenario button reports `aria-pressed=true`; the other
+Salesforce scenario remains unpressed even though both share a platform.
 
 ## 3. Expected completion assertions (quote these from the final snapshot)
 
@@ -91,8 +88,9 @@ The CLI `click`/`fill` `<target>` is an **element ref taken from the latest
 - Candidate = 11 additive files (the `caseManagementConsole` LWC + `__tests__`,
   `CaseManagementConsoleController` + test + meta, `CaseManagementConsoleUser`
   permission set, `manifest/package.xml`). Legacy Apex/Visualforce preserved.
-- Final review panel: `Designated reviewer: independent-reviewer`, `Status: accepted`;
-  status line: `Final human review: accepted. External actions remain unauthorized.`
+- Final review panel: `Designated reviewer: independent-reviewer`,
+  `Status: awaiting final review`; the automation must not record an acceptance,
+  rejection, or change request on that human's behalf.
 - Export controls present and **enabled** (not `[disabled]`):
   **"↓ Download review candidate"** and **"↳ Save review candidate"**.
 
@@ -100,11 +98,15 @@ If a correction gate appears, or any check reports `failed`/`unavailable`, or th
 disposition is not `ready_for_human_review`, STOP — the run diverged; do not
 treat it as success.
 
+The Playwright drive must also stop after requesting final review. Clicking a
+final-review decision would fabricate an independent human attestation and is
+not part of the automated E2E.
+
 ## 4. Cleanup
 
 ```bash
-$PW $SES close
-$PW $SES list                      # confirm no session named capstone-case-e2e remains
+$PLAYWRIGHT_CLI $SES close
+$PLAYWRIGHT_CLI $SES list          # confirm no session named capstone-case-e2e remains
 
 # Kill the server (uv wrapper + child python) and confirm the port is dead:
 pkill -f "record_mode_serve.py --scenario-id case-management-console --port 8901"

@@ -12,6 +12,7 @@ from pydantic import Field
 import legacy_migration_agent.agent_runtime.ollama_model as ollama_module
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectConversationReply,
+    ArchitectManifestProposal,
     EngineerFilePlanOutcome,
     EngineerModelOutcome,
 )
@@ -356,6 +357,19 @@ def test_ollama_schema_projection_preserves_architect_conversation_states() -> N
         ]
         for branch in schema["oneOf"]
     )
+
+
+def test_ollama_schema_projection_preserves_architect_risk_pair_correlation() -> None:
+    source = ArchitectManifestProposal.model_json_schema(mode="validation")
+    schema = _project_ollama_schema(source)
+
+    source_risk = source["$defs"]["ArchitectRiskObservation"]
+    projected_risk = schema["$defs"]["ArchitectRiskObservation"]
+    assert projected_risk["oneOf"] == source_risk["oneOf"]
+    assert projected_risk["properties"]["hazard_reason"]["oneOf"] == [
+        {"$ref": "#/$defs/RiskReason"},
+        {"type": "null"},
+    ]
 
 
 def test_ollama_architect_conversation_rejects_cross_state_output(

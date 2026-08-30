@@ -7,9 +7,11 @@ import pytest
 from salesforce_candidate_factory import salesforce_candidate_outputs
 
 import legacy_migration_agent.graphs.dependency_graph as dependency_graph_module
+from legacy_migration_agent.contracts import Platform
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.workspace import content_revision, snapshot_tree
 from legacy_migration_agent.graphs.dependency_graph import (
+    SALESFORCE_ANALYZER_VERSION,
     DependencyGraph,
     EdgeKind,
     NodeKind,
@@ -17,6 +19,10 @@ from legacy_migration_agent.graphs.dependency_graph import (
     build_salesforce_dependency_graph,
 )
 from legacy_migration_agent.graphs.graph_contracts import NodeKind as CommonNodeKind
+from legacy_migration_agent.graphs.graph_evaluation import (
+    evaluate_dependency_graph,
+    load_graph_label_set,
+)
 
 FIXTURE_ROOT = (
     Path(__file__).resolve().parents[1] / "fixtures" / "salesforce" / "account-contact-explorer"
@@ -37,6 +43,19 @@ def _edge_exists(graph, source_name: str, target_name: str, kind: EdgeKind) -> b
     )
 
 
+def _soql_field_provenance(graph: DependencyGraph, source_name: str, symbol: str):
+    nodes = {node.node_id: node for node in graph.nodes}
+    matches = tuple(
+        edge
+        for edge in graph.edges
+        if edge.kind is EdgeKind.SOQL_FIELD
+        and edge.symbol == symbol
+        and nodes[edge.source_id].name == source_name
+    )
+    assert len(matches) == 1
+    return matches[0].provenance
+
+
 def _write(root: Path, relative_path: str, content: str) -> Path:
     destination = root.joinpath(*relative_path.split("/"))
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +74,8 @@ def test_public_imports_and_current_graph_contract_round_trip() -> None:
 
     graph = DependencyGraph.model_validate(payload)
 
+    assert SALESFORCE_ANALYZER_VERSION == "salesforce-static-v2"
+    assert graph.schema_version == "1.0"
     assert CommonNodeKind is NodeKind
     assert graph.model_dump(mode="json") == payload
 
@@ -68,6 +89,8 @@ def test_input_fixture_builds_evidence_bearing_legacy_graph() -> None:
     )
 
     assert graph.base_revision == content_revision(source_root)
+    assert len(graph.nodes) == 14
+    assert len(graph.edges) == 22
     assert graph.has_unresolved is False
     assert graph.warnings == ()
     assert _edge_exists(
@@ -122,6 +145,31 @@ def test_input_fixture_builds_evidence_bearing_legacy_graph() -> None:
     assert all(edge.provenance for edge in graph.edges)
     assert all(digest.sha256 and len(digest.sha256) == 64 for digest in graph.source_digests)
 
+    expected_roles = {
+        "Account.Name": {"apex_soql_projection", "apex_soql_ordering"},
+        "Contact.AccountId": {"apex_soql_predicate"},
+        "Contact.Email": {"apex_soql_projection"},
+        "Contact.LastName": {"apex_soql_projection", "apex_soql_ordering"},
+    }
+    for symbol, roles in expected_roles.items():
+        provenance = _soql_field_provenance(
+            graph,
+            "LegacyAccountContactExplorerController",
+            symbol,
+        )
+        assert {item.parser for item in provenance} == roles
+        assert {item.excerpt for item in provenance} == {symbol.split(".", 1)[1]}
+
+    labels = load_graph_label_set(
+        Path(__file__).resolve().parents[1]
+        / "evaluation/salesforce-account-contact-explorer-source-edges.json",
+        platform=Platform.SALESFORCE,
+    )
+    report = evaluate_dependency_graph(graph, labels)
+    assert report.metrics.expected == report.metrics.discovered == 22
+    assert report.metrics.recall == report.metrics.precision == 1
+    assert report.missing_edges == report.unexpected_edges == ()
+
 
 def test_case_fixture_builds_evidence_bearing_legacy_graph_without_unresolved_references() -> None:
     source_root = CASE_FIXTURE_ROOT / "input"
@@ -132,10 +180,10 @@ def test_case_fixture_builds_evidence_bearing_legacy_graph_without_unresolved_re
     )
 
     assert graph.base_revision == content_revision(source_root)
+    assert len(graph.nodes) == 20
+    assert len(graph.edges) == 33
     assert graph.has_unresolved is False
-    assert not any(
-        warning.code is WarningCode.UNRESOLVED_REFERENCE for warning in graph.warnings
-    )
+    assert not any(warning.code is WarningCode.UNRESOLVED_REFERENCE for warning in graph.warnings)
     assert _edge_exists(
         graph,
         "LegacyCaseManagementConsole",
@@ -167,6 +215,26 @@ def test_case_fixture_builds_evidence_bearing_legacy_graph_without_unresolved_re
         "Contact.Name",
         EdgeKind.SOQL_FIELD,
     )
+
+    expected_roles = {
+        "Case.AccountId": (
+            {"apex_soql_projection", "apex_soql_predicate"},
+            "AccountId",
+        ),
+        "Case.IsClosed": (
+            {"apex_soql_projection", "apex_soql_predicate"},
+            "IsClosed",
+        ),
+        "Case.CaseNumber": (
+            {"apex_soql_projection", "apex_soql_ordering"},
+            "CaseNumber",
+        ),
+        "Contact.Name": ({"apex_soql_projection"}, "Contact.Name"),
+    }
+    for symbol, (roles, excerpt) in expected_roles.items():
+        provenance = _soql_field_provenance(graph, "LegacyCaseQueryService", symbol)
+        assert {item.parser for item in provenance} == roles
+        assert {item.excerpt for item in provenance} == {excerpt}
 
 
 def test_synthetic_candidate_links_lwc_test_and_permission_to_target_controller(
@@ -304,9 +372,11 @@ public class NestedQueryController {
     public static List<Account> load() {
         return [
             SELECT Id, Name,
-                (SELECT Id, Email FROM Contacts WHERE Email != null)
+                (SELECT Id, Email FROM Contacts
+                 WHERE Email != null ORDER BY Email)
             FROM Account
             WHERE Name != null
+            ORDER BY Name
         ];
     }
 }
@@ -340,6 +410,111 @@ public class NestedQueryController {
         "Contact.Id",
         EdgeKind.SOQL_FIELD,
     )
+    account_name = _soql_field_provenance(graph, "NestedQueryController", "Account.Name")
+    contact_email = _soql_field_provenance(graph, "NestedQueryController", "Contact.Email")
+    assert {item.parser for item in account_name} == {
+        "apex_soql_projection",
+        "apex_soql_predicate",
+        "apex_soql_ordering",
+    }
+    assert {item.parser for item in contact_email} == {
+        "apex_soql_projection",
+        "apex_soql_predicate",
+        "apex_soql_ordering",
+    }
+    assert {item.excerpt for item in account_name} == {"Name"}
+    assert {item.excerpt for item in contact_email} == {"Email"}
+
+
+def test_soql_bind_identifiers_are_not_field_occurrences(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    entry = _write(
+        root,
+        "force-app/main/default/classes/BindCollisionController.cls",
+        """
+public class BindCollisionController {
+    public static List<Contact> load(String Email, Account account) {
+        return [
+            SELECT Id, Email
+            FROM Contact
+            WHERE Email = :Email AND AccountId = :account.Id
+            ORDER BY Email
+        ];
+    }
+}
+""",
+    )
+
+    graph = build_salesforce_dependency_graph(
+        root,
+        (entry.relative_to(root).as_posix(),),
+        content_revision(root),
+    )
+
+    assert {edge.symbol for edge in graph.edges if edge.kind is EdgeKind.SOQL_FIELD} == {
+        "Contact.AccountId",
+        "Contact.Email",
+        "Contact.Id",
+    }
+    contact_id = _soql_field_provenance(graph, "BindCollisionController", "Contact.Id")
+    contact_email = _soql_field_provenance(graph, "BindCollisionController", "Contact.Email")
+    account_id = _soql_field_provenance(
+        graph,
+        "BindCollisionController",
+        "Contact.AccountId",
+    )
+    assert len(contact_id) == 1
+    assert contact_id[0].parser == "apex_soql_projection"
+    assert contact_id[0].excerpt == "Id"
+    assert {(item.parser, item.excerpt) for item in contact_email} == {
+        ("apex_soql_projection", "Email"),
+        ("apex_soql_predicate", "Email"),
+        ("apex_soql_ordering", "Email"),
+    }
+    assert {(item.parser, item.excerpt) for item in account_id} == {
+        ("apex_soql_predicate", "AccountId")
+    }
+
+
+def test_soql_grouping_and_having_have_bounded_field_roles(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    entry = _write(
+        root,
+        "force-app/main/default/classes/AggregateController.cls",
+        """
+public class AggregateController {
+    public static List<AggregateResult> load() {
+        return [
+            SELECT Industry, COUNT(Id)
+            FROM Account
+            WHERE Industry != null
+            GROUP BY Industry
+            HAVING COUNT(Id) > 1
+            ORDER BY Industry
+        ];
+    }
+}
+""",
+    )
+
+    graph = build_salesforce_dependency_graph(
+        root,
+        (entry.relative_to(root).as_posix(),),
+        content_revision(root),
+    )
+
+    industry = _soql_field_provenance(graph, "AggregateController", "Account.Industry")
+    account_id = _soql_field_provenance(graph, "AggregateController", "Account.Id")
+    assert {item.parser for item in industry} == {
+        "apex_soql_projection",
+        "apex_soql_predicate",
+        "apex_soql_grouping",
+        "apex_soql_ordering",
+    }
+    assert {item.parser for item in account_id} == {
+        "apex_soql_projection",
+        "apex_soql_predicate",
+    }
 
 
 def test_unknown_child_relationship_query_fails_closed(tmp_path: Path) -> None:

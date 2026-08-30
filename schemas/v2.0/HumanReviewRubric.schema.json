@@ -1,0 +1,428 @@
+{
+  "$defs": {
+    "AcceptanceEvidence": {
+      "additionalProperties": false,
+      "description": "Independent human acceptance; never inferred from workflow status.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HumanAcceptance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "AcceptanceEvidence",
+      "type": "object"
+    },
+    "BooleanEvidence": {
+      "additionalProperties": false,
+      "description": "A boolean observation with an explicit availability boundary.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "BooleanEvidence",
+      "type": "object"
+    },
+    "DefectEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "defects": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EscapedDefect"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Defects"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "DefectEvidence",
+      "type": "object"
+    },
+    "DefectImpact": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "DefectImpact",
+      "type": "string"
+    },
+    "EscapedDefect": {
+      "additionalProperties": false,
+      "properties": {
+        "defect_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Defect Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence Digest",
+          "type": "string"
+        },
+        "impact": {
+          "$ref": "#/$defs/DefectImpact"
+        }
+      },
+      "required": [
+        "defect_id",
+        "impact",
+        "description",
+        "evidence_digest"
+      ],
+      "title": "EscapedDefect",
+      "type": "object"
+    },
+    "EvidenceAvailability": {
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "title": "EvidenceAvailability",
+      "type": "string"
+    },
+    "HumanAcceptance": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "not_applicable"
+      ],
+      "title": "HumanAcceptance",
+      "type": "string"
+    },
+    "RatioEvidence": {
+      "additionalProperties": false,
+      "description": "Human-reviewed numerator and denominator, including zero observations.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "RatioEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Operator-supplied human-review attestation bound to exact run evidence.\n\nThe verifier proves internal identity and digest binding.  It does not\nauthenticate the named reviewer or independently attest the review time.",
+  "properties": {
+    "acceptance": {
+      "$ref": "#/$defs/AcceptanceEvidence"
+    },
+    "attestation": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Attestation",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "cell_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "config_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Config Id",
+      "type": "string"
+    },
+    "escaped_defects": {
+      "$ref": "#/$defs/DefectEvidence"
+    },
+    "execution_anchor_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Execution Anchor Digest",
+      "type": "string"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "repetition": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Repetition",
+      "type": "integer"
+    },
+    "review_method": {
+      "const": "independent_human_review",
+      "default": "independent_human_review",
+      "title": "Review Method",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Reviewer Id",
+      "type": "string"
+    },
+    "rubric_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Rubric Id",
+      "type": "string"
+    },
+    "run_evidence_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Run Evidence Digest",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runtime_identity_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runtime Identity Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "semantic_conformance": {
+      "$ref": "#/$defs/BooleanEvidence"
+    },
+    "wiki_support": {
+      "$ref": "#/$defs/RatioEvidence"
+    }
+  },
+  "required": [
+    "rubric_id",
+    "registry_id",
+    "registry_digest",
+    "cell_id",
+    "case_id",
+    "config_id",
+    "repetition",
+    "run_id",
+    "run_evidence_digest",
+    "runtime_identity_digest",
+    "execution_anchor_digest",
+    "reviewer_id",
+    "reviewed_at",
+    "attestation",
+    "acceptance",
+    "semantic_conformance",
+    "wiki_support",
+    "escaped_defects"
+  ],
+  "title": "HumanReviewRubric",
+  "type": "object"
+}

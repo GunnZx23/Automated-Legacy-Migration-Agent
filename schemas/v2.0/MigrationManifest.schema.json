@@ -266,6 +266,32 @@
       "title": "Dependencies",
       "type": "array"
     },
+    "graph_assurance_report_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Assurance Report Digest"
+    },
+    "graph_assurance_status": {
+      "anyOf": [
+        {
+          "const": "assured",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Assurance Status"
+    },
     "implementation_contract": {
       "default": [],
       "items": {

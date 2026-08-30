@@ -1,0 +1,102 @@
+{
+  "additionalProperties": false,
+  "description": "Operator-supplied review attestation for the frozen benchmark labels.\n\nThe evidence binds the substantive label set through ``review_subject_digest``.\nReview metadata is deliberately excluded from that subject so adding a reviewer\ndoes not create a circular digest with the registry being reviewed.  The loader\nverifies content binding, not reviewer identity or timestamp authenticity.",
+  "properties": {
+    "accepted_case_ids": {
+      "items": {
+        "maxLength": 160,
+        "minLength": 1,
+        "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Accepted Case Ids",
+      "type": "array"
+    },
+    "attestation": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Attestation",
+      "type": "string"
+    },
+    "corrections": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Corrections",
+      "type": "array"
+    },
+    "high_impact_definition_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "High Impact Definition Id",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "review_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_method": {
+      "const": "independent_human_review",
+      "default": "independent_human_review",
+      "title": "Review Method",
+      "type": "string"
+    },
+    "review_subject_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Review Subject Digest",
+      "type": "string"
+    },
+    "reviewed_at": {
+      "format": "date-time",
+      "title": "Reviewed At",
+      "type": "string"
+    },
+    "reviewer_domain": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Reviewer Domain",
+      "type": "string"
+    },
+    "reviewer_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Reviewer Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "review_id",
+    "registry_id",
+    "reviewer_id",
+    "reviewer_domain",
+    "reviewed_at",
+    "review_subject_digest",
+    "high_impact_definition_id",
+    "accepted_case_ids",
+    "attestation"
+  ],
+  "title": "BenchmarkLabelReviewEvidence",
+  "type": "object"
+}

@@ -20,8 +20,10 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectModelContext,
     ArchitectRiskObservation,
     ArchitectSemanticDecision,
+    EngineerCorrectionAuthority,
+    EngineerCorrectionContext,
+    EngineerCorrectionProviderContext,
     EngineerFilePlan,
-    EngineerFilePlanOutcome,
     EngineerFileUpdate,
     EngineerInterventionOutcome,
     EngineerModelOutcome,
@@ -34,7 +36,9 @@ from legacy_migration_agent.agent_runtime.model_agents import (
 from legacy_migration_agent.agent_runtime.model_workflow import (
     ModelAgentWorkflowRoles,
     ModelWorkflowIntegrationError,
+    RejectedArchitectModelCallReceipt,
     SanitizedModelPolicyError,
+    _safe_role_artifact_persistence_diagnostics,
     _sanitized_role_policy_error,
     filesystem_workspace_factory,
 )
@@ -60,6 +64,7 @@ from legacy_migration_agent.contracts import (
 )
 from legacy_migration_agent.core.integrity import ArtifactStore, artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
+from legacy_migration_agent.core.run_session import PortableEvidencePolicyViolation
 from legacy_migration_agent.core.scope_policy import MigrationScopePolicy, PlatformAdapter
 from legacy_migration_agent.core.workspace import content_revision
 from legacy_migration_agent.graphs.dependency_graph import build_salesforce_dependency_graph
@@ -92,12 +97,41 @@ def test_architect_unresolved_question_failure_has_precise_safe_policy_code() ->
     )
 
 
+def test_role_persistence_diagnostics_expose_only_fixed_classifier_tokens() -> None:
+    error = PortableEvidencePolicyViolation(
+        "portable evidence contains a local absolute path",
+        evidence_category="local_absolute_path",
+        field_class="source_bearing",
+    )
+
+    assert _safe_role_artifact_persistence_diagnostics(error) == (
+        "local_absolute_path",
+        "source_bearing",
+    )
+    assert _safe_role_artifact_persistence_diagnostics(PolicyViolation("arbitrary")) == (
+        "unknown",
+        "unknown",
+    )
+
+
 PROJECT_ROOT = Path(__file__).parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "fixtures/salesforce/account-contact-explorer/input"
 VF_ENTRY = "force-app/main/default/pages/LegacyAccountContactExplorer.page"
 OUTPUT_PATH = LWC_JAVASCRIPT_PATH
 CORRECTION_SIGNAL = "salesforce_lwc_javascript_contract"
 CORRECTION_QUERY = f"{CORRECTION_SIGNAL} salesforce correction validation"
+
+
+def is_engineer_output_type(output_type: type[BaseModel]) -> bool:
+    return issubclass(output_type, EngineerModelOutcome)
+
+
+def engineer_provider_context(
+    input_value: BaseModel,
+) -> EngineerWorkspaceContext | EngineerCorrectionProviderContext:
+    if isinstance(input_value, EngineerCorrectionProviderContext):
+        return EngineerCorrectionProviderContext.model_validate(input_value)
+    return EngineerWorkspaceContext.model_validate(input_value)
 
 
 class RoleDispatchModel:
@@ -117,7 +151,7 @@ class RoleDispatchModel:
         output_type: type[BaseModel],
     ) -> BaseModel:
         self.calls.append(output_type.__name__)
-        if output_type is ArchitectManifestProposal:
+        if issubclass(output_type, ArchitectManifestProposal):
             context = ArchitectModelContext.model_validate(input_value)
             return ArchitectManifestProposal(
                 semantic_decisions=(
@@ -134,8 +168,8 @@ class RoleDispatchModel:
                 cited_graph_nodes=(context.dependency_graph.nodes[0].node_id,),
                 cited_wiki_pages=(context.wiki_trace.hits[0].page_id,),
             )
-        if output_type in (EngineerModelOutcome, EngineerFilePlanOutcome):
-            context = EngineerWorkspaceContext.model_validate(input_value)
+        if is_engineer_output_type(output_type):
+            context = engineer_provider_context(input_value)
             plan = EngineerFilePlan(
                 updates=(
                     EngineerFileUpdate(
@@ -149,8 +183,6 @@ class RoleDispatchModel:
                 ),
                 assumptions=("The frozen fixture is the complete approved unit.",),
             )
-            if output_type is EngineerFilePlanOutcome:
-                return EngineerFilePlanOutcome(kind="file_plan", file_plan=plan)
             return EngineerModelOutcome.for_file_plan(plan)
         if output_type is ValidatorModelAdvisory:
             evidence = input_value.evidence  # type: ignore[attr-defined]
@@ -170,7 +202,9 @@ class RoleDispatchModel:
 class CorrectionCapturingRoleDispatchModel(RoleDispatchModel):
     def __init__(self) -> None:
         super().__init__()
-        self.engineer_contexts: list[EngineerWorkspaceContext] = []
+        self.engineer_contexts: list[
+            EngineerWorkspaceContext | EngineerCorrectionProviderContext
+        ] = []
 
     def parse(
         self,
@@ -179,8 +213,8 @@ class CorrectionCapturingRoleDispatchModel(RoleDispatchModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type in (EngineerModelOutcome, EngineerFilePlanOutcome):
-            self.engineer_contexts.append(EngineerWorkspaceContext.model_validate(input_value))
+        if is_engineer_output_type(output_type):
+            self.engineer_contexts.append(engineer_provider_context(input_value))
         return super().parse(
             system_prompt=system_prompt,
             input_value=input_value,
@@ -196,13 +230,13 @@ class MixedJestCorrectionRoleDispatchModel(CorrectionCapturingRoleDispatchModel)
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type not in (EngineerModelOutcome, EngineerFilePlanOutcome):
+        if not is_engineer_output_type(output_type):
             return super().parse(
                 system_prompt=system_prompt,
                 input_value=input_value,
                 output_type=output_type,
             )
-        context = EngineerWorkspaceContext.model_validate(input_value)
+        context = engineer_provider_context(input_value)
         self.engineer_contexts.append(context)
         self.calls.append(output_type.__name__)
         paths = (
@@ -217,8 +251,6 @@ class MixedJestCorrectionRoleDispatchModel(CorrectionCapturingRoleDispatchModel)
             ),
             assumptions=("The frozen fixture is the complete approved unit.",),
         )
-        if output_type is EngineerFilePlanOutcome:
-            return EngineerFilePlanOutcome(kind="file_plan", file_plan=plan)
         return EngineerModelOutcome.for_file_plan(plan)
 
 
@@ -230,8 +262,8 @@ class AttemptTwoUnapprovedPathModel(RoleDispatchModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type in (EngineerModelOutcome, EngineerFilePlanOutcome):
-            context = EngineerWorkspaceContext.model_validate(input_value)
+        if is_engineer_output_type(output_type):
+            context = engineer_provider_context(input_value)
             if context.attempt == 2:
                 self.calls.append(output_type.__name__)
                 outcome = EngineerModelOutcome.for_file_plan(
@@ -244,8 +276,6 @@ class AttemptTwoUnapprovedPathModel(RoleDispatchModel):
                         )
                     )
                 )
-                if output_type is EngineerFilePlanOutcome:
-                    return outcome.result
                 return outcome
         return super().parse(
             system_prompt=system_prompt,
@@ -297,7 +327,7 @@ class DecisionRequiredRoleDispatchModel(RoleDispatchModel):
             input_value=input_value,
             output_type=output_type,
         )
-        if output_type is not ArchitectManifestProposal:
+        if not issubclass(output_type, ArchitectManifestProposal):
             return output
         proposal = ArchitectManifestProposal.model_validate(output)
         context = ArchitectModelContext.model_validate(input_value)
@@ -324,7 +354,7 @@ class EngineerStopRoleDispatchModel(RoleDispatchModel):
         input_value: BaseModel,
         output_type: type[BaseModel],
     ) -> BaseModel:
-        if output_type is not EngineerModelOutcome:
+        if not issubclass(output_type, EngineerModelOutcome):
             return super().parse(
                 system_prompt=system_prompt,
                 input_value=input_value,
@@ -397,7 +427,7 @@ def architect_context(migration_request: MigrationRequest) -> ArchitectContext:
         platform=Platform.SALESFORCE,
         source_version=migration_request.target.source_version,
         target_version=migration_request.target.target_version,
-        as_of=date(2026, 8, 27),
+        as_of=date(2026, 8, 29),
     )
     policy = MigrationScopePolicy(
         policy_id="model-workflow-salesforce-policy",
@@ -479,7 +509,7 @@ class CorrectionWikiTestRetriever:
             platform=migration_request.platform,
             source_version=migration_request.target.source_version,
             target_version=migration_request.target.target_version,
-            as_of=date(2026, 8, 27),
+            as_of=date(2026, 8, 29),
             required_exact_ids=tuple(term for term in query.split() if term in known_signals),
         )
         return trace.model_copy(
@@ -498,7 +528,7 @@ class NoHitCorrectionWikiTestRetriever(CorrectionWikiTestRetriever):
             platform=migration_request.platform,
             source_version=migration_request.target.source_version,
             target_version=migration_request.target.target_version,
-            as_of=date(2026, 8, 27),
+            as_of=date(2026, 8, 29),
         )
         return trace.model_copy(
             update={
@@ -878,6 +908,94 @@ def test_three_markdown_agents_run_inside_langgraph_and_replay_without_model_cal
     ).is_file()
 
 
+def test_architect_policy_rejection_persists_safe_call_receipt_and_replays_once(
+    tmp_path: Path,
+) -> None:
+    marker = "unbound-authored-evidence-marker"
+
+    class RejectedArchitectModel(RoleDispatchModel):
+        def parse(
+            self,
+            *,
+            system_prompt: str,
+            input_value: BaseModel,
+            output_type: type[BaseModel],
+        ) -> BaseModel:
+            output = super().parse(
+                system_prompt=system_prompt,
+                input_value=input_value,
+                output_type=output_type,
+            )
+            if issubclass(output_type, ArchitectManifestProposal):
+                proposal = ArchitectManifestProposal.model_validate(output)
+                return proposal.model_copy(update={"cited_wiki_pages": (marker,)})
+            return output
+
+    migration_request = request()
+    model = RejectedArchitectModel()
+    evidence_root = tmp_path / "rejected-architect-evidence"
+    store = ArtifactStore(evidence_root)
+    roles = ModelAgentWorkflowRoles(
+        load_agent_registry(PROJECT_ROOT / "agents"),
+        architect_model=model,
+        engineer_model=model,
+        validator_model=model,
+        architect_context_factory=architect_context,
+        workspace_factory=filesystem_workspace_factory(SOURCE_ROOT, temp_parent=tmp_path),
+        deterministic_validator=passing_validation_report,
+        artifact_store=store,
+    )
+
+    with pytest.raises(
+        SanitizedModelPolicyError,
+        match="model_role_policy_failure:architect:policy_rejected",
+    ):
+        roles.architect(migration_request)
+
+    receipt_path = (
+        evidence_root / "model-runs/request-model-workflow/architect-policy-rejection.json"
+    )
+    architect_path = evidence_root / "model-runs/request-model-workflow/architect.json"
+    receipt = RejectedArchitectModelCallReceipt.model_validate_json(
+        receipt_path.read_text(encoding="utf-8")
+    )
+    serialized = receipt_path.read_text(encoding="utf-8")
+    assert receipt.receipt_kind == "architect_controller_policy_rejection"
+    assert receipt.request_digest == artifact_digest(migration_request)
+    assert receipt.model_call.input_digest == artifact_digest(
+        architect_context(migration_request).model_context
+    )
+    assert receipt.provider_response_received is True
+    assert receipt.structured_output_schema_valid is True
+    assert receipt.controller_policy_valid is False
+    assert receipt.accepted_role_artifact_persisted is False
+    assert receipt.downstream_authority_granted is False
+    assert not architect_path.exists()
+    assert marker not in serialized
+    assert VF_ENTRY not in serialized
+    calls_after_rejection = tuple(model.calls)
+
+    with pytest.raises(
+        SanitizedModelPolicyError,
+        match="model_role_policy_failure:architect:policy_rejected",
+    ):
+        roles.architect(migration_request)
+    assert tuple(model.calls) == calls_after_rejection
+
+    with pytest.raises(PolicyViolation, match="immutable artifact"):
+        store.write_json(
+            "model-runs/request-model-workflow/architect-policy-rejection.json",
+            receipt.model_copy(update={"reason_code": "required_approval_missing"}),
+        )
+
+    payload = json.loads(serialized)
+    payload["model_call"]["input_digest"] = "sha256:" + "0" * 64
+    receipt_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(ModelWorkflowIntegrationError, match="exact model input"):
+        roles.architect(migration_request)
+    assert tuple(model.calls) == calls_after_rejection
+
+
 def test_attempt_two_uses_persisted_safe_correction_and_replays_without_model_calls(
     tmp_path: Path,
 ) -> None:
@@ -955,20 +1073,25 @@ def test_attempt_two_uses_persisted_safe_correction_and_replays_without_model_ca
     assert correction_wiki.calls == [(migration_request.request_id, CORRECTION_QUERY)]
     assert len(model.engineer_contexts) == 2
     attempt_one, attempt_two = model.engineer_contexts
+    assert isinstance(attempt_one, EngineerWorkspaceContext)
+    assert isinstance(attempt_two, EngineerCorrectionProviderContext)
     assert attempt_one.attempt == 1
     assert attempt_one.correction is None
     assert attempt_two.attempt == 2
     assert attempt_two.correction is not None
-    assert attempt_one.architect_wiki_trace == attempt_two.architect_wiki_trace
     assert attempt_one.architect_wiki_trace_digest == attempt_two.architect_wiki_trace_digest
     assert attempt_two.correction.correction_wiki_trace.query == CORRECTION_QUERY
-    assert attempt_one.input_evidence_digest != attempt_two.input_evidence_digest
+    assert attempt_one.input_evidence_digest != attempt_two.controller_input_evidence_digest
+    provider_payload = attempt_two.model_dump(mode="json")
+    assert "source_files" not in provider_payload
+    assert "architect_wiki_trace" not in provider_payload
+    assert "prior_file_plan" not in provider_payload["correction"]
     prior_run = EngineerRun.model_validate_json(
         (evidence_root / "model-runs/request-model-workflow/engineer-attempt-1.json").read_text(
             encoding="utf-8"
         )
     )
-    assert attempt_two.correction.prior_file_plan == prior_run.file_plan
+    assert attempt_two.correction.prior_file_plan_digest == artifact_digest(prior_run.file_plan)
     assert attempt_two.correction.prior_candidate_revision == prior_run.workspace_after_revision
     assert attempt_two.correction.implementation_failure_ids == (
         "bounded-local-check",
@@ -997,6 +1120,22 @@ def test_attempt_two_uses_persisted_safe_correction_and_replays_without_model_ca
         evidence_root / "model-runs/request-model-workflow/engineer-correction-attempt-2.json"
     )
     safe_payload = correction_path.read_text(encoding="utf-8")
+    persisted_controller_correction = EngineerCorrectionContext.model_validate_json(safe_payload)
+    assert persisted_controller_correction.prior_file_plan == prior_run.file_plan
+    persisted_authority = EngineerCorrectionAuthority(
+        evidence=correction_evidence,
+        model_context=persisted_controller_correction,
+    )
+    with roles.workspace_factory(migration_request, manifest, 2) as workspace:
+        full_attempt_two = roles.engineer_agent.prepare_context(
+            migration_request,
+            manifest,
+            workspace,
+            architect_wiki_trace=attempt_one.architect_wiki_trace,
+            attempt=2,
+            correction_authority=persisted_authority,
+        )
+    assert attempt_two.controller_input_evidence_digest == full_attempt_two.input_evidence_digest
     for forbidden in (
         "private-reviewer",
         "authorization comment",
@@ -1177,7 +1316,7 @@ def test_mixed_zero_test_retry_retrieves_wiki_and_dispatches_targeted_delta(
         LWC_CSS_PATH,
     )
     assert LWC_TEST_PATH not in controller_directive.allowed_paths
-    assert model.calls.count("EngineerFilePlanOutcome") == 1
+    assert model.calls.count("EngineerModelOutcome") == 2
 
 
 def test_attempt_two_stops_before_model_dispatch_when_targeted_wiki_has_no_hit(
@@ -1246,8 +1385,7 @@ def test_attempt_two_engineer_policy_failure_is_dispatched_at_most_once(
         match="model_role_policy_failure:engineer:correction_scope_invalid",
     ):
         workflow.retry_recoverable(approval, thread_id="engineer-at-most-once")
-    assert model.calls.count("EngineerModelOutcome") == 1
-    assert model.calls.count("EngineerFilePlanOutcome") == 1
+    assert model.calls.count("EngineerModelOutcome") == 2
     snapshot = workflow.snapshot(thread_id="engineer-at-most-once")
     assert snapshot.next == ("engineer",)
 
@@ -1268,12 +1406,10 @@ def test_attempt_two_engineer_policy_failure_is_dispatched_at_most_once(
 
     with pytest.raises(ModelWorkflowIntegrationError, match="refusing a duplicate provider call"):
         workflow.continue_local_failure(thread_id="engineer-at-most-once")
-    assert model.calls.count("EngineerModelOutcome") == 1
-    assert model.calls.count("EngineerFilePlanOutcome") == 1
+    assert model.calls.count("EngineerModelOutcome") == 2
     with pytest.raises(ModelWorkflowIntegrationError, match="refusing a duplicate provider call"):
         workflow.retry_recoverable(approval, thread_id="engineer-at-most-once")
-    assert model.calls.count("EngineerModelOutcome") == 1
-    assert model.calls.count("EngineerFilePlanOutcome") == 1
+    assert model.calls.count("EngineerModelOutcome") == 2
 
 
 def test_attempt_two_validator_policy_failure_is_dispatched_at_most_once(

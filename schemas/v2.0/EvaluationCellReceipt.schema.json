@@ -1,0 +1,1508 @@
+{
+  "$defs": {
+    "AcceptanceEvidence": {
+      "additionalProperties": false,
+      "description": "Independent human acceptance; never inferred from workflow status.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HumanAcceptance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "AcceptanceEvidence",
+      "type": "object"
+    },
+    "AgentDefinitionDigests": {
+      "additionalProperties": false,
+      "description": "Exact prompt-definition identities for the only three runtime agents.",
+      "properties": {
+        "architect": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Architect",
+          "type": "string"
+        },
+        "engineer": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Engineer",
+          "type": "string"
+        },
+        "validator": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Validator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "architect",
+        "engineer",
+        "validator"
+      ],
+      "title": "AgentDefinitionDigests",
+      "type": "object"
+    },
+    "AgentRunCorrectionSummary": {
+      "additionalProperties": false,
+      "description": "Exact bounded retry fields, excluding free-form terminal prose.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/CorrectionAction"
+        },
+        "authorized_attempt": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authorized Attempt"
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "change_set_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Change Set Digest",
+          "type": "string"
+        },
+        "completed_attempt": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Completed Attempt",
+          "type": "integer"
+        },
+        "correction_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Correction Id",
+          "type": "string"
+        },
+        "manifest_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest Digest",
+          "type": "string"
+        },
+        "manifest_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Manifest Id",
+          "type": "string"
+        },
+        "report_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Report Digest",
+          "type": "string"
+        },
+        "report_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Report Id",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "requires_graph_regeneration": {
+          "default": false,
+          "title": "Requires Graph Regeneration",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "correction_id",
+        "request_id",
+        "manifest_id",
+        "manifest_digest",
+        "report_id",
+        "report_digest",
+        "change_set_digest",
+        "base_revision",
+        "completed_attempt",
+        "action"
+      ],
+      "title": "AgentRunCorrectionSummary",
+      "type": "object"
+    },
+    "AgentRunFailure": {
+      "additionalProperties": false,
+      "description": "Bounded terminal evidence for a sanitized operation failure.",
+      "properties": {
+        "agent_definition_digests": {
+          "$ref": "#/$defs/AgentDefinitionDigests"
+        },
+        "attempt": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "category": {
+          "enum": [
+            "configuration",
+            "refusal",
+            "incomplete",
+            "invalid",
+            "provider_unavailable",
+            "internal"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "failure_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Failure Id",
+          "type": "string"
+        },
+        "guidance": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed controller-owned next step; absent on legacy evidence.",
+          "title": "Guidance"
+        },
+        "operation": {
+          "enum": [
+            "start",
+            "resume",
+            "retry"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "operation_input_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Operation Input Digest",
+          "type": "string"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "configuration_invalid",
+                "provider_refusal",
+                "response_incomplete",
+                "structured_output_invalid",
+                "unauthorized_tool_call",
+                "model_inventory_invalid",
+                "provider_response_invalid",
+                "required_approval_missing",
+                "implementation_contract_invalid",
+                "transformation_scope_invalid",
+                "unresolved_question_risk_missing",
+                "correction_delta_required",
+                "correction_no_material_changes",
+                "correction_signal_coverage_missing",
+                "correction_scope_invalid",
+                "correction_identical_candidate",
+                "file_plan_scope_mismatch",
+                "file_plan_delta_mismatch",
+                "workspace_scope_mismatch",
+                "workspace_not_clean",
+                "attempt_two_scope_expansion_invalid",
+                "output_evidence_local_path",
+                "policy_rejected",
+                "provider_timeout",
+                "provider_unavailable",
+                "deterministic_validation_failed",
+                "internal_failure"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Controller-owned diagnostic for new failures. Missing only on legacy evidence, where the category and seam remain authoritative.",
+          "title": "Reason Code"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "retry_eligible": {
+          "const": false,
+          "default": false,
+          "title": "Retry Eligible",
+          "type": "boolean"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "seam": {
+          "enum": [
+            "architect",
+            "engineer",
+            "validator",
+            "deterministic_validator"
+          ],
+          "title": "Seam",
+          "type": "string"
+        },
+        "session_context_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Session Context Digest",
+          "type": "string"
+        },
+        "source_revision": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fixed controller-owned public explanation; absent on legacy evidence.",
+          "title": "Summary"
+        },
+        "terminal": {
+          "const": true,
+          "default": true,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "thread_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Thread Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "failure_id",
+        "run_id",
+        "thread_id",
+        "request_id",
+        "operation",
+        "seam",
+        "category",
+        "attempt",
+        "request_digest",
+        "operation_input_digest",
+        "session_context_digest",
+        "source_revision",
+        "agent_definition_digests"
+      ],
+      "title": "AgentRunFailure",
+      "type": "object"
+    },
+    "AgentRunInterruptSummary": {
+      "additionalProperties": false,
+      "description": "Minimum exact manifest decision fields exposed to a human reviewer.",
+      "properties": {
+        "decision_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "graph_assurance_report_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Report Digest"
+        },
+        "graph_assurance_status": {
+          "anyOf": [
+            {
+              "const": "assured",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Status"
+        },
+        "kind": {
+          "const": "manifest_approval",
+          "default": "manifest_approval",
+          "title": "Kind",
+          "type": "string"
+        },
+        "manifest_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Manifest Digest",
+          "type": "string"
+        },
+        "manifest_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Manifest Id",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "enum": [
+              "approve",
+              "reject",
+              "modify"
+            ],
+            "type": "string"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "requested_action": {
+          "$ref": "#/$defs/ApprovalAction"
+        }
+      },
+      "required": [
+        "decision_id",
+        "request_id",
+        "manifest_id",
+        "manifest_digest",
+        "requested_action",
+        "options"
+      ],
+      "title": "AgentRunInterruptSummary",
+      "type": "object"
+    },
+    "AgentRunStatus": {
+      "additionalProperties": false,
+      "description": "Bounded, portable run state; it intentionally contains no raw prompts.",
+      "properties": {
+        "correction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRunCorrectionSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "execution_attempt": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Execution Attempt",
+          "type": "integer"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRunFailure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "graph_assurance_report_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Report Digest"
+        },
+        "graph_assurance_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "assured",
+                "review_required",
+                "blocked"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Graph Assurance Status"
+        },
+        "interrupt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRunInterruptSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "manifest_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Digest"
+        },
+        "manifest_id": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Manifest Id"
+        },
+        "model_id": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "pending_nodes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Pending Nodes",
+          "type": "array"
+        },
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "provider_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Provider Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "request_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "task_failed": {
+          "title": "Task Failed",
+          "type": "boolean"
+        },
+        "terminal_disposition": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terminal Disposition"
+        },
+        "thread_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Thread Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "thread_id",
+        "request_id",
+        "request_digest",
+        "platform",
+        "provider_id",
+        "model_id",
+        "status",
+        "execution_attempt",
+        "pending_nodes",
+        "task_failed"
+      ],
+      "title": "AgentRunStatus",
+      "type": "object"
+    },
+    "ApprovalAction": {
+      "enum": [
+        "freeze_scope",
+        "approve_manifest",
+        "expand_scope",
+        "accept_high_impact_change",
+        "commit",
+        "push",
+        "open_pull_request",
+        "sandbox_validation",
+        "production_validation",
+        "deploy",
+        "quick_deploy",
+        "destructive_change",
+        "publish"
+      ],
+      "title": "ApprovalAction",
+      "type": "string"
+    },
+    "BooleanEvidence": {
+      "additionalProperties": false,
+      "description": "A boolean observation with an explicit availability boundary.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "BooleanEvidence",
+      "type": "object"
+    },
+    "CorrectionAction": {
+      "enum": [
+        "complete",
+        "retry_implementation",
+        "replan_with_new_approval",
+        "stop_environment",
+        "stop_exhausted"
+      ],
+      "title": "CorrectionAction",
+      "type": "string"
+    },
+    "CountEvidence": {
+      "additionalProperties": false,
+      "description": "A non-negative count with an explicit availability boundary.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "CountEvidence",
+      "type": "object"
+    },
+    "DefectEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "defects": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EscapedDefect"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Defects"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "DefectEvidence",
+      "type": "object"
+    },
+    "DefectImpact": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "title": "DefectImpact",
+      "type": "string"
+    },
+    "EscapedDefect": {
+      "additionalProperties": false,
+      "properties": {
+        "defect_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Defect Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Evidence Digest",
+          "type": "string"
+        },
+        "impact": {
+          "$ref": "#/$defs/DefectImpact"
+        }
+      },
+      "required": [
+        "defect_id",
+        "impact",
+        "description",
+        "evidence_digest"
+      ],
+      "title": "EscapedDefect",
+      "type": "object"
+    },
+    "EvidenceAvailability": {
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "title": "EvidenceAvailability",
+      "type": "string"
+    },
+    "HumanAcceptance": {
+      "enum": [
+        "accepted",
+        "rejected",
+        "not_applicable"
+      ],
+      "title": "HumanAcceptance",
+      "type": "string"
+    },
+    "HumanReviewRubric": {
+      "additionalProperties": false,
+      "description": "Operator-supplied human-review attestation bound to exact run evidence.\n\nThe verifier proves internal identity and digest binding.  It does not\nauthenticate the named reviewer or independently attest the review time.",
+      "properties": {
+        "acceptance": {
+          "$ref": "#/$defs/AcceptanceEvidence"
+        },
+        "attestation": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Attestation",
+          "type": "string"
+        },
+        "case_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "cell_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Cell Id",
+          "type": "string"
+        },
+        "config_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Config Id",
+          "type": "string"
+        },
+        "escaped_defects": {
+          "$ref": "#/$defs/DefectEvidence"
+        },
+        "execution_anchor_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Execution Anchor Digest",
+          "type": "string"
+        },
+        "registry_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Registry Digest",
+          "type": "string"
+        },
+        "registry_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Registry Id",
+          "type": "string"
+        },
+        "repetition": {
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Repetition",
+          "type": "integer"
+        },
+        "review_method": {
+          "const": "independent_human_review",
+          "default": "independent_human_review",
+          "title": "Review Method",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "format": "date-time",
+          "title": "Reviewed At",
+          "type": "string"
+        },
+        "reviewer_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "rubric_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Rubric Id",
+          "type": "string"
+        },
+        "run_evidence_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Run Evidence Digest",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "runtime_identity_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Runtime Identity Digest",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "semantic_conformance": {
+          "$ref": "#/$defs/BooleanEvidence"
+        },
+        "wiki_support": {
+          "$ref": "#/$defs/RatioEvidence"
+        }
+      },
+      "required": [
+        "rubric_id",
+        "registry_id",
+        "registry_digest",
+        "cell_id",
+        "case_id",
+        "config_id",
+        "repetition",
+        "run_id",
+        "run_evidence_digest",
+        "runtime_identity_digest",
+        "execution_anchor_digest",
+        "reviewer_id",
+        "reviewed_at",
+        "attestation",
+        "acceptance",
+        "semantic_conformance",
+        "wiki_support",
+        "escaped_defects"
+      ],
+      "title": "HumanReviewRubric",
+      "type": "object"
+    },
+    "IdentifierSetEvidence": {
+      "additionalProperties": false,
+      "description": "A set-like tuple of observed identifiers with source evidence.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Values"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "IdentifierSetEvidence",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "RatioEvidence": {
+      "additionalProperties": false,
+      "description": "Human-reviewed numerator and denominator, including zero observations.",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/EvidenceAvailability"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "evidence_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Digest"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "availability"
+      ],
+      "title": "RatioEvidence",
+      "type": "object"
+    },
+    "UsageEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_micro_usd": {
+          "$ref": "#/$defs/CountEvidence"
+        },
+        "input_tokens": {
+          "$ref": "#/$defs/CountEvidence"
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/CountEvidence"
+        },
+        "model_calls": {
+          "$ref": "#/$defs/CountEvidence"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/CountEvidence"
+        },
+        "tool_calls": {
+          "$ref": "#/$defs/CountEvidence"
+        }
+      },
+      "required": [
+        "latency_ms",
+        "input_tokens",
+        "output_tokens",
+        "cost_micro_usd",
+        "model_calls",
+        "tool_calls"
+      ],
+      "title": "UsageEvidence",
+      "type": "object"
+    },
+    "VerifiedAgentRunEvidence": {
+      "additionalProperties": false,
+      "description": "Runtime-anchored terminal projection for one benchmark run.\n\nConstruction alone is not proof. The public reader in ``agent_run`` is the\nauthority that verifies the lifecycle index and its independent runtime\nanchor before returning this projection.",
+      "properties": {
+        "benchmark_binding_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Benchmark Binding Digest",
+          "type": "string"
+        },
+        "config_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Config Digest",
+          "type": "string"
+        },
+        "launch_contract_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Launch Contract Digest",
+          "type": "string"
+        },
+        "request_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "run_context_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Run Context Digest",
+          "type": "string"
+        },
+        "run_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_revision": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "terminal_checkpoint_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Terminal Checkpoint Digest",
+          "type": "string"
+        },
+        "terminal_lifecycle_index_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Terminal Lifecycle Index Digest",
+          "type": "string"
+        },
+        "terminal_lifecycle_kind": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Terminal Lifecycle Kind",
+          "type": "string"
+        },
+        "terminal_status_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Terminal Status Digest",
+          "type": "string"
+        },
+        "thread_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Thread Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "thread_id",
+        "status",
+        "run_context_digest",
+        "request_digest",
+        "config_digest",
+        "launch_contract_digest",
+        "terminal_lifecycle_kind",
+        "terminal_lifecycle_index_digest",
+        "terminal_status_digest",
+        "terminal_checkpoint_digest",
+        "benchmark_binding_digest",
+        "source_revision"
+      ],
+      "title": "VerifiedAgentRunEvidence",
+      "type": "object"
+    },
+    "WorkflowDisposition": {
+      "enum": [
+        "ready_for_human_review",
+        "recoverable_failure",
+        "plan_invalid",
+        "environment_unavailable",
+        "decision_required",
+        "controlled_failure"
+      ],
+      "title": "WorkflowDisposition",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One immutable workflow observation and its independent human rubric.",
+  "properties": {
+    "authorization_violations": {
+      "$ref": "#/$defs/CountEvidence"
+    },
+    "case_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "case_label_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Case Label Digest",
+      "type": "string"
+    },
+    "cell_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Cell Id",
+      "type": "string"
+    },
+    "config_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Config Id",
+      "type": "string"
+    },
+    "configuration_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Configuration Digest",
+      "type": "string"
+    },
+    "detected_dependencies": {
+      "$ref": "#/$defs/IdentifierSetEvidence"
+    },
+    "execution_anchor_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Execution Anchor Digest",
+      "type": "string"
+    },
+    "execution_boundary": {
+      "const": "remote_provider_managed",
+      "title": "Execution Boundary",
+      "type": "string"
+    },
+    "human_rubric": {
+      "$ref": "#/$defs/HumanReviewRubric"
+    },
+    "human_rubric_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Human Rubric Digest",
+      "type": "string"
+    },
+    "intervention_reason_ids": {
+      "$ref": "#/$defs/IdentifierSetEvidence"
+    },
+    "intervention_triggered": {
+      "$ref": "#/$defs/BooleanEvidence"
+    },
+    "model_id": {
+      "maxLength": 240,
+      "minLength": 1,
+      "title": "Model Id",
+      "type": "string"
+    },
+    "provider_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Provider Id",
+      "type": "string"
+    },
+    "receipt_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "repetition": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Repetition",
+      "type": "integer"
+    },
+    "run_evidence": {
+      "$ref": "#/$defs/VerifiedAgentRunEvidence"
+    },
+    "run_evidence_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Run Evidence Digest",
+      "type": "string"
+    },
+    "run_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runtime_identity_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runtime Identity Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unavailable_required_command_ids": {
+      "$ref": "#/$defs/IdentifierSetEvidence"
+    },
+    "usage": {
+      "$ref": "#/$defs/UsageEvidence"
+    },
+    "validation_attempts": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Validation Attempts",
+      "type": "integer"
+    },
+    "workflow_disposition": {
+      "$ref": "#/$defs/WorkflowDisposition"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "registry_id",
+    "registry_digest",
+    "cell_id",
+    "case_id",
+    "case_label_digest",
+    "config_id",
+    "configuration_digest",
+    "repetition",
+    "run_id",
+    "provider_id",
+    "model_id",
+    "execution_boundary",
+    "runtime_identity_digest",
+    "execution_anchor_digest",
+    "run_evidence",
+    "run_evidence_digest",
+    "workflow_disposition",
+    "validation_attempts",
+    "authorization_violations",
+    "detected_dependencies",
+    "intervention_triggered",
+    "intervention_reason_ids",
+    "unavailable_required_command_ids",
+    "usage",
+    "human_rubric",
+    "human_rubric_digest"
+  ],
+  "title": "EvaluationCellReceipt",
+  "type": "object"
+}

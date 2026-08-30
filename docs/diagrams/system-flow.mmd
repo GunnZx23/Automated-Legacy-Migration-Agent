@@ -1,6 +1,12 @@
 flowchart TB
     S[Immutable source snapshot] --> G[Revision-bound dependency graph]
-    S -->|exact bounded source files| A[Architect model]
+    S --> GA[Controller-owned GraphAssuranceReport]
+    G --> GA
+    GA --> GD{Assurance status}
+    GD -->|review_required or blocked| GI[Digest-bound PlanningIntervention; no model call]
+    GD -->|assured| A[Architect model]
+    S -->|exact bounded source files| A
+    GA -->|status and report digest| A
     K[Curated versioned Agentic LLM Wiki] --> T[Persisted Architect RetrievalTrace and digest]
     T --> A
     G --> A
@@ -8,7 +14,7 @@ flowchart TB
     P --> C[Controller policy and canonical manifest]
     C --> I{Exact human manifest interrupt}
     I -->|reject or modify| X[Safe stop; no candidate]
-    I -->|approve digest| E[Engineer attempt one returns full eleven-file plan]
+    I -->|approve digest| E[Engineer attempt one returns full approved-path file plan]
     T -->|exact planning handoff| E
     E --> W[Controller applies exact paths in isolated workspace]
     W --> D[Disk-derived ChangeSet]
@@ -25,6 +31,10 @@ flowchart TB
     E2 --> W2[Overlay delta on immutable prior plan]
     W2 --> D
     C2 -->|not approved| X2[Safe stop; retry not executed]
-    B -->|plan invalid| N[Stop; new Architect request and manifest required]
+    B -->|plan invalid dependency evidence| N[Stop; no Engineer attempt two]
+    N --> NG[Regenerate graph and GraphAssuranceReport]
+    NG --> NP[New Architect plan and MigrationManifest digest]
+    NP --> I
     B -->|environment unavailable or retry exhausted| U[Stop with unavailable or failed evidence]
     H --> Z[No Git, deploy, publication, or pilot authority]
+    L[Independently reviewed dependency labels] -.->|evaluation oracle only| EV[Recall at least 95 percent; zero missed high-impact dependencies]

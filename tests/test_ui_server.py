@@ -1813,6 +1813,7 @@ def test_build_ui_server_wires_an_explicit_claude_cli_boundary(
         allow_live_api=True,
         allow_prompt_data_sharing=True,
         approved_by="demo-operator",
+        approved_remote_provider_id="bedrock",
     )
 
     server = build_ui_server(

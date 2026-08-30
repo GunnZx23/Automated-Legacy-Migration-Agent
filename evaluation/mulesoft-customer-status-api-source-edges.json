@@ -42,13 +42,19 @@
       "symbol": "flowVars.responseStatus"
     },
     {
+      "kind": "mule_route_parameter_binding",
+      "source": "customer-status-api-flow",
+      "target": "customerId",
+      "symbol": "{customerId}"
+    },
+    {
       "kind": "munit_flow_reference",
       "source": "build-customer-status-response-test",
       "target": "build-customer-status-response",
       "symbol": "build-customer-status-response"
     },
     {
-      "kind": "dataweave_variable_reference",
+      "kind": "munit_variable_reference",
       "source": "build-customer-status-response-test",
       "target": "responseStatus",
       "symbol": "flowVars.responseStatus"

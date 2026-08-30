@@ -1,0 +1,1510 @@
+{
+  "campaign_id": "benchmark-v2-corrected-20260830",
+  "campaign_status": "model_execution_complete_output_review_pending",
+  "cell_count": 18,
+  "cells": [
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:45060afb863adf3058e186354b7e3ff431d4b6f2cec0bbc921cfb03afa94ea02",
+          "change_set_id": "changes-38d5fd634568e93b167d147d",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 2,
+            "passed": 1,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:c3b50dcf0c207eb023b8f1fc27bf93846c0f5fc2af3d28e8453fe6fe36d95929",
+          "report_id": "report-87f4cef320aa2b9d1b26020e"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-no-wiki--r1",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 2,
+        "model_call_evidence_complete": false,
+        "model_call_evidence_unavailable_reason": "controlled failure left partial attempt 2 evidence",
+        "partial_evidence_unavailable": true,
+        "partial_evidence_unavailable_reason": "controlled failure left partial attempt 2 evidence",
+        "tool_receipt_count": 3,
+        "tool_receipt_evidence_complete": false,
+        "tool_receipt_evidence_unavailable_reason": "controlled failure left partial attempt 2 evidence"
+      },
+      "execution_attempt": 2,
+      "failure": {
+        "category": "invalid",
+        "reason_code": "correction_signal_coverage_missing",
+        "retry_eligible": false,
+        "seam": "engineer",
+        "summary": "Engineer attempt 2 did not address every controller-classified repair signal."
+      },
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:48ce181b8d06507d1a5a3aa2b6ce2f610895338889246563fde101bafc2e34bb",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:0dde4ed2022427ac8026d18048383183726b4396e212009339d67ae39c0e68e8",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-no-wiki--r1",
+      "status": "failed",
+      "terminal_disposition": "controlled_failure",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-no-wiki--r1"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:fe038e63f23df59c4c632e3d1a859b894b2b8ffd6f32772dfcfbb42d475358b3",
+          "change_set_id": "changes-05d5768ac6a234600d01c15b",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 3,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "environment_unavailable",
+          "report_digest": "sha256:deeb6b22b6fe71e5b591a656511f7215a58e5b7356c8e9317598177840e8f057",
+          "report_id": "report-43bc06d0fca96bb25a31a460"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-no-wiki--r2",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 3,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:87224b04805463f62ed634c840ab8a77715e6c13995edc2540d82b35137a1914",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:2053be5cad2d874528b4e54cfd9a075d638d8217d6e0b9cb84cabb014700c7ef",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-no-wiki--r2",
+      "status": "completed",
+      "terminal_disposition": "environment_unavailable",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-no-wiki--r2"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:5dad329dbe5971d262fe4911b2df6d2d18c654c51640ec54b89cab7094c153ad",
+          "change_set_id": "changes-b1b836e876d5a77ce6d67169",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 2,
+            "passed": 1,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:306eca356773eb130fae21df53b184202d400465ba0871b13979896857260998",
+          "report_id": "report-077716842e9f84b60e0ab3b7"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/report-attempt-2.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:050e7a627ddc7b58c61a32581678317ab5c1c8b0d18eab95d542c6e6ee773341",
+          "change_set_id": "changes-223d97875535057ed23f1ff0",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 2,
+            "passed": 1,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:25f84e436b99e5c42e8c534f7946007fab7463432b156f2930a993930ed5e886",
+          "report_id": "report-dd705d20d0f76fb669841f9b"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-no-wiki--r3",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": false,
+        "model_call_evidence_unavailable_reason": "Validator attempt 2 has no completed model-call record",
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 6,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:b8b8a87ef5ed392d02c9ee14f10387394a3e6231c03011733c1a61b91f8c0a6a",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-no-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-no-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:23859b4e9c29078511253e24d98c6c6d01d0dffe37ddcb5ca8c4a9aaa4274710",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-no-wiki--r3",
+      "status": "completed",
+      "terminal_disposition": "recoverable_failure",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-no-wiki--r3"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:08c64b9d8dc33b52d4803cb5049be0794d7aa58a5a8be94942516fef1be646ff",
+          "change_set_id": "changes-db453a9493fdbfdd95d85e17",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 3,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "environment_unavailable",
+          "report_digest": "sha256:e3473192e96372405a84ebe73c2b013afe529a214ad9f53d2ddb20ff7f6d0d92",
+          "report_id": "report-d150f347197e7f69d7763428"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-wiki--r1",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 3,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:74f608053031a3c1c4437b4b2917b9bf0e6b268b18b90ea23c0db8f2bd9dfeda",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:b5d159a9aa03152cee2719f8518e1ccd7233945763c04b88fe24461518d44a7b",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-wiki--r1",
+      "status": "completed",
+      "terminal_disposition": "environment_unavailable",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-wiki--r1"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:7e81df0bd331f28abfb357dccd3a2cb77d3980491bc9563f3d8349db7ff25ae7",
+          "change_set_id": "changes-079966d2cfd5972ba7c4ca65",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 2,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:c7aada8c113f68a7509a3ba9ea341d42b3fb0ca52e837e8e5be4017927c9818e",
+          "report_id": "report-0b5e761b9b045c4372377113"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/report-attempt-2.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:f414cef8248bbdac0e38d1079711ab614b92ce4bd18a6ef165373484706ee357",
+          "change_set_id": "changes-421bebf85f3d1094163c803a",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 2,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:03c708624eabf1325970feffca998c38dd0d11ddd6af32e70391ae3b90625bfe",
+          "report_id": "report-3cfcfa34533d8161c1b9b369"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-wiki--r2",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 4,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 6,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:154a672a59efc413f2861096ead4b83fabb15083fe78e5a75057cd7b214505ae",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:607f6a2b343cb6769f0f5380cfca32bf9962b89e9eed2fcfb7ee1e0bda05b606",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-wiki--r2",
+      "status": "completed",
+      "terminal_disposition": "recoverable_failure",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-wiki--r2"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/report-attempt-1.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:499e867d1a9146c08eac86cb652649316f75d0b208455f0cdfa716594ff86d32",
+          "change_set_id": "changes-54a10eaef62166cdf2cdc8c4",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 2,
+            "passed": 1,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:ffed93e03c4edec910584111111905780c6d1a31b009f10747f9625a620520f5",
+          "report_id": "report-aa21978747bb046bcd7e8c50"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/report-attempt-2.json",
+            "validator": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:02a08218d20418841a84ff20b99aacde5824d46622d4949f96aad79ca2b668ec",
+          "change_set_id": "changes-a2255cb0dac69f899e634695",
+          "changed_paths": [
+            "mule4/customer-status-api/mule-artifact.json",
+            "mule4/customer-status-api/pom.xml",
+            "mule4/customer-status-api/src/main/mule/customer-status-api.xml",
+            "mule4/customer-status-api/src/main/resources/application.yaml",
+            "mule4/customer-status-api/src/main/resources/dw/customer-status-response.dwl",
+            "mule4/customer-status-api/src/test/munit/customer-status-api-test.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 2,
+            "total": 5,
+            "unavailable": 2
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:ffb20bdd9a6c1c9c073af3c7c6ae5c401eefecba32c1584ad942cdd6c6c590c7",
+          "report_id": "report-37751098f5c1e0c4eb32940e"
+        }
+      ],
+      "case_id": "mulesoft-customer-status-simple",
+      "cell_id": "mulesoft-customer-status-simple--full-agent-wiki--r3",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 4,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 6,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:e1014d7eff4f5e74cfaabe538f700b85f4f47843412924f149cee996bb8997a2",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:f0977cde8766fe3fca4287356ff11331e75cea6605942e0c96890ced9cd028b3",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-mulesoft-customer-status-simple--full-agent-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/mulesoft-customer-status-simple--full-agent-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:498d28b8838a7347e8786ae72c51e3ca3b264fe1c1dff2d0e3f80a5f654dd9c0",
+      "run_id": "benchmark-v2-mulesoft-customer-status-simple--full-agent-wiki--r3",
+      "status": "completed",
+      "terminal_disposition": "recoverable_failure",
+      "thread_id": "benchmark-v2-thread-mulesoft-customer-status-simple--full-agent-wiki--r3"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:4f823e07f1b504b3d470f8b9aa9fd74ab24a4ec22558b5f13718f6194e2590b6",
+          "change_set_id": "changes-20a04feb39c3d7de2c4ac7ef",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 7,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "ready_for_human_review",
+          "report_digest": "sha256:d2cb07826f5cb13c1c0f5d19525a5778d2e0b14791797be81b33314c072d6150",
+          "report_id": "report-salesforce-e009159473ae35ed0a4232d6"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-no-wiki--r1",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 7,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:75806d8fd213f9569221b4fc124126fd6e2892f28c67d7a39cd680babe2f12c5",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:05d844558bd1e32ec3d0a1629d970778bf53d534e57d3efa8ac0ab9a741e185c",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-no-wiki--r1",
+      "status": "completed",
+      "terminal_disposition": "ready_for_human_review",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-no-wiki--r1"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:131527ff47cff5ad6479024bb6a25a9f13ecbff7ec1518304066fef31f94e1bc",
+          "change_set_id": "changes-c375ebd93198dd989120f9c3",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 6,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:33ef735b1a1902441e7fb6910a846b61f1b1d9f892c0bf6fe91f21ade9a38eae",
+          "report_id": "report-salesforce-4653c6f2d2ca32e66a078aca"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/report-attempt-2.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:366da0cf4c505f3198d3a82359a33c9e422f04701b328990dbf5f695613775f6",
+          "change_set_id": "changes-d179a779325deca32a7cf435",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 7,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "ready_for_human_review",
+          "report_digest": "sha256:b892101cffcc6ee8185cf768fba0a6ac4e861cb3c78c56a2d5dd7f3e573ffd8d",
+          "report_id": "report-salesforce-6f98e67018571f6054c5ddd9"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-no-wiki--r2",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 4,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 14,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:5516ca5a81d8eb7c0e433a129af042d5552bb11fc1209e0d788456bb2614f213",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:707a22fa3449d2d2d4a125cc7a1d920d5397e5d13e90f70edeabd4d4a7c88e3d",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-no-wiki--r2",
+      "status": "completed",
+      "terminal_disposition": "ready_for_human_review",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-no-wiki--r2"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:9143b629975742e5a8104f52a41fdc2b8507124727c81d9b76fb29c4b7488463",
+          "change_set_id": "changes-325bd24ecf3167bc91c83cda",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 6,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:101cc613b2d1387cd29c1ab63c498aa58fe4a0d39aa4cbf97930a3d4ef9191cf",
+          "report_id": "report-salesforce-e6e7574dc740354cb7d6b16d"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/report-attempt-2.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:12423e71f7b9d085b9fcbbbd8f2901209c7f18bbe666fc4b24ce2107c43f9b97",
+          "change_set_id": "changes-fbb7c9c6099abaa498b43587",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 7,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "ready_for_human_review",
+          "report_digest": "sha256:33a37dfe8a0a4a893c6c3af6e90c2f09bf2aee6c8f203180c10d4cc281516a1f",
+          "report_id": "report-salesforce-c2c7bf5f222b7bd8d98cf92d"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-no-wiki--r3",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 4,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 14,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:40f739d1901d5afc8ca38682fc8b90270afb3ce197b0cd7872099072976c938e",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-no-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-no-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:a11c629cd3c3a7d3b5a80e7a5e367367cb5d0c06ecc32a01cc2b72bff9ed69e3",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-no-wiki--r3",
+      "status": "completed",
+      "terminal_disposition": "ready_for_human_review",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-no-wiki--r3"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:9d485ab067f51976013ab42fc8d9fa781e7208424ce21184f09b87cecf4555c7",
+          "change_set_id": "changes-0267670bcdcf7fc224f107cf",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 7,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "ready_for_human_review",
+          "report_digest": "sha256:332ed5d3072e3aceb298a23ed7a2616c42cb879ae030af8c2c5aa7a3af772ca9",
+          "report_id": "report-salesforce-c8e7cb12094e0d28d7cc747b"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-wiki--r1",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 7,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:9da16e723bb5cd2b3b7456e2f5dffa1d33841c91788ed583a30a78257e692446",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:6a2b824d040b65af947ca55f77d7ca4e74cc99db1f933a59120dde9e1f5095e9",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-wiki--r1",
+      "status": "completed",
+      "terminal_disposition": "ready_for_human_review",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-wiki--r1"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:9eb45055afc6fb45ed61ab333034cd7763ac23eaf93753f9eb33c3236b13b9c4",
+          "change_set_id": "changes-ce0ae7fbe103dd39857a0cd8",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 0,
+            "passed": 7,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "ready_for_human_review",
+          "report_digest": "sha256:e4439b8a24c7a2588dadaf08ed1511c8835fc2ec561eae0de9f2796c8092276e",
+          "report_id": "report-salesforce-de96ee665797e26c8fb228f5"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-wiki--r2",
+      "completed_attempts": [
+        1
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 7,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:9d9da22dc363b32aa869e35a2148dd8b3231d6505f13973008f32121843fe7bb",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:ec664cc73dfb544005a76c39d6ca0406bbb1ea43f59e9919e8963c3eaaa59ccf",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-wiki--r2",
+      "status": "completed",
+      "terminal_disposition": "ready_for_human_review",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-wiki--r2"
+    },
+    {
+      "attempts": [
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/engineer-attempt-1.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/report-attempt-1.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/validator-attempt-1.json"
+          },
+          "attempt": 1,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:9639ba53304b4b098227ff93df055d62315b897a1cb9a8db58ad4f4eef2d994f",
+          "change_set_id": "changes-fa8fa00f484bc36cf5aba651",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 6,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:1ecb1a970271ea001abdaed5e37d05ba78a867f2d59db4afad2bc80e9ce7cb76",
+          "report_id": "report-salesforce-ad1e1321e55c1382afc63a64"
+        },
+        {
+          "archive_members": {
+            "engineer": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/engineer-attempt-2.json",
+            "validation_report": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/report-attempt-2.json",
+            "validator": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/validator-attempt-2.json"
+          },
+          "attempt": 2,
+          "candidate_diff_available": true,
+          "change_set_digest": "sha256:fea521b712281475ac9fac2edf11b861932483d3df55d2608045c7eca6f68dc6",
+          "change_set_id": "changes-8d0f34cef1c789740d3b4d18",
+          "changed_paths": [
+            "force-app/main/default/classes/AccountContactExplorerController.cls",
+            "force-app/main/default/classes/AccountContactExplorerController.cls-meta.xml",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls",
+            "force-app/main/default/classes/AccountContactExplorerControllerTest.cls-meta.xml",
+            "force-app/main/default/lwc/accountContactExplorer/__tests__/accountContactExplorer.test.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.css",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.html",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js",
+            "force-app/main/default/lwc/accountContactExplorer/accountContactExplorer.js-meta.xml",
+            "force-app/main/default/permissionsets/AccountContactExplorerUser.permissionset-meta.xml",
+            "manifest/package.xml"
+          ],
+          "check_counts": {
+            "failed": 1,
+            "passed": 6,
+            "total": 7,
+            "unavailable": 0
+          },
+          "disposition": "recoverable_failure",
+          "report_digest": "sha256:da84fac48399fa24ae2051bd04bdb9673f30c2a4f3e19f75af6b47a940bfdf46",
+          "report_id": "report-salesforce-0a2de62787b82076117aa33d"
+        }
+      ],
+      "case_id": "salesforce-account-contact-medium",
+      "cell_id": "salesforce-account-contact-medium--full-agent-wiki--r3",
+      "completed_attempts": [
+        1,
+        2
+      ],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 3,
+        "model_call_evidence_complete": false,
+        "model_call_evidence_unavailable_reason": "Validator attempt 2 has no completed model-call record",
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 14,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 2,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:bb4a953f85dedba012f46c12a74bbc00f91e40784046bd8bddfe7f05abd5ca89",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:806171d37e3495fe1f3b5a221303c8f4532f9ccad6142164f7a43ce9876f56a0",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-account-contact-medium--full-agent-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-account-contact-medium--full-agent-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:2631d182d432a018a93505eb02e9b43184d35fde2ff30ff9a68284a710f7a3db",
+      "run_id": "benchmark-v2-salesforce-account-contact-medium--full-agent-wiki--r3",
+      "status": "completed",
+      "terminal_disposition": "recoverable_failure",
+      "thread_id": "benchmark-v2-thread-salesforce-account-contact-medium--full-agent-wiki--r3"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-no-wiki--r1",
+      "completed_attempts": [],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:f7c508863eec56b69d6490250ccd1854cd4be77bf2c19c24100fb45d8ead0dc7",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:e005d9290c7db394d61481a50c825d45061ce1a865ddda5ffdc9fe9d2a2253a7",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-no-wiki--r1",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-no-wiki--r1"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-no-wiki--r2",
+      "completed_attempts": [],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:bd2bda3d240cbd65eef2d9f57175a9992da757b1d19ec7fbb2f9f64c313dcb1d",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:f8df726c0cdb80a7514385bdc1b6071e3a62ec8b21910c5acd202b20f718e249",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-no-wiki--r2",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-no-wiki--r2"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-no-wiki--r3",
+      "completed_attempts": [],
+      "config_id": "full-agent-no-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_no_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:ddc014d288c05eec546a7d112840fdc0cf4f5d605133c4bc6bb48828e2e2c817",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:ad4cf6c1342740085f0ad0c5cee55138bf425d5a240869b7443624bb73e171fb",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-no-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-no-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:4a27d780134e1b3d50057ec3f95a4f1e985233127e5a34292e0846c9ca51423c",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-no-wiki--r3",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-no-wiki--r3"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-wiki--r1",
+      "completed_attempts": [],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:27fded5ed675c244568c8a84a411d145676d5482588fb1ad18ccd8cc4b2b53d3",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r1/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r1/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r1/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r1/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r1/evidence/request.json"
+      },
+      "repetition": 1,
+      "run_evidence_digest": "sha256:4dae01d99abde8161b4fff6d6805b6c52b5bb8d9440f96a45c8f1aa418596e64",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-wiki--r1",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-wiki--r1"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-wiki--r2",
+      "completed_attempts": [],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:9b71b35029811e1ca999fe9ce807182501301bcbaf91905291d4eb63e9c2b03e",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r2/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r2/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r2/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r2/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r2/evidence/request.json"
+      },
+      "repetition": 2,
+      "run_evidence_digest": "sha256:162d16e01eb13fb759994481e2af10aac7eb31ece7edfcbe7c9b6d0571a82f23",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-wiki--r2",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-wiki--r2"
+    },
+    {
+      "attempts": [],
+      "case_id": "salesforce-case-management-complex-risk",
+      "cell_id": "salesforce-case-management-complex-risk--full-agent-wiki--r3",
+      "completed_attempts": [],
+      "config_id": "full-agent-wiki",
+      "evidence_completeness": {
+        "model_call_count": 1,
+        "model_call_evidence_complete": true,
+        "model_call_evidence_unavailable_reason": null,
+        "partial_evidence_unavailable": false,
+        "partial_evidence_unavailable_reason": null,
+        "tool_receipt_count": 0,
+        "tool_receipt_evidence_complete": true,
+        "tool_receipt_evidence_unavailable_reason": null
+      },
+      "execution_attempt": 1,
+      "failure": null,
+      "human_output_review_status": "pending",
+      "knowledge_arm": "full_agent_wiki",
+      "planning_available": true,
+      "protocol_binding": {
+        "benchmark_definition_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+        "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+        "configuration_digest": "sha256:b9ed7268da58471e8de30dafd94c67e43733f694be54f3f99433f1c2a7b3403c",
+        "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+        "request_digest": "sha256:5a0f5d3cf441484eab185aa9dba9e224cb0b6c4133cdebf9e8fa983ca06a1414",
+        "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c",
+        "source_revision": "sha256:fdd27cf73d796881f11ff22953a70c1404135979088c55d8d4572f0cf85870e8",
+        "wiki_tree_revision": "sha256:d4ab41cce31b3af490395531740b297200f106fd242e1847173708f787d12596"
+      },
+      "raw_archive": {
+        "archive_member_root": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/",
+        "archive_path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+        "planning_members": {
+          "architect": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r3/architect.json",
+          "architect_context": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r3/architect-context.json",
+          "dependency_graph": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r3/dependency-graph.json",
+          "wiki_trace": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/evidence/model-runs/benchmark-v2-request-salesforce-case-management-complex-risk--full-agent-wiki--r3/wiki-trace.json"
+        },
+        "request_member": "benchmark-v2/salesforce-case-management-complex-risk--full-agent-wiki--r3/evidence/request.json"
+      },
+      "repetition": 3,
+      "run_evidence_digest": "sha256:d1af86e4071d3377f8001fd1a1dd89225c67065b5c83ff48d991370af7fd3ce2",
+      "run_id": "benchmark-v2-salesforce-case-management-complex-risk--full-agent-wiki--r3",
+      "status": "decision_required",
+      "terminal_disposition": "decision_required",
+      "thread_id": "benchmark-v2-thread-salesforce-case-management-complex-risk--full-agent-wiki--r3"
+    }
+  ],
+  "human_output_review_note": "No per-cell human output judgments are recorded; controller outcomes are not human acceptance, semantic-conformance, Wiki-support, or defect judgments.",
+  "human_output_review_status": "pending",
+  "protocol_binding": {
+    "benchmark_registry_digest": "sha256:16f4516d28990dd9542defa534cac2aa1073d99b7fb2e5e52b548f279e75642a",
+    "dependency_label_review_evidence_digest": "sha256:b718d6b3c130d1318f27b9911ec223cde650a39b19af39927ab590ccf3aba5c3",
+    "dependency_label_review_status": "approved",
+    "dependency_label_review_subject_digest": "sha256:fa76b2b5b9f8a9f4dea0637e7c3a1f6d9cddce6fa08ff7fbc4695631ffd29183",
+    "dependency_label_reviewer_id": "bw",
+    "execution_anchor_digest": "sha256:6b65847d2b5a0d792fff878bb213b111e82b336063cf4d2700a6149bd1d3c0d8",
+    "execution_anchor_id": "benchmark-v2-corrected-anchor-2",
+    "protocol_declaration_digest": "sha256:9ad200c6ec7b0f3d442a6e945ddb96b2e63cce45f2468b1dacaa9543c09635ac",
+    "registry_id": "legacy-migration-benchmark-v2",
+    "runtime_identity_digest": "sha256:d038f0f2ce95607ad01fd51889385c35226577e30d02fa622bef44ce9b302a6c"
+  },
+  "raw_campaign_archive": {
+    "execution_anchor_member": "benchmark-v2/execution-anchor.json",
+    "path": "output/benchmark-v2-corrected-campaign-20260830.tar.gz",
+    "root_member": "benchmark-v2/",
+    "sha256": "f6a2e2ac0672a7631c0b6331e41a896574933c8704e2eb7707222ee5eeae1336",
+    "size_bytes": 3447749
+  },
+  "schema_version": "1.0",
+  "verification_method": "all cells loaded through load_verified_benchmark_run_bundle",
+  "verified_bundle_count": 18
+}

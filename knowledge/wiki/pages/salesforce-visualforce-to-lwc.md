@@ -10,15 +10,15 @@ cacheable controller method named in `manifest.implementation_contract`.
 Binding a `@AuraEnabled(cacheable=true)` read with `@wire` is the standard
 reactive Lightning pattern, so the component reacts to the adapter's data and
 error branches rather than fetching imperatively on init. The user-triggered
-dependent load must remain an imperative call because the user explicitly
-starts it with **Load**.
+dependent load must remain an imperative, non-cacheable Apex call because the
+user explicitly starts it with **Load** and expects a server refresh. Declare
+that explicit read with bare `@AuraEnabled` or `@AuraEnabled(cacheable=false)`,
+never `cacheable=true`.
 
-Project correction rule `lwc_template_binding_invalid`: the pinned LWC compiler
-supports complex template expressions, so this is a project maintainability
-convention, not a compiler restriction. Prefer standard JavaScript getters for
-nontrivial presentation logic, and keep `data-role` and `data-state` hooks
-literal or bound to a simple property so the public semantic test surface stays
-stable.
+Project correction rule `lwc_template_binding_invalid`: the pinned compiler
+supports complex template expressions; this is a maintainability rule, not a
+compiler limit. Keep `data-role` and `data-state` hooks literal or simply bound;
+move nontrivial presentation logic to JavaScript getters.
 
 For a combobox, a placeholder is not the required blank choice. Include a
 rendered option whose value is the empty string, followed by the returned
@@ -37,7 +37,9 @@ Controller-owned signals apply to both the first candidate and a correction:
 
 - `controller_jest_account_options`: render an empty-string option before the
   Accounts; a `lightning-combobox` placeholder is not that option.
-- `controller_jest_account_error`: render a safe, nontechnical Account error.
+- `controller_jest_account_error`: render a fixed, safe Account error; never
+  copy untrusted `error.message`, `error.body.message`, query text, or other
+  payload details into visible DOM.
 - `controller_jest_selection_gate`: Load is disabled for blank and enabled for
   nonblank selection; do not bind a positive `canLoadContacts` getter directly.
   Bind a disabled-state getter because a positive getter reverses the gate.
@@ -48,6 +50,11 @@ Controller-owned signals apply to both the first candidate and a correction:
 - `controller_jest_stale_response`: each selection change invalidates pending
   work; a late success or failure cannot change Contacts, alerts, or loading.
   A generation counter or request token is valid.
+- `controller_jest_account_change_reset`: changing from one nonblank Account to
+  another immediately clears completed Contacts, loaded/empty state, and any
+  prior Contact error before the next explicit Load. It also invalidates the
+  pending request token, so the former Account's late response cannot reappear
+  under the new selection.
 - `controller_jest_blank_selection`: invalidate pending work, clear result
   states, disable Load, and show safe guidance when selection is cleared.
 - `controller_jest_empty_state`: show empty only after a current empty success,
@@ -61,8 +68,13 @@ Typical mappings include `apex:pageBlock` to `lightning-card`,
 Visualforce `rerender` becomes a reactive DOM update; it is not an “LWC module
 update.”
 
-Keep `@AuraEnabled(cacheable=true)` only on read-only methods. Pass an object
-whose JavaScript property names match the Apex parameters. Preserve the
-explicit Load interaction unless the approved manifest changes it. Deleting
-the legacy page or controller remains a separate destructive decision after
-consumer discovery.
+If results are rendered with a native table instead of `lightning-datatable`,
+give the table an accessible name with a visible caption or an appropriate
+`aria-label`. The semantic test hooks do not replace an accessible name.
+
+Use `@AuraEnabled(cacheable=true)` for the wired initial read. Keep the explicit
+dependent read non-cacheable with bare `@AuraEnabled` or
+`@AuraEnabled(cacheable=false)`. Pass an object whose JavaScript property names
+match the Apex parameters. Preserve the explicit Load interaction unless the
+approved manifest changes it. Deleting the legacy page or controller remains a
+separate destructive decision after consumer discovery.

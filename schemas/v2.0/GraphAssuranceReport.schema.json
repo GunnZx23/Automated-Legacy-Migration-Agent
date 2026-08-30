@@ -1,0 +1,493 @@
+{
+  "$defs": {
+    "AssuranceIssueSeverity": {
+      "enum": [
+        "review_required",
+        "blocked"
+      ],
+      "title": "AssuranceIssueSeverity",
+      "type": "string"
+    },
+    "AssuranceSourceDigest": {
+      "additionalProperties": false,
+      "description": "Digest of one controller-required source, or explicit missing evidence.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "AssuranceSourceDigest",
+      "type": "object"
+    },
+    "EdgeKind": {
+      "description": "Relationships currently emitted by the deterministic graph analyzers.",
+      "enum": [
+        "visualforce_controller",
+        "visualforce_extension",
+        "visualforce_standard_controller",
+        "apex_class_reference",
+        "apex_page_reference",
+        "soql_object",
+        "soql_field",
+        "lwc_apex_import",
+        "lwc_schema_import",
+        "permission_class_access",
+        "permission_page_access",
+        "permission_object_access",
+        "permission_field_access",
+        "flow_reference",
+        "http_listener_config_reference",
+        "connector_config_reference",
+        "configuration_properties_reference",
+        "property_reference",
+        "mule_route_parameter_binding",
+        "dataweave_variable_reference",
+        "dataweave_module_reference",
+        "munit_flow_reference",
+        "munit_variable_reference",
+        "munit_suite_test",
+        "maven_plugin",
+        "maven_dependency",
+        "dynamic_reference"
+      ],
+      "title": "EdgeKind",
+      "type": "string"
+    },
+    "GraphAssuranceDiscrepancy": {
+      "additionalProperties": false,
+      "description": "One deterministic mismatch that prevents an assured result.",
+      "properties": {
+        "category": {
+          "enum": [
+            "revision_mismatch",
+            "missing_source",
+            "source_digest_mismatch",
+            "source_not_in_graph",
+            "unreachable_source",
+            "orphan_provenance",
+            "reference_count_mismatch",
+            "internal_inconsistency",
+            "security_coverage_gap"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "discrepancy_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Discrepancy Id",
+          "type": "string"
+        },
+        "expected_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Count"
+        },
+        "observed_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Count"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "discrepancy_id",
+        "category",
+        "summary"
+      ],
+      "title": "GraphAssuranceDiscrepancy",
+      "type": "object"
+    },
+    "GraphAssuranceStatus": {
+      "description": "Controller disposition for one deterministic assurance report.",
+      "enum": [
+        "assured",
+        "review_required",
+        "blocked"
+      ],
+      "title": "GraphAssuranceStatus",
+      "type": "string"
+    },
+    "ParserSourceCoverage": {
+      "additionalProperties": false,
+      "description": "Per-source reconciliation between the snapshot and selected graph.",
+      "properties": {
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "digest_matches_snapshot": {
+          "title": "Digest Matches Snapshot",
+          "type": "boolean"
+        },
+        "parser": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Parser",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "reachable_from_entry": {
+          "title": "Reachable From Entry",
+          "type": "boolean"
+        },
+        "represented_in_graph": {
+          "title": "Represented In Graph",
+          "type": "boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/SourceCoverageRole"
+        },
+        "source_present": {
+          "title": "Source Present",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "role",
+        "parser",
+        "source_present",
+        "represented_in_graph",
+        "digest_matches_snapshot",
+        "reachable_from_entry",
+        "complete"
+      ],
+      "title": "ParserSourceCoverage",
+      "type": "object"
+    },
+    "Platform": {
+      "enum": [
+        "salesforce",
+        "mulesoft"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "ReferenceInventoryCount": {
+      "additionalProperties": false,
+      "description": "Independent supported-reference count reconciled with graph evidence.",
+      "properties": {
+        "edge_kind": {
+          "$ref": "#/$defs/EdgeKind"
+        },
+        "graph_count": {
+          "minimum": 0,
+          "title": "Graph Count",
+          "type": "integer"
+        },
+        "inventory_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Inventory Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "reconciled": {
+          "title": "Reconciled",
+          "type": "boolean"
+        },
+        "source_count": {
+          "minimum": 0,
+          "title": "Source Count",
+          "type": "integer"
+        },
+        "symbol": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Symbol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "inventory_id",
+        "path",
+        "edge_kind",
+        "symbol",
+        "source_count",
+        "graph_count",
+        "reconciled"
+      ],
+      "title": "ReferenceInventoryCount",
+      "type": "object"
+    },
+    "SecuritySensitiveDependencyCoverage": {
+      "additionalProperties": false,
+      "description": "Controller heuristic for high-impact graph relationships, not an oracle score.",
+      "properties": {
+        "complete": {
+          "title": "Complete",
+          "type": "boolean"
+        },
+        "covered_references": {
+          "minimum": 0,
+          "title": "Covered References",
+          "type": "integer"
+        },
+        "observed_references": {
+          "minimum": 0,
+          "title": "Observed References",
+          "type": "integer"
+        },
+        "policy_id": {
+          "const": "bounded-security-impact/1.0",
+          "default": "bounded-security-impact/1.0",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "required_edge_kinds": {
+          "items": {
+            "$ref": "#/$defs/EdgeKind"
+          },
+          "title": "Required Edge Kinds",
+          "type": "array"
+        },
+        "unresolved_references": {
+          "minimum": 0,
+          "title": "Unresolved References",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "required_edge_kinds",
+        "observed_references",
+        "covered_references",
+        "unresolved_references",
+        "complete"
+      ],
+      "title": "SecuritySensitiveDependencyCoverage",
+      "type": "object"
+    },
+    "SourceCoverageRole": {
+      "enum": [
+        "dependency_bearing",
+        "context_only"
+      ],
+      "title": "SourceCoverageRole",
+      "type": "string"
+    },
+    "UnsupportedOrAmbiguousConstruct": {
+      "additionalProperties": false,
+      "description": "One construct that bounded static reconciliation cannot safely resolve.",
+      "properties": {
+        "category": {
+          "enum": [
+            "dynamic",
+            "reflective",
+            "malformed",
+            "external",
+            "ambiguous",
+            "unresolved"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "construct_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Construct Id",
+          "type": "string"
+        },
+        "line": {
+          "minimum": 1,
+          "title": "Line",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/AssuranceIssueSeverity"
+        },
+        "summary": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "construct_id",
+        "category",
+        "severity",
+        "path",
+        "line",
+        "summary"
+      ],
+      "title": "UnsupportedOrAmbiguousConstruct",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict report binding bounded reconciliation to one graph and revision.",
+  "properties": {
+    "analyzer_version": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Analyzer Version",
+      "type": "string"
+    },
+    "dependency_graph_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Dependency Graph Digest",
+      "type": "string"
+    },
+    "detected_discrepancies": {
+      "items": {
+        "$ref": "#/$defs/GraphAssuranceDiscrepancy"
+      },
+      "title": "Detected Discrepancies",
+      "type": "array"
+    },
+    "entry_paths": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Entry Paths",
+      "type": "array"
+    },
+    "graph_has_unresolved": {
+      "title": "Graph Has Unresolved",
+      "type": "boolean"
+    },
+    "parser_source_coverage": {
+      "items": {
+        "$ref": "#/$defs/ParserSourceCoverage"
+      },
+      "minItems": 1,
+      "title": "Parser Source Coverage",
+      "type": "array"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "policy_version": {
+      "const": "bounded-graph-assurance/1.0",
+      "default": "bounded-graph-assurance/1.0",
+      "title": "Policy Version",
+      "type": "string"
+    },
+    "reference_inventory": {
+      "items": {
+        "$ref": "#/$defs/ReferenceInventoryCount"
+      },
+      "title": "Reference Inventory",
+      "type": "array"
+    },
+    "report_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^graph-assurance-[0-9a-f]{32}$",
+      "title": "Report Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "security_sensitive_dependency_coverage": {
+      "$ref": "#/$defs/SecuritySensitiveDependencyCoverage"
+    },
+    "source_digests": {
+      "items": {
+        "$ref": "#/$defs/AssuranceSourceDigest"
+      },
+      "minItems": 1,
+      "title": "Source Digests",
+      "type": "array"
+    },
+    "source_revision": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/GraphAssuranceStatus"
+    },
+    "unsupported_or_ambiguous_constructs": {
+      "items": {
+        "$ref": "#/$defs/UnsupportedOrAmbiguousConstruct"
+      },
+      "title": "Unsupported Or Ambiguous Constructs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "report_id",
+    "platform",
+    "source_revision",
+    "dependency_graph_digest",
+    "analyzer_version",
+    "entry_paths",
+    "source_digests",
+    "parser_source_coverage",
+    "unsupported_or_ambiguous_constructs",
+    "detected_discrepancies",
+    "reference_inventory",
+    "security_sensitive_dependency_coverage",
+    "graph_has_unresolved",
+    "status"
+  ],
+  "title": "GraphAssuranceReport",
+  "type": "object"
+}

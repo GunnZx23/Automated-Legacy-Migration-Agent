@@ -55,10 +55,26 @@ def test_engineer_policy_rejections_show_safe_reason_context() -> None:
         "workspace_scope_mismatch",
         "workspace_not_clean",
         "attempt_two_scope_expansion_invalid",
+        "output_evidence_local_path",
     ):
         assert f"{reason_code}:" in script
     assert "Controller reason (${failure.reason_code}): ${failure.summary}" in script
     assert "Reason code: ${failure.reason_code}" in script
+    assert (
+        'output_evidence_local_path: "The role output contained non-portable local filesystem '
+        'notation."'
+    ) in script
+    assert "The Engineer output contained non-portable" not in script
+
+
+def test_environment_unavailable_candidate_is_not_mislabeled_as_failed() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    assert 'const environmentUnavailable = disposition === "environment_unavailable";' in script
+    assert "↓ Download candidate with environment receipt" in script
+    assert "↳ Save candidate with environment receipt" in script
+    assert "candidate · runtime validation unavailable" in script
+    assert "Runtime-dependent validation is unavailable." in script
 
 
 def test_new_chat_is_initially_visible_and_not_gate_disabled() -> None:
@@ -114,7 +130,10 @@ def test_runtime_readiness_is_server_owned_and_gates_model_requests() -> None:
     assert "payload.model_id !== state.model?.model_id" in script
     assert "payload.configured !== true" in script
     assert "state.modelReadiness?.runtime_reachable === true" in script
+    assert "state.modelReadiness?.model_available === null" in script
     assert "state.modelReadiness?.model_available === true" in script
+    assert 'state.model?.execution_boundary === "remote_provider_managed"' in script
+    assert "without invoking the remote model" in script
     assert "!modelRuntimeReady()" in script
     assert '"provider_unreachable"' in script
     assert '"model_unavailable"' in script
@@ -128,7 +147,7 @@ def test_runtime_readiness_is_server_owned_and_gates_model_requests() -> None:
 def test_frontend_accepts_only_the_two_server_selected_provider_boundaries() -> None:
     page, script, _stylesheet = _frontend()
 
-    assert 'ollama: Object.freeze({' in script
+    assert "ollama: Object.freeze({" in script
     assert '"claude-cli": Object.freeze({' in script
     assert 'executionBoundary: "local_loopback"' in script
     assert 'executionBoundary: "remote_provider_managed"' in script
@@ -204,6 +223,18 @@ def test_composer_sends_chat_and_inline_gate_launches_migration_separately() -> 
     assert 'elements.requestForm.addEventListener("submit", sendConversationMessage)' in script
     assert 'elements.launchButton.addEventListener("click", launchMigration)' not in script
     assert 'label: "Scenario launch gate"' in script
+
+
+def test_scenario_buttons_mark_only_the_exact_selected_slice_as_pressed() -> None:
+    _page, script, _stylesheet = _frontend()
+
+    composer_state = script[
+        script.index("function updateComposerState()") : script.index(
+            "function renderHarnessStages", script.index("function updateComposerState()")
+        )
+    ]
+    assert "button.dataset.scenarioId === state.selectedScenarioId" in composer_state
+    assert "button.dataset.platform === state.selectedPlatform" not in composer_state
 
 
 def test_conversation_identity_is_persisted_and_restored_before_run_fallback() -> None:

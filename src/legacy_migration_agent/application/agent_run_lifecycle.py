@@ -18,6 +18,7 @@ from legacy_migration_agent.agent_runtime.correction import (
     CorrectionRequest,
 )
 from legacy_migration_agent.agent_runtime.model_workflow import ModelAgentWorkflowRoles
+from legacy_migration_agent.agent_runtime.run_artifact_paths import RunArtifactPaths
 from legacy_migration_agent.application.agent_run_contracts import (
     AGENT_RUN_CORRECTION_APPROVAL_PATH,
     AGENT_RUN_CORRECTION_AUTHORIZATION_INTENT_KIND,
@@ -56,6 +57,7 @@ from legacy_migration_agent.contracts import (
 from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.core.run_session import AgentRunSession
+from legacy_migration_agent.graphs.graph_assurance import GraphAssuranceReport
 from legacy_migration_agent.workflow import ManifestApproval
 
 _AuthorizationIntentVerifier = Callable[..., None]
@@ -828,6 +830,10 @@ def _status_from_components(
     manifest = values.get("manifest")
     manifest_id = getattr(manifest, "manifest_id", None)
     manifest_digest = values.get("manifest_digest")
+    graph_assurance_report_digest, graph_assurance_status = _graph_assurance_binding(
+        components,
+        manifest,
+    )
     interrupt_summary: AgentRunInterruptSummary | None = None
     pending = _pending_manifest_interrupt(snapshot)
     if pending is not None:
@@ -837,6 +843,10 @@ def _status_from_components(
             request_id=decision.request_id,
             manifest_id=pending_manifest_id,
             manifest_digest=pending_manifest_digest,
+            graph_assurance_report_digest=graph_assurance_report_digest,
+            graph_assurance_status=(
+                graph_assurance_status if graph_assurance_status == "assured" else None
+            ),
             requested_action=decision.requested_action,
             options=cast(
                 tuple[Literal["approve", "reject", "modify"], ...],
@@ -859,6 +869,7 @@ def _status_from_components(
             completed_attempt=correction.completed_attempt,
             authorized_attempt=correction.next_attempt,
             action=correction.action,
+            requires_graph_regeneration=correction.requires_graph_regeneration,
         )
     failure = components.failure
     failed_terminal = failure is not None and surface_failure
@@ -893,9 +904,50 @@ def _status_from_components(
         ),
         manifest_id=manifest_id,
         manifest_digest=manifest_digest,
+        graph_assurance_report_digest=graph_assurance_report_digest,
+        graph_assurance_status=graph_assurance_status,
         interrupt=None if failed_terminal else interrupt_summary,
         correction=None if failed_terminal else correction_summary,
         failure=failure if failed_terminal else None,
     )
     components.session.validate_portable_evidence(status)
     return status
+
+
+def _graph_assurance_binding(
+    components: _RunComponents,
+    manifest_value: object,
+) -> tuple[Sha256Digest | None, Literal["assured", "review_required", "blocked"] | None]:
+    """Cross-bind optional legacy-compatible assurance evidence into run status."""
+
+    manifest = None if manifest_value is None else MigrationManifest.model_validate(manifest_value)
+    paths = RunArtifactPaths(components.request.request_id)
+    try:
+        report = GraphAssuranceReport.model_validate(
+            components.session.store.read_json(paths.graph_assurance_report)
+        )
+    except FileNotFoundError:
+        report = None
+    except (TypeError, ValueError) as exc:
+        raise PolicyViolation("run graph assurance report is malformed") from exc
+
+    manifest_report_digest = None if manifest is None else manifest.graph_assurance_report_digest
+    manifest_report_status = None if manifest is None else manifest.graph_assurance_status
+    if report is None:
+        if manifest_report_digest is not None or manifest_report_status is not None:
+            raise PolicyViolation("manifest graph assurance evidence is missing from the run")
+        return None, None
+
+    components.session.validate_portable_evidence(report)
+    report_digest = artifact_digest(report)
+    if report.status.value == "assured":
+        report_status: Literal["assured", "review_required", "blocked"] = "assured"
+    elif report.status.value == "review_required":
+        report_status = "review_required"
+    else:
+        report_status = "blocked"
+    if manifest is not None and (
+        manifest_report_digest != report_digest or manifest_report_status != report_status
+    ):
+        raise PolicyViolation("manifest graph assurance binding differs from the run report")
+    return report_digest, report_status

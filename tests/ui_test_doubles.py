@@ -19,10 +19,10 @@ from salesforce_candidate_factory import (
 
 from legacy_migration_agent.agent_runtime.model_agents import (
     ArchitectConversationContext,
-    ArchitectConversationReply,
     ArchitectManifestProposal,
     ArchitectModelContext,
     ArchitectSemanticDecision,
+    EngineerCorrectionProviderContext,
     EngineerFilePlan,
     EngineerFilePlanOutcome,
     EngineerFileUpdate,
@@ -30,6 +30,8 @@ from legacy_migration_agent.agent_runtime.model_agents import (
     EngineerWorkspaceContext,
     ValidatorEvidenceContext,
     ValidatorModelAdvisory,
+    _ArchitectConversationClarificationOutput,
+    _ArchitectConversationReadyOutput,
 )
 from legacy_migration_agent.agent_runtime.openai_model import (
     LiveModelApproval,
@@ -112,7 +114,7 @@ def fixture_model_response(
 
     if not system_prompt.strip():
         raise ValueError("the test double requires a nonempty agent prompt")
-    if output_type is ArchitectManifestProposal:
+    if issubclass(output_type, ArchitectManifestProposal):
         context = ArchitectModelContext.model_validate(input_value)
         evidence_ids = (
             context.dependency_graph.nodes[0].node_id,
@@ -144,17 +146,23 @@ def fixture_model_response(
                 unresolved_questions=(),
             ),
         )
-    if output_type is ArchitectConversationReply:
+    if output_type is _ArchitectConversationClarificationOutput:
+        context = ArchitectConversationContext.model_validate(input_value)
+        if context.selected_platform is not None:
+            raise ValueError("the clarification output requires an unselected test scenario")
+        return cast(
+            OutputModel,
+            _ArchitectConversationClarificationOutput(
+                status="clarification_needed",
+                assistant_message="Select a Salesforce or MuleSoft migration slice.",
+                advisory_summary=None,
+                missing_information=("Select a migration slice.",),
+            ),
+        )
+    if output_type is _ArchitectConversationReadyOutput:
         context = ArchitectConversationContext.model_validate(input_value)
         if context.selected_platform is None:
-            return cast(
-                OutputModel,
-                ArchitectConversationReply(
-                    status="clarification_needed",
-                    assistant_message="Select a Salesforce or MuleSoft migration slice.",
-                    missing_information=("Select a migration slice.",),
-                ),
-            )
+            raise ValueError("the ready output requires a selected test scenario")
         if context.scenario_id not in {
             "salesforce-vf-to-lwc",
             "case-management-console",
@@ -163,7 +171,7 @@ def fixture_model_response(
             raise ValueError("the selected test scenario is not supported")
         return cast(
             OutputModel,
-            ArchitectConversationReply(
+            _ArchitectConversationReadyOutput(
                 status="ready_to_launch",
                 assistant_message=(
                     "The selected scenario is ready for the Controller's canonical launch gate."
@@ -171,17 +179,20 @@ def fixture_model_response(
                 advisory_summary=(
                     "The selected bounded scenario uses an additive migration and local checks."
                 ),
+                missing_information=(),
             ),
         )
-    if output_type in {EngineerModelOutcome, EngineerFilePlanOutcome}:
-        engineer_context = EngineerWorkspaceContext.model_validate(input_value)
+    if issubclass(output_type, (EngineerModelOutcome, EngineerFilePlanOutcome)):
+        engineer_context = (
+            EngineerCorrectionProviderContext.model_validate(input_value)
+            if isinstance(input_value, EngineerCorrectionProviderContext)
+            else EngineerWorkspaceContext.model_validate(input_value)
+        )
         entry_path = engineer_context.request.target.entry_path
         approved_paths = _APPROVED_PATHS.get(entry_path)
         if approved_paths is None:
             raise ValueError("the selected test scenario is not supported")
-        if tuple(sorted(engineer_context.manifest.approved_paths)) != tuple(
-            sorted(approved_paths)
-        ):
+        if tuple(sorted(engineer_context.manifest.approved_paths)) != tuple(sorted(approved_paths)):
             raise ValueError("the test manifest differs from the fixed scenario output scope")
         output_text = _TEXT_OUTPUTS[entry_path]()
         if engineer_context.correction is None:
@@ -195,7 +206,7 @@ def fixture_model_response(
         else:
             prior = {
                 update.path: update.content
-                for update in engineer_context.correction.prior_file_plan.updates
+                for update in engineer_context.correction.prior_allowed_updates
             }
             updates = tuple(
                 EngineerFileUpdate(
@@ -211,7 +222,7 @@ def fixture_model_response(
                 "External platform and runtime checks remain outside this test boundary.",
             ),
         )
-        if output_type is EngineerFilePlanOutcome:
+        if issubclass(output_type, EngineerFilePlanOutcome):
             return cast(
                 OutputModel,
                 EngineerFilePlanOutcome(kind="file_plan", file_plan=file_plan),

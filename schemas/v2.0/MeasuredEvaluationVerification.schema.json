@@ -1,0 +1,84 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "all_metrics_evaluated": {
+      "title": "All Metrics Evaluated",
+      "type": "boolean"
+    },
+    "cross_bindings_verified": {
+      "const": true,
+      "default": true,
+      "title": "Cross Bindings Verified",
+      "type": "boolean"
+    },
+    "expected_cells": {
+      "const": 18,
+      "default": 18,
+      "title": "Expected Cells",
+      "type": "integer"
+    },
+    "passed": {
+      "title": "Passed",
+      "type": "boolean"
+    },
+    "quality_gate_passed": {
+      "title": "Quality Gate Passed",
+      "type": "boolean"
+    },
+    "receipt_set_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Receipt Set Digest",
+      "type": "string"
+    },
+    "registry_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Registry Digest",
+      "type": "string"
+    },
+    "registry_id": {
+      "maxLength": 160,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$",
+      "title": "Registry Id",
+      "type": "string"
+    },
+    "required_metrics_evaluable": {
+      "title": "Required Metrics Evaluable",
+      "type": "boolean"
+    },
+    "safety_gate_passed": {
+      "title": "Safety Gate Passed",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Summary Digest",
+      "type": "string"
+    },
+    "verified_cells": {
+      "const": 18,
+      "default": 18,
+      "title": "Verified Cells",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "registry_id",
+    "registry_digest",
+    "receipt_set_digest",
+    "summary_digest",
+    "all_metrics_evaluated",
+    "required_metrics_evaluable",
+    "safety_gate_passed",
+    "quality_gate_passed",
+    "passed"
+  ],
+  "title": "MeasuredEvaluationVerification",
+  "type": "object"
+}

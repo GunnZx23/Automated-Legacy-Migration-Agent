@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from legacy_migration_agent.agent_runtime.correction import CorrectionAction
 from legacy_migration_agent.contracts import (
@@ -21,7 +21,9 @@ from legacy_migration_agent.contracts import (
     Sha256Digest,
     StrictModel,
 )
+from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.run_session import AgentDefinitionDigests
+from legacy_migration_agent.knowledge.wiki import BenchmarkKnowledgeBinding
 
 AGENT_RUN_EVIDENCE_KIND = "agent-run-initialized"
 AGENT_RUN_REQUEST_PATH = "request.json"
@@ -68,6 +70,7 @@ AgentRunFailureReason = Literal[
     "workspace_scope_mismatch",
     "workspace_not_clean",
     "attempt_two_scope_expansion_invalid",
+    "output_evidence_local_path",
     "policy_rejected",
     "provider_timeout",
     "provider_unavailable",
@@ -223,6 +226,13 @@ _AGENT_RUN_FAILURE_EXPLANATIONS: dict[AgentRunFailureReason, tuple[str, str]] = 
             "path outside the approved manifest; otherwise Engineer must return the bounded delta."
         ),
     ),
+    "output_evidence_local_path": (
+        "The role output could not be stored as portable evidence because it contained local filesystem notation.",
+        (
+            "Start a fresh run and keep authored narrative limited to repository paths, API "
+            "routes, or other portable prose without local filesystem locations."
+        ),
+    ),
     "policy_rejected": (
         "The role output passed its schema but failed a controller-owned policy check.",
         "Start a fresh run and inspect the public policy phase in the harness trace.",
@@ -265,6 +275,10 @@ class AgentRunConfig(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     preset_id: Identifier
     wiki_as_of: date
+    benchmark_knowledge_binding: BenchmarkKnowledgeBinding | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class AgentRunEvidenceAnchor(StrictModel):
@@ -397,8 +411,26 @@ class AgentRunInterruptSummary(StrictModel):
     request_id: Identifier
     manifest_id: Identifier
     manifest_digest: Sha256Digest
+    graph_assurance_report_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    graph_assurance_status: Literal["assured"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     requested_action: ApprovalAction
     options: tuple[Literal["approve", "reject", "modify"], ...]
+
+    @model_validator(mode="after")
+    def validate_graph_assurance_binding(self) -> AgentRunInterruptSummary:
+        if (self.graph_assurance_report_digest is None) is not (
+            self.graph_assurance_status is None
+        ):
+            raise ValueError(
+                "run interrupt graph assurance status and digest must be supplied together"
+            )
+        return self
 
 
 class AgentRunCorrectionSummary(StrictModel):
@@ -415,6 +447,7 @@ class AgentRunCorrectionSummary(StrictModel):
     completed_attempt: int = Field(ge=1, le=2)
     authorized_attempt: int | None = Field(default=None, ge=2, le=2)
     action: CorrectionAction
+    requires_graph_regeneration: bool = False
 
 
 class AgentRunStatus(StrictModel):
@@ -435,6 +468,14 @@ class AgentRunStatus(StrictModel):
     task_failed: bool
     manifest_id: Identifier | None = None
     manifest_digest: Sha256Digest | None = None
+    graph_assurance_report_digest: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    graph_assurance_status: Literal["assured", "review_required", "blocked"] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     interrupt: AgentRunInterruptSummary | None = None
     correction: AgentRunCorrectionSummary | None = None
     failure: AgentRunFailure | None = None
@@ -454,6 +495,62 @@ class AgentRunStatus(StrictModel):
         if any(value not in allowed for value in values):
             raise ValueError("run summary contains an unknown workflow node")
         return values
+
+    @model_validator(mode="after")
+    def validate_graph_assurance_binding(self) -> AgentRunStatus:
+        if (self.graph_assurance_report_digest is None) is not (
+            self.graph_assurance_status is None
+        ):
+            raise ValueError(
+                "run status graph assurance status and digest must be supplied together"
+            )
+        if self.interrupt is not None:
+            if (
+                self.interrupt.graph_assurance_report_digest != self.graph_assurance_report_digest
+                or self.interrupt.graph_assurance_status != self.graph_assurance_status
+            ):
+                raise ValueError("run interrupt graph assurance differs from run status")
+        return self
+
+
+class VerifiedAgentRunEvidence(StrictModel):
+    """Runtime-anchored terminal projection for one benchmark run.
+
+    Construction alone is not proof. The public reader in ``agent_run`` is the
+    authority that verifies the lifecycle index and its independent runtime
+    anchor before returning this projection.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: Identifier
+    thread_id: Identifier
+    status: AgentRunStatus
+    run_context_digest: Sha256Digest
+    request_digest: Sha256Digest
+    config_digest: Sha256Digest
+    launch_contract_digest: Sha256Digest
+    terminal_lifecycle_kind: Identifier
+    terminal_lifecycle_index_digest: Sha256Digest
+    terminal_status_digest: Sha256Digest
+    terminal_checkpoint_digest: Sha256Digest
+    benchmark_binding_digest: Sha256Digest
+    source_revision: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_projection(self) -> VerifiedAgentRunEvidence:
+        if self.status.run_id != self.run_id or self.status.thread_id != self.thread_id:
+            raise ValueError("terminal evidence status belongs to another run")
+        if self.status.request_digest != self.request_digest:
+            raise ValueError("terminal evidence status belongs to another request")
+        if artifact_digest(self.status) != self.terminal_status_digest:
+            raise ValueError("terminal evidence status does not match its digest")
+        return self
+
+    @property
+    def run_evidence_digest(self) -> Sha256Digest:
+        """Return the canonical receipt binding for this verified projection."""
+
+        return artifact_digest(self)
 
 
 __all__ = [
@@ -487,5 +584,6 @@ __all__ = [
     "AgentRunLifecycleAnchor",
     "AgentRunOperation",
     "AgentRunStatus",
+    "VerifiedAgentRunEvidence",
     "agent_run_failure_explanation",
 ]

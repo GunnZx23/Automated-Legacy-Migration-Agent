@@ -13,18 +13,24 @@ from legacy_migration_agent.agent_runtime.model_agents import (  # noqa: PLC2701
     _repair_signal_specs,
 )
 from legacy_migration_agent.application.migration_scenarios import (
+    CASE_INITIAL_WIKI_EXACT_IDS,
+    CASE_WIKI_QUERY,
     SALESFORCE_INITIAL_WIKI_EXACT_IDS,
     SALESFORCE_WIKI_QUERY,
 )
-from legacy_migration_agent.contracts import Platform
+from legacy_migration_agent.contracts import MigrationRequest, MigrationTarget, Platform
+from legacy_migration_agent.core.integrity import artifact_digest
 from legacy_migration_agent.core.policies import PolicyViolation
 from legacy_migration_agent.knowledge.wiki import (
+    BenchmarkKnowledgeBinding,
     LlmWiki,
     RetrievalTrace,
     WikiCatalog,
     WikiSource,
+    benchmark_no_wiki_control_trace,
     contains_exact_diagnostic_id,
 )
+from legacy_migration_agent.platforms.local_checks import CASE_IMPLEMENTATION_CONTRACT
 from legacy_migration_agent.platforms.mulesoft_local_checks import (
     MULE4_DATAWEAVE,
     MULE4_POM,
@@ -37,7 +43,7 @@ from legacy_migration_agent.platforms.mulesoft_runtime import (
 )
 
 WIKI_ROOT = Path(__file__).parents[1] / "knowledge" / "wiki"
-AS_OF = date(2026, 8, 27)
+AS_OF = date(2026, 8, 29)
 SALESFORCE_VERSION = "Salesforce API 67.0"
 SALESFORCE_ACTIONABLE_REPAIR_SIGNALS = tuple(
     sorted(
@@ -48,11 +54,136 @@ SALESFORCE_ACTIONABLE_REPAIR_SIGNALS = tuple(
 )
 
 
+def _benchmark_request() -> MigrationRequest:
+    return MigrationRequest(
+        request_id="benchmark-no-wiki-request",
+        platform=Platform.SALESFORCE,
+        repository="fixtures/salesforce/input",
+        base_revision="sha256:" + "1" * 64,
+        target=MigrationTarget(
+            entry_path="force-app/main/default/pages/Legacy.page",
+            target_runtime="Lightning Web Components",
+            source_version=SALESFORCE_VERSION,
+            target_version=SALESFORCE_VERSION,
+            description="Exercise the bounded benchmark no-Wiki control.",
+        ),
+    )
+
+
+def _no_wiki_binding(request: MigrationRequest) -> BenchmarkKnowledgeBinding:
+    return BenchmarkKnowledgeBinding(
+        benchmark_id="measured-v2",
+        benchmark_definition_digest="sha256:" + "2" * 64,
+        benchmark_registry_digest="sha256:" + "3" * 64,
+        configuration_digest="sha256:" + "4" * 64,
+        provider_id="claude-cli",
+        model_id="claude-sonnet-5",
+        cell_id="salesforce-account-contact-medium--full-agent-no-wiki--r1",
+        case_id="salesforce-account-contact-medium",
+        scenario_id="salesforce-vf-to-lwc",
+        knowledge_arm="full_agent_no_wiki",
+        request_digest=artifact_digest(request),
+        source_revision=request.base_revision,
+        wiki_tree_revision="sha256:" + "5" * 64,
+    )
+
+
 def test_project_wiki_is_a_valid_linked_graph():
     wiki = LlmWiki.load(WIKI_ROOT)
     assert len(wiki.catalog.pages) >= 5
     assert all(page.sources for page in wiki.catalog.pages)
     assert wiki.index_digest.startswith("sha256:")
+
+
+def test_no_wiki_control_trace_is_binding_bound_and_contains_no_retrieved_content() -> None:
+    request = _benchmark_request()
+    binding = _no_wiki_binding(request)
+
+    trace = benchmark_no_wiki_control_trace(
+        binding,
+        request,
+        scenario_id=binding.scenario_id,
+        query="benchmark no wiki control",
+        as_of=AS_OF,
+        include_controller_diagnostic_ids=False,
+    )
+
+    assert trace.retrieval_strategy == "benchmark_no_wiki_control"
+    assert trace.catalog_digest == binding.binding_digest
+    assert len(trace.hits) == 1
+    assert trace.hits[0].content_kind == "benchmark_no_wiki_control"
+    assert trace.hits[0].sources == ()
+    assert trace.hits[0].selected_content == (
+        "Benchmark control: curated Wiki retrieval is disabled. No Wiki guidance was retrieved."
+    )
+
+    with pytest.raises(PolicyViolation, match="another scenario"):
+        benchmark_no_wiki_control_trace(
+            binding,
+            request,
+            scenario_id="case-management-console",
+            query="benchmark no wiki control",
+            as_of=AS_OF,
+            include_controller_diagnostic_ids=False,
+        )
+
+
+def test_no_wiki_correction_marker_repeats_only_controller_signal_ids() -> None:
+    request = _benchmark_request()
+    signal_ids = ("controller_jest_case_results", "salesforce_lwc_javascript_contract")
+    query = " ".join((*signal_ids, "salesforce", "correction", "validation"))
+
+    binding = _no_wiki_binding(request)
+    trace = benchmark_no_wiki_control_trace(
+        binding,
+        request,
+        scenario_id=binding.scenario_id,
+        query=query,
+        as_of=AS_OF,
+        include_controller_diagnostic_ids=True,
+    )
+
+    assert all(
+        contains_exact_diagnostic_id(trace.hits[0].selected_content, signal_id)
+        for signal_id in signal_ids
+    )
+    assert "Use " not in trace.hits[0].selected_content
+    assert trace.hits[0].sources == ()
+
+
+def test_no_wiki_trace_rejects_content_injected_into_the_control_marker() -> None:
+    request = _benchmark_request()
+    binding = _no_wiki_binding(request)
+    trace = benchmark_no_wiki_control_trace(
+        binding,
+        request,
+        scenario_id=binding.scenario_id,
+        query="benchmark no wiki control",
+        as_of=AS_OF,
+        include_controller_diagnostic_ids=False,
+    )
+    payload = trace.model_dump(mode="json")
+    payload["hits"][0]["selected_content"] += " Use a retrieved migration recipe."
+    payload["hits"][0]["selected_content_digest"] = (
+        "sha256:"
+        + hashlib.sha256(payload["hits"][0]["selected_content"].encode("utf-8")).hexdigest()
+    )
+    payload["evidence_bundle_digest"] = artifact_digest(
+        {
+            "catalog_digest": payload["catalog_digest"],
+            "selected_pages": [
+                {
+                    "page_id": payload["hits"][0]["page_id"],
+                    "page_digest": payload["hits"][0]["page_digest"],
+                    "selected_content": payload["hits"][0]["selected_content"],
+                    "selected_content_digest": payload["hits"][0]["selected_content_digest"],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="noncanonical control evidence"):
+        RetrievalTrace.model_validate(payload)
 
 
 def test_exact_diagnostic_matching_rejects_longer_identifier_substrings() -> None:
@@ -146,9 +277,34 @@ def test_lightning_data_service_get_record_example_is_discoverable():
             "request token",
         ),
         (
+            "controller_jest_account_change_reset",
+            "salesforce-visualforce-to-lwc",
+            "immediately clears completed Contacts",
+        ),
+        (
             "controller_jest_account_options",
             "salesforce-visualforce-to-lwc",
             "empty-string option",
+        ),
+        (
+            "controller_jest_status_closed",
+            "salesforce-case-management-console",
+            "passes `CLOSED`",
+        ),
+        (
+            "controller_jest_status_all",
+            "salesforce-case-management-console",
+            "passes `ALL`",
+        ),
+        (
+            "controller_jest_status_change_reset",
+            "salesforce-case-management-console",
+            "invalidates the pending request token",
+        ),
+        (
+            "controller_jest_status_change_stale_response",
+            "salesforce-case-management-console",
+            "late success or failure",
         ),
         (
             "candidate_jest_execution_failure",
@@ -213,7 +369,9 @@ def test_combined_jest_execution_correction_retains_the_actionable_checklist() -
         "createElement",
         "__esModule: true",
         "{ virtual: true }",
-        "enough microtask turns",
+        "createApexTestWireAdapter",
+        "require('@salesforce/sfdx-lwc-jest')",
+        "three consecutive microtask turns",
         "element.shadowRoot",
         "`Id` named by `key-field`",
         "unapproved `@api`",
@@ -255,6 +413,37 @@ def test_production_salesforce_query_supplies_generation_guidance_to_engineer() 
         "The local controller contract checks safe",
     ):
         assert required_guidance in selected
+
+
+def test_production_case_query_selects_shared_validation_and_case_guidance() -> None:
+    trace = LlmWiki.load(WIKI_ROOT).search(
+        CASE_WIKI_QUERY,
+        platform=Platform.SALESFORCE,
+        source_version=SALESFORCE_VERSION,
+        target_version=SALESFORCE_VERSION,
+        max_primary_hits=1,
+        expand_links=True,
+        as_of=AS_OF,
+        required_exact_ids=CASE_INITIAL_WIKI_EXACT_IDS,
+    )
+
+    assert {hit.page_id for hit in trace.hits} == {
+        "salesforce-visualforce-to-lwc",
+        "salesforce-validation",
+        "salesforce-case-management-console",
+    }
+    selected = "\n".join(hit.selected_content for hit in trace.hits)
+    assert "controller_jest_account_error" in selected
+    assert "controller_jest_blank_selection" in selected
+    assert "controller_jest_initial_guidance" in selected
+    assert "controller_jest_account_error_reset" in selected
+    assert "controller_jest_account_error_stale_response" in selected
+    assert "user-triggered, non-cacheable case load" in selected
+
+    implementation_contract = "\n".join(CASE_IMPLEMENTATION_CONTRACT)
+    assert "public with sharing class CaseManagementConsoleController" in implementation_contract
+    assert "WITH USER_MODE" in implementation_contract
+    assert "least-privileged and read-only" in implementation_contract
 
 
 @pytest.mark.parametrize("diagnostic_id", SALESFORCE_ACTIONABLE_REPAIR_SIGNALS)
@@ -300,6 +489,13 @@ def test_every_actionable_salesforce_signal_query_selects_exact_wiki_coverage(
                 MULE4_POM,
             ),
             "approved Mule application packaging",
+        ),
+        (
+            mulesoft_candidate_diagnostic_id(
+                MuleSoftLocalCheckCode.VERSION_MISMATCH,
+                MULE4_POM,
+            ),
+            "direct active POM runtime",
         ),
     ),
 )

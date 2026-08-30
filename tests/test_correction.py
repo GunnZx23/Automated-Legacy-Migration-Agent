@@ -5,6 +5,7 @@ import pytest
 from legacy_migration_agent.agent_runtime.correction import (
     CorrectionAction,
     CorrectionController,
+    CorrectionRequest,
     correction_failure_ids,
     implementation_failure_ids,
     validation_failure_dependencies,
@@ -462,6 +463,7 @@ def test_structurally_invalid_candidate_does_not_offer_impossible_engineer_retry
     assert decision.next_attempt is None
     assert decision.requires_new_manifest_approval is True
     assert decision.requires_new_manifest_digest is True
+    assert decision.requires_graph_regeneration is False
 
 
 def test_invalid_plan_requires_new_manifest_approval():
@@ -473,14 +475,32 @@ def test_invalid_plan_requires_new_manifest_approval():
     )
 
     assert decision.action is CorrectionAction.REPLAN_WITH_NEW_APPROVAL
+    assert decision.next_attempt is None
     assert decision.requires_new_manifest_approval is True
     assert decision.requires_new_manifest_digest is True
+    assert decision.requires_graph_regeneration is True
 
-    with pytest.raises(PolicyViolation, match="new manifest digest and approval"):
+    with pytest.raises(
+        PolicyViolation, match="graph regeneration, a new manifest digest, and approval"
+    ):
         CorrectionController.approve_retry(
             decision,
             presented_correction_id=decision.correction_id,
             reviewer="reviewer-1",
+        )
+
+
+def test_graph_regeneration_cannot_be_attached_to_an_engineer_retry() -> None:
+    manifest, change_set, _ = artifacts()
+    retry = CorrectionController().evaluate(
+        manifest,
+        change_set,
+        failed_report(ValidationDisposition.RECOVERABLE_FAILURE),
+    )
+
+    with pytest.raises(ValueError, match="graph regeneration requires replanning"):
+        CorrectionRequest.model_validate(
+            retry.model_dump(mode="json") | {"requires_graph_regeneration": True}
         )
 
 

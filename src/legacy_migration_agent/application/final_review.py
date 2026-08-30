@@ -155,6 +155,14 @@ def _request_final_review(
         "validation_report_digest": artifact_digest(report),
         "architect_context_digest": role_evidence.architect_context_digest,
         "dependency_graph_digest": role_evidence.dependency_graph_digest,
+        **(
+            {}
+            if role_evidence.graph_assurance_report_digest is None
+            else {
+                "graph_assurance_report_digest": (role_evidence.graph_assurance_report_digest),
+                "graph_assurance_status": "assured",
+            }
+        ),
         "wiki_trace_digest": role_evidence.wiki_trace_digest,
         "scope_policy_digest": role_evidence.scope_policy_digest,
         "architect_run_digest": role_evidence.architect_run_digest,
@@ -167,6 +175,9 @@ def _request_final_review(
         "requested_at": requested_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
+    graph_assurance_status: Literal["assured"] | None = (
+        "assured" if role_evidence.graph_assurance_report is not None else None
+    )
     review = FinalReviewRequest(
         review_id=_stable_id("final-review", values),
         run_id=session.context.run_id,
@@ -184,6 +195,8 @@ def _request_final_review(
         validation_report_digest=artifact_digest(report),
         architect_context_digest=role_evidence.architect_context_digest,
         dependency_graph_digest=role_evidence.dependency_graph_digest,
+        graph_assurance_report_digest=role_evidence.graph_assurance_report_digest,
+        graph_assurance_status=graph_assurance_status,
         wiki_trace_digest=role_evidence.wiki_trace_digest,
         scope_policy_digest=role_evidence.scope_policy_digest,
         architect_run_digest=role_evidence.architect_run_digest,

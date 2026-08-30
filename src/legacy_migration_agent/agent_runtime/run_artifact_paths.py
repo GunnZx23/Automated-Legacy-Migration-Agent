@@ -26,6 +26,10 @@ class RunArtifactPaths:
         return self._path("architect.json")
 
     @property
+    def architect_policy_rejection(self) -> str:
+        return self._path("architect-policy-rejection.json")
+
+    @property
     def architect_preflight(self) -> str:
         return self._path("architect-preflight.json")
 
@@ -36,6 +40,10 @@ class RunArtifactPaths:
     @property
     def dependency_graph(self) -> str:
         return self._path("dependency-graph.json")
+
+    @property
+    def graph_assurance_report(self) -> str:
+        return self._path("graph-assurance-report.json")
 
     @property
     def wiki_trace(self) -> str:
