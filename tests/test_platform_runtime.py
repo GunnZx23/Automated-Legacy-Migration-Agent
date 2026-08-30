@@ -1145,8 +1145,9 @@ def test_runtime_anchor_detects_fully_recomputed_portable_graph_chain(
     assert isinstance(result, ArchitectContext)
 
     graph_path = next(case.graph_store.root.glob("snapshots/v1/salesforce/*.json"))
-    binding_path = next((case.session.evidence_dir / "bindings").glob("graph-*.json"))
-    index_path = next(case.session.evidence_dir.glob("indexes/graph-*.json"))
+    graph_key_digest = graph_path.stem
+    binding_path = case.session.evidence_dir / "bindings" / f"graph-{graph_key_digest}.json"
+    index_path = case.session.evidence_dir / "indexes" / f"graph-{graph_key_digest[:32]}.json"
     graph_relative = graph_path.relative_to(case.session.evidence_dir).as_posix()
     binding_relative = binding_path.relative_to(case.session.evidence_dir).as_posix()
 
